@@ -1,6 +1,6 @@
-# File location: g-egg/
+# File location: gpu_extraction/
 # -------------------------------------------------------------------
-# gegg CMake 
+# g_ext CMake 
 #
 # To enable thread sanitizer: 
 # -DCMAKE_CXX_FLAGS="-fsanitize=thread -g"
@@ -21,7 +21,7 @@
 # CMake version
 cmake_minimum_required(VERSION 3.20)
 project(
-  gegg 
+  g_ext 
   VERSION 1.0 
   LANGUAGES C CXX CUDA
 )
@@ -58,19 +58,19 @@ endif()
 
 
 # build options
-option(gegg_BUILD_TESTS "Enables builds of tests" ON)
-option(gegg_BUILD_CUDA "Enables builds of cuda code" ON)
+option(g_ext_BUILD_TESTS "Enables builds of tests" ON)
+option(g_ext_BUILD_CUDA "Enables builds of cuda code" ON)
 
 # project-specific variables
-set(gegg_CMAKE_DIR ${PROJECT_SOURCE_DIR}/cmake)
-set(gegg_3RD_PARTY_DIR ${PROJECT_SOURCE_DIR}/3rd-party)
-set(gegg_MAIN_DIR ${PROJECT_SOURCE_DIR}/main)
-message(STATUS "gegg_3RD_PARTY_DIR: " ${gegg_3RD_PARTY_DIR})
+set(g_ext_CMAKE_DIR ${PROJECT_SOURCE_DIR}/cmake)
+set(g_ext_3RD_PARTY_DIR ${PROJECT_SOURCE_DIR}/3rd-party)
+set(g_ext_MAIN_DIR ${PROJECT_SOURCE_DIR}/main)
+message(STATUS "g_ext_3RD_PARTY_DIR: " ${g_ext_3RD_PARTY_DIR})
 message(STATUS "CMAKE_CUDA_COMPILER: " ${CMAKE_CUDA_COMPILER})
 message(STATUS "CMAKE_CUDA_COMPILER_ID: " ${CMAKE_CUDA_COMPILER_ID})
 message(STATUS "CMAKE_CUDA_COMPILER_VERSION: " ${CMAKE_CUDA_COMPILER_VERSION})
 message(STATUS "CMAKE_CUDA_FLAGS: " ${CMAKE_CUDA_FLAGS})
-message(STATUS "gegg_BUILD_CUDA: " ${gegg_BUILD_CUDA})
+message(STATUS "g_ext_BUILD_CUDA: " ${g_ext_BUILD_CUDA})
 
 # Turn on the verbose
 set(CMAKE_VERBOSE_MAKEFILE ON)
@@ -89,7 +89,7 @@ set(CMAKE_CTEST_ARGUMENTS "--output-on-failure")
 # start build
 # -----------------------------------------------------------------------------
 find_package(OpenMP REQUIRED)
-add_subdirectory(gegg)
+add_subdirectory(g_ext)
 add_subdirectory(main)
 add_subdirectory(unittests)
 
@@ -125,7 +125,7 @@ endif()
 # find nvcc
 # https://cliutils.gitlab.io/modern-cmake/chapters/packages/CUDA.html
 # -----------------------------------------------------------------------------
-if(gegg_BUILD_CUDA)
+if(g_ext_BUILD_CUDA)
   message(STATUS "Configuring CUDA ...")
   enable_language(CUDA)
   if(NOT CMAKE_CUDA_COMPILER)
@@ -134,12 +134,12 @@ if(gegg_BUILD_CUDA)
   enable_language(CUDA)
   if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS "11") # need 12.2 (or higher)
     message(STATUS "CMAKE_CUDA_COMPILER_VERSION: ${CMAKE_CUDA_COMPILER_VERSION}")
-    message(FATAL_ERROR "\ngegg requires CUDA at least v12 (Driver: version 550 or higher)")
+    message(FATAL_ERROR "\ng_ext requires CUDA at least v12 (Driver: version 550 or higher)")
   endif()
 
   # configure cuBLAS
   message(STATUS "Configuring CUDA BLAS ...")
-  list(APPEND CMAKE_MODULE_PATH ${gegg_CMAKE_DIR}/cuda_modules/)
+  list(APPEND CMAKE_MODULE_PATH ${g_ext_CMAKE_DIR}/cuda_modules/)
   find_package(cuBLAS)
   message(STATUS "CUBLAS_FOUND: ${CUBLAS_FOUND}")
   message(STATUS "CUBLAS_INCLUDE_DIRS: ${CUBLAS_INCLUDE_DIRS}")
@@ -151,7 +151,7 @@ endif()
 
 
 # # Add cuBLAS library if necessary
-# if (gegg_BUILD_CUDA)
+# if (g_ext_BUILD_CUDA)
 #     target_link_libraries(${PROJECT_NAME} INTERFACE ${CUBLAS_LIBRARIES})
 #     target_include_directories(${PROJECT_NAME} INTERFACE ${CUBLAS_INCLUDE_DIRS})
 # endif()
@@ -169,18 +169,18 @@ endif()
 include_directories(${PROJECT_SOURCE_DIR})
 
 add_library(default_settings INTERFACE)
-add_library(gegg::default_settings ALIAS default_settings)
+add_library(g_ext::default_settings ALIAS default_settings)
 
 
 # -----------------------------------------------------------------------------
-# gegg::default_setting
+# g_ext::default_setting
 # -----------------------------------------------------------------------------
 
 # error setting
 add_library(error_settings INTERFACE)
 
 # cuda compiler options
-if(gegg_BUILD_CUDA)
+if(g_ext_BUILD_CUDA)
   message(STATUS "Configuring CUDA compiler options ...")
   target_compile_options(
     error_settings
@@ -188,5 +188,5 @@ if(gegg_BUILD_CUDA)
     INTERFACE
     $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda -Xcompiler=-Wall,-Wextra,-Wfatal-errors,-Wshadow>
   )
-endif(gegg_BUILD_CUDA)
+endif(g_ext_BUILD_CUDA)
 

@@ -3,7 +3,8 @@
 
 #include <doctest.h>
 #include <string>
-#include <gegg/EGG.hpp>
+#include <g_ext/G_EXT.hpp>
+
 
 // TEST_CASE("Example with REQUIRE and MESSAGE") {
 //   int x = 3;

@@ -1,26 +1,26 @@
-# File location: g-egg/main
+# File location: gpu_extraction/main
 # CMakeLists.txt in the main directory
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build/main)
-# add_executable(simple ${gegg_MAIN_DIR}/simple.cpp)
+# add_executable(simple ${g_ext_MAIN_DIR}/simple.cpp)
 add_executable(simple 
-    ${gegg_MAIN_DIR}/simple.cpp
+    ${g_ext_MAIN_DIR}/simple.cpp
 )
 
 
 find_package(Threads REQUIRED)
 
 # 
-list(APPEND gegg_examples
+list(APPEND g_ext_examples
   simple
 )
 
-foreach(example IN LISTS gegg_examples) 
-  # Link gegg libraries
+foreach(example IN LISTS g_ext_examples) 
+  # Link g_ext libraries
   target_include_directories(${example} PRIVATE ${PROJECT_SOURCE_DIR})
-  target_link_libraries(simple PRIVATE gegg)
+  target_link_libraries(simple PRIVATE g_ext)
 
-  # Link gegg libraries
-  # target_link_libraries(${example} PUBLIC Threads::Threads PRIVATE gegg)
+  # Link g_ext libraries
+  # target_link_libraries(${example} PUBLIC Threads::Threads PRIVATE g_ext)
 
   # Link cuBLAS library
   target_link_libraries(${example} PRIVATE ${CUBLAS_LIBRARIES})
