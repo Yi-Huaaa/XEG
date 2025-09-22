@@ -1,4 +1,4 @@
-# gpu-extractor
+# gpu_extractor
 
 ## How to run
 ```
@@ -8,4 +8,4 @@
 ~$ make
 ~$ ./main/simple
 ```
-# gpu_extractor
+
