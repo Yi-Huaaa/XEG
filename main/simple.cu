@@ -29,6 +29,9 @@ int main(int argc, char *argv[]) {
     G_EXT g_ext;
     g_ext.gpu_public_test();
     g_ext.gpu_print();
+
+    g_ext.read(input_path); 
+    g_ext.print_input(); 
   
   auto end = std::chrono::steady_clock::now();
   duration = end - start;
