@@ -1,9 +1,9 @@
 # File location: gpu_extraction/main
 # CMakeLists.txt in the main directory
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build/main)
-# add_executable(simple ${g_ext_MAIN_DIR}/simple.cpp)
+# add_executable(simple ${g_ext_MAIN_DIR}/simple.cu)
 add_executable(simple 
-    ${g_ext_MAIN_DIR}/simple.cpp
+    ${g_ext_MAIN_DIR}/simple.cu
 )
 
 
