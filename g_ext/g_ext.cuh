@@ -36,7 +36,7 @@ private:
   uint32_t _num_ecls; // nuber of eclasses 
   std::vector<std::string>  _ende_name; 
   std::vector<std::string>  _ende_op; 
-  std::vector<uint32_t>  _ende_cost; 
+  std::vector<float>  _ende_cost; 
   std::unordered_map<std::string, uint32_t> ecls_name_to_id; 
   std::vector<uint32_t>  _ende_ecls; // the eclass that enode belonsg to
   std::vector<uint32_t>  _ende_child; 

@@ -21,14 +21,15 @@ int main(int argc, char *argv[]) {
   
   // Input file 
   std::string input_path = argv[1];
+  std::cout << "Input file: " << input_path << "\n"; 
 
 
   cudaEventRecord(startGPU);
   auto start = std::chrono::steady_clock::now();
   
     G_EXT g_ext;
-    g_ext.gpu_public_test();
-    g_ext.gpu_print();
+    // g_ext.gpu_public_test();
+    // g_ext.gpu_print();
 
     g_ext.read(input_path); 
     g_ext.print_input(); 
@@ -39,8 +40,8 @@ int main(int argc, char *argv[]) {
   cudaEventSynchronize(stopGPU);
   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
 
-  std::cout << "GPU Time: " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
-  printf("GPU Sort Time (ms) : %f (ms)\n", gpuTime);
+  // std::cout << "GPU Time: " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
+  // printf("GPU Sort Time (ms) : %f (ms)\n", gpuTime);
 
 
   return 0;
