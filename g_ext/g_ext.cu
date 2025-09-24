@@ -157,6 +157,7 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
   printf("Inside void G_EXT::_find_SCC()\n"); 
 #endif
   using namespace boost;
+  uint32_t acc = 0;
 
   typedef adjacency_list<vecS, vecS, directedS> Graph;
   Graph g(adj.size());
@@ -197,15 +198,21 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
       for (size_t j = 0; j < real_sccs[i].size(); j++) {
         std::cout << real_sccs[i][j];
         if (j + 1 < real_sccs[i].size()) std::cout << ", ";
+        acc++;
       }
       std::cout << "}\n";
     }
     if (!singletons.empty()) {
       std::cout << "The remaining nodes (not in SCCs) (size = " << singletons.size() << ") \n";
+      acc += singletons.size();
     }
   } else {
     std::cout << "This is a DAG (no SCC)\n\n";
+    acc = _num_ecls;
   }
+
+  // printf("_num_ecls = %u, acc = %u\n", _num_ecls, acc); 
+  MY_CHECK(_num_ecls == acc, "_num_ecls == acc");
 }
 
 
