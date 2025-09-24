@@ -21,8 +21,6 @@ int main(int argc, char *argv[]) {
   
   // Input file 
   std::string input_path = argv[1];
-  std::cout << "Input file: " << input_path << "\n"; 
-
 
   cudaEventRecord(startGPU);
   auto start = std::chrono::steady_clock::now();
@@ -32,7 +30,7 @@ int main(int argc, char *argv[]) {
     // g_ext.gpu_print();
 
     g_ext.read(input_path); 
-    g_ext.print_input(); 
+    g_ext.run(); 
   
   auto end = std::chrono::steady_clock::now();
   duration = end - start;

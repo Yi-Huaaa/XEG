@@ -13,6 +13,10 @@
 #include <chrono>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/strong_components.hpp>
+#include <nlohmann/json.hpp>
 
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
@@ -22,14 +26,22 @@ __global__ void GPU_print_test();
 class G_EXT {
 
 public:
-  void gpu_public_test() { gpu_private_test(); }
+  void gpu_public_test() { _gpu_private_test(); }
   void gpu_print();
   // Read input file
   void read(const std::string input_path); 
-  void print_input();
+
+  /* run */
+  void run() {
+    _SCC();
+  }
 
 private:
-  void gpu_private_test() { printf("\nclass G_EXT: Hello world CUDA function!\n"); }
+  void _gpu_private_test() { printf("\nclass G_EXT: Hello world CUDA function!\n"); }
+  /* run */
+  void _SCC(); 
+  void _construct_graph(std::vector<std::unordered_set<uint32_t>> &adj);
+  void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj);
 
   // read in from .json
   uint32_t _num_ende; // number of enodes
@@ -41,15 +53,15 @@ private:
   std::vector<uint32_t>  _ende_ecls; // the eclass that enode belonsg to
   std::vector<uint32_t>  _ende_child; 
   std::vector<uint32_t>  _ende_child_ptr; 
-  std::vector<uint32_t> _root_eclass_id; 
-
-  // e-graph to hypergraph to graph (skip hypergraph)
-
-  
+  std::vector<uint32_t> _root_eclass_id;
 
 
-}; // class G_EXT  
+  // Print function
+  void _print_input() const;
+  void _print_adj(const std::vector<std::unordered_set<uint32_t>>& adj) const;
 
 
-
+}; // class G_EXT
 #endif
+
+
