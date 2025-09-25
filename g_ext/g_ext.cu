@@ -123,6 +123,9 @@ void G_EXT::_SCC() {
   
   // Find SCC
   _find_SCC(adj); 
+
+  // Count dead node
+  _count_dead_nodes();
 }
 
 void G_EXT::_construct_graph(std::vector<std::unordered_set<uint32_t>> &adj) {
@@ -194,7 +197,7 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
   if (!real_sccs.empty()) {
     std::cout << "Totally have " << real_sccs.size() << " SCCs in this graph\n";
     for (size_t i = 0; i < real_sccs.size(); i++) {
-      std::cout << "SCC " << (i+1) << "(size = " << real_sccs[i].size() << ")"<< " {";
+      std::cout << "SCC " << (i+1) << " (size = " << real_sccs[i].size() << ")"<< " {";
       for (size_t j = 0; j < real_sccs[i].size(); j++) {
         std::cout << real_sccs[i][j];
         if (j + 1 < real_sccs[i].size()) std::cout << ", ";
@@ -215,6 +218,47 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
   MY_CHECK(_num_ecls == acc, "_num_ecls == acc");
 }
 
+void G_EXT::_count_dead_nodes() {
+  std::vector<bool> used(_num_ecls, false);
+
+  // 掃所有 enode 的 children，把被用到的 eclass 標記
+  for (uint32_t ende_idx = 0; ende_idx < _num_ende; ++ende_idx) {
+    uint32_t start = _ende_child_ptr[ende_idx];
+    uint32_t end   = _ende_child_ptr[ende_idx+1];
+    for (uint32_t j = start; j < end; j++) {
+      uint32_t child_ecls = _ende_child[j];
+      used[child_ecls] = true;
+    }
+  }
+
+  // root eclass 也算「被用到」
+  for (uint32_t r : _root_eclass_id) {
+    used[r] = true;
+  }
+
+  uint32_t dead_count = 0;
+  for (uint32_t e = 0; e < _num_ecls; e++) {
+    if (!used[e]) {
+      dead_count++;
+    }
+  }
+
+  std::cout << "Dead eclasses (no incoming edges and not root): "
+            << dead_count << " / " << _num_ecls << std::endl;
+
+  // std::vector<uint32_t> acc_ende_ecls; 
+  // acc_ende_ecls.resize(_num_ecls);
+  // for (uint32_t ende_idx = 0; ende_idx < _num_ende; ende_idx++) {
+  //   uint32_t ecls = _ende_ecls[ende_idx];
+  //   acc_ende_ecls[ecls]++;
+  // }
+  // for (uint32_t i = 0; i < acc_ende_ecls.size(); i++) {
+  //   if (acc_ende_ecls[i] > 20)
+  //     printf("EClass %u has %u enodes\n", i, acc_ende_ecls[i]); 
+  // }
+
+  std::cout << "==========================================\n\n";            
+}
 
 
 
@@ -258,8 +302,6 @@ void G_EXT::_print_input() const {
   MY_CHECK(_ende_op.size() == _num_ende, "!= _num_ende 2");
   MY_CHECK(_ende_cost.size() == _num_ende, "!= _num_ende 3");
   MY_CHECK(_ende_ecls.size() == _num_ende, "!= _num_ende 4");
-
-  std::cout << "==========================================\n\n";
 }
 
 void G_EXT::_print_adj(const std::vector<std::unordered_set<uint32_t>>& adj) const {

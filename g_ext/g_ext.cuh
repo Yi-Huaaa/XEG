@@ -42,6 +42,7 @@ private:
   void _SCC(); 
   void _construct_graph(std::vector<std::unordered_set<uint32_t>> &adj);
   void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj);
+  void _count_dead_nodes();
 
   // read in from .json
   uint32_t _num_ende; // number of enodes
