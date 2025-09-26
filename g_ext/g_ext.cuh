@@ -43,6 +43,8 @@ private:
   void _construct_graph(std::vector<std::unordered_set<uint32_t>> &adj);
   void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj);
   void _count_dead_nodes();
+  void _rebuild_graph(const std::vector<std::unordered_set<uint32_t>>& adj);
+  void _gpu_relaxation(); 
 
   // read in from .json
   uint32_t _num_ende; // number of enodes
