@@ -173,8 +173,8 @@ void G_EXT::_SCC() {
   // Rebuild graph (prune + collapse SCC)
   _rebuild_graph(adj);  
   
-  // GPU relaxation
-  _gpu_relaxation();  
+  // // GPU relaxation
+  // _gpu_relaxation();  
 }
 
 void G_EXT::_construct_graph(std::vector<std::unordered_set<uint32_t>> &adj) {
@@ -376,87 +376,87 @@ void G_EXT::_rebuild_graph(const std::vector<std::unordered_set<uint32_t>>& adj)
     for (auto tgt : super_adj[sid]) {
       std::cout << tgt << " ";
     }
-    std::cout << "}\n\n";
+    std::cout << "}\n";
   }
+  std::cout << "\n";
 }
 
 void G_EXT::_gpu_relaxation() {
   printf("Launching GPU Jacobi relaxation...\n");
 
-  // // --- Copy data to device ---
-  // uint32_t* d_ende_ecls;
-  // uint32_t* d_ende_child_ptr;
-  // uint32_t* d_ende_child;
-  // float*    d_ende_cost;
-  // float*    d_best_cost;
-  // bool*     d_updated;
+  // --- Copy data to device ---
+  uint32_t* d_ende_ecls;
+  uint32_t* d_ende_child_ptr;
+  uint32_t* d_ende_child;
+  float*    d_ende_cost;
+  float*    d_best_cost;
+  bool*     d_updated;
 
-  // cudaMalloc(&d_ende_ecls,      _ende_ecls.size() * sizeof(uint32_t));
-  // cudaMalloc(&d_ende_child_ptr, _ende_child_ptr.size() * sizeof(uint32_t));
-  // cudaMalloc(&d_ende_child,     _ende_child.size() * sizeof(uint32_t));
-  // cudaMalloc(&d_ende_cost,      _ende_cost.size() * sizeof(float));
-  // cudaMalloc(&d_best_cost,      _num_ecls * sizeof(float));
-  // cudaMalloc(&d_updated,        sizeof(bool));
+  cudaMalloc(&d_ende_ecls,      _ende_ecls.size() * sizeof(uint32_t));
+  cudaMalloc(&d_ende_child_ptr, _ende_child_ptr.size() * sizeof(uint32_t));
+  cudaMalloc(&d_ende_child,     _ende_child.size() * sizeof(uint32_t));
+  cudaMalloc(&d_ende_cost,      _ende_cost.size() * sizeof(float));
+  cudaMalloc(&d_best_cost,      _num_ecls * sizeof(float));
+  cudaMalloc(&d_updated,        sizeof(bool));
 
-  // cudaMemcpy(d_ende_ecls,      _ende_ecls.data(),      _ende_ecls.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
-  // cudaMemcpy(d_ende_child_ptr, _ende_child_ptr.data(), _ende_child_ptr.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
-  // cudaMemcpy(d_ende_child,     _ende_child.data(),     _ende_child.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
-  // cudaMemcpy(d_ende_cost,      _ende_cost.data(),      _ende_cost.size() * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_ende_ecls,      _ende_ecls.data(),      _ende_ecls.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_ende_child_ptr, _ende_child_ptr.data(), _ende_child_ptr.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_ende_child,     _ende_child.data(),     _ende_child.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_ende_cost,      _ende_cost.data(),      _ende_cost.size() * sizeof(float), cudaMemcpyHostToDevice);
 
-  // // init best_cost = INF
-  // std::vector<float> h_best_cost(_num_ecls, std::numeric_limits<float>::infinity());
-  // for (auto r : _root_eclass_id) h_best_cost[r] = 0.0f;
-  // cudaMemcpy(d_best_cost, h_best_cost.data(), _num_ecls * sizeof(float), cudaMemcpyHostToDevice);
+  // init best_cost = INF
+  std::vector<float> h_best_cost(_num_ecls, std::numeric_limits<float>::infinity());
+  cudaMemcpy(d_best_cost, h_best_cost.data(), _num_ecls * sizeof(float), cudaMemcpyHostToDevice);
 
-  // // --- Jacobi iteration ---
-  // bool h_updated;
-  // int threads = 1024;
-  // int blocks = (_num_ende + threads - 1) / threads;
+  // --- Jacobi iteration ---
+  bool h_updated;
+  int threads = 1024;
+  int blocks = (_num_ende + threads - 1) / threads;
 
-  // do {
-  //   h_updated = false;
-  //   cudaMemcpy(d_updated, &h_updated, sizeof(bool), cudaMemcpyHostToDevice);
+  while (h_updated) {
+    h_updated = false;
+    cudaMemcpy(d_updated, &h_updated, sizeof(bool), cudaMemcpyHostToDevice);
 
-  //   relax_enodes_kernel<<<blocks, threads>>>(
-  //     d_ende_ecls, d_ende_child_ptr, d_ende_child,
-  //     d_ende_cost, d_best_cost, _num_ende, d_updated
-  //   );
-  //   cudaDeviceSynchronize();
-  //   cudaCheckErrors("relax_enodes_kernel failed");
+    relax_enodes_kernel<<<blocks, threads>>>(
+      d_ende_ecls, d_ende_child_ptr, d_ende_child,
+      d_ende_cost, d_best_cost, _num_ende, d_updated
+    );
+    cudaDeviceSynchronize();
+    cudaCheckErrors("relax_enodes_kernel failed");
 
-  //   cudaMemcpy(&h_updated, d_updated, sizeof(bool), cudaMemcpyDeviceToHost);
-  // } while (h_updated);
+    cudaMemcpy(&h_updated, d_updated, sizeof(bool), cudaMemcpyDeviceToHost);
+  }
 
-  // // --- Copy back results ---
-  // cudaMemcpy(h_best_cost.data(), d_best_cost, _num_ecls * sizeof(float), cudaMemcpyDeviceToHost);
+  // --- Copy back results ---
+  cudaMemcpy(h_best_cost.data(), d_best_cost, _num_ecls * sizeof(float), cudaMemcpyDeviceToHost);
 
-  // printf("GPU relaxation finished. Sample best_cost:\n");
-  // for (size_t i = 0; i < std::min<size_t>(10, h_best_cost.size()); i++) {
-  //   printf("EClass %zu best_cost = %f\n", i, h_best_cost[i]);
-  // }
+  printf("GPU relaxation finished. Sample best_cost:\n");
+  for (size_t i = 0; i < std::min<size_t>(10, h_best_cost.size()); i++) {
+    printf("EClass %zu best_cost = %f\n", i, h_best_cost[i]);
+  }
 
-  //   // === New: Print final root results ===
-  // // 先建立反查表
-  // std::vector<std::string> id_to_name(_num_ecls);
-  // for (auto &kv : ecls_name_to_id) {
-  //   id_to_name[kv.second] = kv.first;
-  // }
+    // === New: Print final root results ===
+  // 先建立反查表
+  std::vector<std::string> id_to_name(_num_ecls);
+  for (auto &kv : ecls_name_to_id) {
+    id_to_name[kv.second] = kv.first;
+  }
 
-  // printf("\nFinal results (root eclasses):\n");
-  // for (auto r : _root_eclass_id) {
-  //   std::string name = (r < id_to_name.size() ? id_to_name[r] : "UNKNOWN");
-  //   float cost = h_best_cost[r];
-  //   printf("Root eclass %u (original name = %s) best_cost = %f\n",
-  //          r, name.c_str(), cost);
-  // }
+  printf("\nFinal results (root eclasses):\n");
+  for (auto r : _root_eclass_id) {
+    std::string name = (r < id_to_name.size() ? id_to_name[r] : "UNKNOWN");
+    float cost = h_best_cost[r];
+    printf("Root eclass %u (original name = %s) best_cost = %f\n",
+           r, name.c_str(), cost);
+  }
   
-  // // cleanup
-  // cudaFree(d_ende_ecls);
-  // cudaFree(d_ende_child_ptr);
-  // cudaFree(d_ende_child);
-  // cudaFree(d_ende_cost);
-  // cudaFree(d_best_cost);
-  // cudaFree(d_updated);
+  // cleanup
+  cudaFree(d_ende_ecls);
+  cudaFree(d_ende_child_ptr);
+  cudaFree(d_ende_child);
+  cudaFree(d_ende_cost);
+  cudaFree(d_best_cost);
+  cudaFree(d_updated);
 }
 
 
