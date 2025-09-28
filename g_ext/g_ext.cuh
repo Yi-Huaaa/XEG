@@ -43,7 +43,8 @@ public:
 
   /* run */
   void run() {
-    _preprocess(); 
+    _preprocess();
+    _gpu_relaxation();
   }
 
 private:
@@ -67,12 +68,13 @@ private:
                               std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj,
                               std::vector<std::unordered_set<uint32_t>>& super_adj);
     void _levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>>& super_adj,
-                              std::vector<uint32_t> levelize_leaves_to_roots);
-    void _get_queue_list(); 
-  // void _construct_graph(std::vector<std::unordered_set<uint32_t>> &adj);
-  // void _count_dead_nodes();
-  // void _rebuild_graph(const std::vector<std::unordered_set<uint32_t>>& adj);
-  // void _gpu_relaxation(); 
+                              std::vector<uint32_t>& levelize_leaves_to_roots);
+    void _get_queue_list(std::vector<uint32_t>& levelize_leaves_to_roots,
+                        std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
+                        std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
+                        std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj);
+
+  void _gpu_relaxation(); 
 
   // read in from .json
   uint32_t _num_ecls; // nuber of eclasses 
@@ -86,9 +88,12 @@ private:
   std::vector<uint32_t>  _ende_child_ptr; // "Alive + Dead"
   std::vector<uint32_t> _root_eclass_id;// "Alive + Dead"
 
+  // Prune dead enodes info
   uint32_t _num_alive_ecls; // nuber of "Alive" eclasses   
   uint32_t _num_alive_ende; // number of "Alive" enodes
   std::vector<bool> _alive_ecls;
+
+  // queue list for GPU brute-force algorithm 
 
 
 

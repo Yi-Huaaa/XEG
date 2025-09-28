@@ -1,7 +1,6 @@
 #include "g_ext.cuh"
 
 #define PRINT_LOG
-#define BRUTE_FORCE_GPU_FLAG 
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -379,7 +378,7 @@ void G_EXT::_construct_superGraph(const std::unordered_map<uint32_t, std::vector
 }
 
 void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>>& super_adj,
-                                  std::vector<uint32_t> levelize_leaves_to_roots) {
+                                  std::vector<uint32_t>& levelize_leaves_to_roots) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_levelize_from_leaves\n"); 
 #endif
@@ -429,18 +428,22 @@ void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>
 }
 
 
-void G_EXT::_get_queue_list() {
+void G_EXT::_get_queue_list(std::vector<uint32_t>& levelize_leaves_to_roots,
+                            std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
+                            std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
+                            std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_get_queue_list\n"); 
 #endif
 
-
-#ifdef BRUTE_FORCE_GPU_FLAG
-  printf("BRUTE_FORCE_GPU_FLAG_FLAG on\n"); 
-#endif 
 }
 
+void G_EXT::_gpu_relaxation() {
+#ifdef PRINT_LOG
+  printf("Inside G_EXT::_gpu_relaxation\n"); 
+#endif
 
+}
 
 
 

@@ -38,8 +38,8 @@ int main(int argc, char *argv[]) {
   cudaEventSynchronize(stopGPU);
   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
 
-  // std::cout << "GPU Time: " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
-  // printf("GPU Sort Time (ms) : %f (ms)\n", gpuTime);
+  std::cout << "GPU Time: " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
+  printf("GPU Sort Time (ms) : %f (ms)\n", gpuTime);
 
 
   return 0;
