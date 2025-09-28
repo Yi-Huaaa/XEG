@@ -193,7 +193,9 @@ void G_EXT::_prune_dead_nodes(uint32_t* num_ende,
 }
 
 void G_EXT::_get_superGraph() {
+#ifdef PRINT_LOG
   printf("Inside G_EXT::_get_superGraph()\n");
+#endif
 
   // Construct adj for the following step to find the SCC 
   std::unordered_map<uint32_t, uint32_t> ecls_id_to_tmp_id;
@@ -209,7 +211,9 @@ void G_EXT::_get_superGraph() {
 
 void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_tmp_id, 
                                   std::vector<std::unordered_set<uint32_t>>& alive_adj) {
+#ifdef PRINT_LOG
   printf("Inside G_EXT::_construct_alive_graph()\n"); 
+#endif
 
   uint32_t acc = 0; 
   for (uint32_t ecls = 0; ecls < _alive_ecls.size(); ecls++) {
@@ -219,6 +223,7 @@ void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_
     }
   }
   MY_CHECK(acc = _num_alive_ecls, "acc = _num_alive_ecls");
+
 #ifdef PRINT_LOG
   std::cout << "\necls_id_to_tmp_id:\n";
   for (auto &kv : ecls_id_to_tmp_id) {
@@ -226,34 +231,94 @@ void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_
   }
 #endif
 
-  // alive_adj.resize(_num_alive_ecls);
-  // for (uint32_t ende_idx = 0; ende_idx < _num_ende; ++ende_idx) {
-  //   uint32_t start = _ende_child_ptr[ende_idx];
-  //   uint32_t end   = _ende_child_ptr[ende_idx+1];
-  //   uint32_t ecls = _ende_ecls[ende_idx];
-  //   uint32_t new_ecls = ecls_id_to_tmp_id[ecls];
+  alive_adj.resize(_num_alive_ecls);
+  for (uint32_t ende_idx = 0; ende_idx < _num_ende; ++ende_idx) {
+    uint32_t start = _ende_child_ptr[ende_idx];
+    uint32_t end   = _ende_child_ptr[ende_idx+1];
+    uint32_t ecls = _ende_ecls[ende_idx];
+    uint32_t new_ecls = ecls_id_to_tmp_id[ecls];
 
-  //   for (uint32_t j = start; j < end; j++) {
-  //     uint32_t cd_ecls_idx = _ende_child[j];
-  //     uint32_t new_cd_ecls_idx = ecls_id_to_tmp_id[cd_ecls_idx];
-  //     if (_alive_ecls[ecls] && (new_ecls != new_cd_ecls_idx)) {
-  //       alive_adj[new_ecls].insert(new_cd_ecls_idx); 
-  //     }
-  //   }
-  // }
+    for (uint32_t j = start; j < end; j++) {
+      uint32_t cd_ecls_idx = _ende_child[j];
+      uint32_t new_cd_ecls_idx = ecls_id_to_tmp_id[cd_ecls_idx];
+      if (_alive_ecls[ecls] && (new_ecls != new_cd_ecls_idx)) {
+        alive_adj[new_ecls].insert(new_cd_ecls_idx); 
+      }
+    }
+  }
 
 #ifdef PRINT_LOG
-  // printf("alive_adj: \n"); 
-  // _print_adj(alive_adj); 
+  printf("alive_adj: \n"); 
+  _print_adj(alive_adj); 
 #endif  
 }
 
-void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& alive_adj) {
+void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
+#ifdef PRINT_LOG
   printf("Inside G_EXT::_find_SCC()\n"); 
+#endif
+  using namespace boost;
+  uint32_t acc = 0;
+
+  typedef adjacency_list<vecS, vecS, directedS> Graph;
+  Graph g(adj.size());
+
+  for (size_t u = 0; u < adj.size(); u++) {
+    for (auto v : adj[u]) {
+      add_edge(u, v, g);
+    }
+  }
+
+  std::vector<int> component(num_vertices(g));
+  int num = strong_components(
+    g, make_iterator_property_map(component.begin(), get(vertex_index, g))
+  );
+
+  std::unordered_map<int, std::vector<int>> comp_nodes;
+  for (size_t i = 0; i < component.size(); i++) {
+    comp_nodes[component[i]].push_back(i);
+  }
+
+  std::vector<std::vector<int>> real_sccs;
+  std::vector<int> singletons;
+  for (auto &kv : comp_nodes) {
+    if (kv.second.size() > 1) {
+      real_sccs.push_back(kv.second);
+    } else {
+      singletons.push_back(kv.second[0]);
+    }
+  }
+
+#ifdef PRINT_LOG  
+  if (!real_sccs.empty()) {
+    std::cout << "Totally have " << real_sccs.size() << " SCCs in this graph\n";
+    for (size_t i = 0; i < real_sccs.size(); i++) {
+      std::cout << "SCC " << (i+1) << " (size = " << real_sccs[i].size() << ")"<< " {";
+      for (size_t j = 0; j < real_sccs[i].size(); j++) {
+        std::cout << real_sccs[i][j];
+        if (j + 1 < real_sccs[i].size()) std::cout << ", ";
+        acc++;
+      }
+      std::cout << "}\n";
+    }
+    if (!singletons.empty()) {
+      std::cout << "The remaining nodes (not in SCCs) (size = " << singletons.size() << ") \n";
+      acc += singletons.size();
+    }
+  } else {
+    std::cout << "This is a DAG (no SCC)\n\n";
+    acc = _num_alive_ecls;
+  }
+  MY_CHECK(_num_alive_ecls == acc, "_num_alive_ecls == acc");
+  printf("\n");
+#endif
 }
 
 void G_EXT::_construct_superGraph() {
+#ifdef PRINT_LOG
   printf("Inside G_EXT::_construct_superGraph\n"); 
+#endif
+
 }
 
 

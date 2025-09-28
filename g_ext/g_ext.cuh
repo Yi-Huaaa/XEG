@@ -60,7 +60,7 @@ private:
   void _get_superGraph(); 
     void _construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_tmp_id, 
                                 std::vector<std::unordered_set<uint32_t>>& alive_adj);
-    void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& alive_adj);
+    void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj);
     void _construct_superGraph(); 
   // void _construct_graph(std::vector<std::unordered_set<uint32_t>> &adj);
   // void _count_dead_nodes();
