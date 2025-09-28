@@ -1,6 +1,8 @@
 #include "g_ext.cuh"
 
 #define PRINT_LOG
+#define BRUTE_FORCE_GPU_FLAG 
+
 #define ENABLE_CHECK
 // Error checking macro for CPU 
 #ifdef ENABLE_CHECK
@@ -192,24 +194,34 @@ void G_EXT::_prune_dead_nodes(uint32_t* num_ende,
 #endif 
 }
 
-void G_EXT::_get_superGraph() {
+void G_EXT::_preprocess() {
 #ifdef PRINT_LOG
-  printf("Inside G_EXT::_get_superGraph()\n");
+  printf("Inside G_EXT::_preprocess()\n");
 #endif
 
   // Construct adj for the following step to find the SCC 
-  std::unordered_map<uint32_t, uint32_t> ecls_id_to_tmp_id;
+  std::unordered_map<uint32_t, uint32_t> ecls_id_to_alive_id;
   std::vector<std::unordered_set<uint32_t>> alive_adj;
-  _construct_alive_graph(ecls_id_to_tmp_id, alive_adj); 
+  _construct_alive_graph(ecls_id_to_alive_id, alive_adj); 
 
   // Find SCC
-  _find_SCC(alive_adj); 
+  std::unordered_map<uint32_t, std::vector<uint32_t>> comp_nodes;
+  _find_SCC(alive_adj, comp_nodes);
 
   // Construct supernode adj 
-  _construct_superGraph();
+  std::unordered_map<uint32_t, uint32_t> alive_id_to_super_adj;
+  std::vector<std::unordered_set<uint32_t>> super_adj;
+  _construct_superGraph(comp_nodes, alive_adj, alive_id_to_super_adj, super_adj);
+
+  // Levelize supergraph
+  std::vector<uint32_t> levelize_leaves_to_roots; 
+  _levelize_from_leaves(super_adj, levelize_leaves_to_roots); 
+
+  // Construct queue list 
+  _get_queue_list(); 
 }
 
-void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_tmp_id, 
+void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
                                   std::vector<std::unordered_set<uint32_t>>& alive_adj) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_construct_alive_graph()\n"); 
@@ -218,15 +230,15 @@ void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_
   uint32_t acc = 0; 
   for (uint32_t ecls = 0; ecls < _alive_ecls.size(); ecls++) {
     if (_alive_ecls[ecls]) {
-      ecls_id_to_tmp_id[ecls] = acc; 
+      ecls_id_to_alive_id[ecls] = acc; 
       acc++; 
     }
   }
   MY_CHECK(acc = _num_alive_ecls, "acc = _num_alive_ecls");
 
 #ifdef PRINT_LOG
-  std::cout << "\necls_id_to_tmp_id:\n";
-  for (auto &kv : ecls_id_to_tmp_id) {
+  std::cout << "\necls_id_to_alive_id:\n";
+  for (auto &kv : ecls_id_to_alive_id) {
     std::cout << "  " << kv.first << " -> " << kv.second << "\n";
   }
 #endif
@@ -236,11 +248,11 @@ void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_
     uint32_t start = _ende_child_ptr[ende_idx];
     uint32_t end   = _ende_child_ptr[ende_idx+1];
     uint32_t ecls = _ende_ecls[ende_idx];
-    uint32_t new_ecls = ecls_id_to_tmp_id[ecls];
+    uint32_t new_ecls = ecls_id_to_alive_id[ecls];
 
     for (uint32_t j = start; j < end; j++) {
       uint32_t cd_ecls_idx = _ende_child[j];
-      uint32_t new_cd_ecls_idx = ecls_id_to_tmp_id[cd_ecls_idx];
+      uint32_t new_cd_ecls_idx = ecls_id_to_alive_id[cd_ecls_idx];
       if (_alive_ecls[ecls] && (new_ecls != new_cd_ecls_idx)) {
         alive_adj[new_ecls].insert(new_cd_ecls_idx); 
       }
@@ -250,15 +262,16 @@ void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_
 #ifdef PRINT_LOG
   printf("alive_adj: \n"); 
   _print_adj(alive_adj); 
+  printf("\n"); 
 #endif  
 }
 
-void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
+void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj,
+                      std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_find_SCC()\n"); 
 #endif
   using namespace boost;
-  uint32_t acc = 0;
 
   typedef adjacency_list<vecS, vecS, directedS> Graph;
   Graph g(adj.size());
@@ -269,18 +282,31 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
     }
   }
 
-  std::vector<int> component(num_vertices(g));
-  int num = strong_components(
+  std::vector<uint32_t> component(num_vertices(g));
+  uint32_t num = strong_components(
     g, make_iterator_property_map(component.begin(), get(vertex_index, g))
   );
-
-  std::unordered_map<int, std::vector<int>> comp_nodes;
+  
   for (size_t i = 0; i < component.size(); i++) {
     comp_nodes[component[i]].push_back(i);
   }
 
-  std::vector<std::vector<int>> real_sccs;
-  std::vector<int> singletons;
+#ifdef PRINT_LOG  
+  std::cout << "\n========== comp_nodes dump ==========\n";
+  for (const auto& kv : comp_nodes) {
+    uint32_t comp_id = kv.first;
+    const auto& nodes = kv.second;
+    std::cout << "Component " << comp_id << " (size=" << nodes.size() << "): { ";
+    for (size_t i = 0; i < nodes.size(); i++) {
+      std::cout << nodes[i];
+      if (i + 1 < nodes.size()) std::cout << ", ";
+    }
+    std::cout << " }\n";
+  }
+  std::cout << "=====================================\n\n";  
+
+  std::vector<std::vector<uint32_t>> real_sccs; // only used for check and debug
+  std::vector<uint32_t> singletons; // only used for check and debug
   for (auto &kv : comp_nodes) {
     if (kv.second.size() > 1) {
       real_sccs.push_back(kv.second);
@@ -288,8 +314,7 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
       singletons.push_back(kv.second[0]);
     }
   }
-
-#ifdef PRINT_LOG  
+  uint32_t acc = 0; // only used for check and debug
   if (!real_sccs.empty()) {
     std::cout << "Totally have " << real_sccs.size() << " SCCs in this graph\n";
     for (size_t i = 0; i < real_sccs.size(); i++) {
@@ -314,13 +339,65 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj) {
 #endif
 }
 
-void G_EXT::_construct_superGraph() {
+void G_EXT::_construct_superGraph(const std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
+                                  const std::vector<std::unordered_set<uint32_t>>& alive_adj,
+                                  std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj,
+                                  std::vector<std::unordered_set<uint32_t>>& super_adj) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_construct_superGraph\n"); 
 #endif
 
+  // Construct alive_id_to_super_adj
+  for (const auto& kv : comp_nodes) {
+    uint32_t comp_id = kv.first;
+    const auto& nodes = kv.second;
+    for (size_t i = 0; i < nodes.size(); i++) {
+      alive_id_to_super_adj[nodes[i]] = comp_id;
+    }
+  }
+  
+  // Construct super_adj
+  super_adj.resize(comp_nodes.size());
+  for (uint32_t ecls = 0; ecls < alive_adj.size(); ecls++) {
+    uint32_t new_ecls = alive_id_to_super_adj[ecls];
+    for (uint32_t cd_ecls : alive_adj[ecls]) {
+      uint32_t new_cd_ecls_idx = alive_id_to_super_adj[cd_ecls];
+      if (new_ecls != new_cd_ecls_idx)
+        super_adj[new_ecls].insert(new_cd_ecls_idx);
+    }
+  }
+
+#ifdef PRINT_LOG
+  std::cout << "\nalive_id_to_super_adj:\n";
+  for (auto &kv : alive_id_to_super_adj) {
+    std::cout << "  " << kv.first << " -> " << kv.second << "\n";
+  }
+  printf("super_adj:\n"); 
+  _print_adj(super_adj);
+  printf("\n"); 
+#endif
 }
 
+void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>>& super_adj,
+                                  std::vector<uint32_t> levelize_leaves_to_roots) {
+#ifdef PRINT_LOG
+  printf("Inside G_EXT::_levelize_from_leaves\n"); 
+#endif
+  
+
+}
+
+
+void G_EXT::_get_queue_list() {
+#ifdef PRINT_LOG
+  printf("Inside G_EXT::_get_queue_list\n"); 
+#endif
+
+
+#ifdef BRUTE_FORCE_GPU_FLAG
+  printf("BRUTE_FORCE_GPU_FLAG_FLAG on\n"); 
+#endif 
+}
 
 
 

@@ -43,7 +43,7 @@ public:
 
   /* run */
   void run() {
-    _get_superGraph(); 
+    _preprocess(); 
   }
 
 private:
@@ -57,11 +57,18 @@ private:
                         uint32_t* num_ecls);
   
   /* Run */
-  void _get_superGraph(); 
-    void _construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_tmp_id, 
+  void _preprocess(); 
+    void _construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
                                 std::vector<std::unordered_set<uint32_t>>& alive_adj);
-    void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj);
-    void _construct_superGraph(); 
+    void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj,
+                   std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes);
+    void _construct_superGraph(const std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
+                              const std::vector<std::unordered_set<uint32_t>>& alive_adj,
+                              std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj,
+                              std::vector<std::unordered_set<uint32_t>>& super_adj);
+    void _levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>>& super_adj,
+                              std::vector<uint32_t> levelize_leaves_to_roots);
+    void _get_queue_list(); 
   // void _construct_graph(std::vector<std::unordered_set<uint32_t>> &adj);
   // void _count_dead_nodes();
   // void _rebuild_graph(const std::vector<std::unordered_set<uint32_t>>& adj);
