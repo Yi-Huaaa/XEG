@@ -29,34 +29,60 @@ public:
   void gpu_public_test() { _gpu_private_test(); }
   void gpu_print();
   // Read input file
-  void read(const std::string input_path); 
+  void read(const std::string input_path) {
+    // Tempory memory 
+    uint32_t num_ende = 0, num_ecls = 0;
+
+    _read_input(input_path, 
+                &num_ende, 
+                &num_ecls); 
+
+    _prune_dead_nodes(&num_ende, 
+                      &num_ecls);
+  }
 
   /* run */
   void run() {
-    _SCC();
+    _get_superGraph(); 
   }
 
 private:
   void _gpu_private_test() { printf("\nclass G_EXT: Hello world CUDA function!\n"); }
-  /* run */
-  void _SCC(); 
-  void _construct_graph(std::vector<std::unordered_set<uint32_t>> &adj);
-  void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj);
-  void _count_dead_nodes();
-  void _rebuild_graph(const std::vector<std::unordered_set<uint32_t>>& adj);
-  void _gpu_relaxation(); 
+  /* Read */
+  void _read_input(const std::string input_path, 
+                  uint32_t* num_ende,
+                  uint32_t* num_ecls);
+
+  void _prune_dead_nodes(uint32_t* num_ende,
+                        uint32_t* num_ecls);
+  
+  /* Run */
+  void _get_superGraph(); 
+    void _construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_tmp_id, 
+                                std::vector<std::unordered_set<uint32_t>>& alive_adj);
+    void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& alive_adj);
+    void _construct_superGraph(); 
+  // void _construct_graph(std::vector<std::unordered_set<uint32_t>> &adj);
+  // void _count_dead_nodes();
+  // void _rebuild_graph(const std::vector<std::unordered_set<uint32_t>>& adj);
+  // void _gpu_relaxation(); 
 
   // read in from .json
-  uint32_t _num_ende; // number of enodes
   uint32_t _num_ecls; // nuber of eclasses 
-  std::vector<std::string>  _ende_name; 
-  std::vector<std::string>  _ende_op; 
-  std::vector<float>  _ende_cost; 
-  std::unordered_map<std::string, uint32_t> ecls_name_to_id; 
-  std::vector<uint32_t>  _ende_ecls; // the eclass that enode belonsg to
-  std::vector<uint32_t>  _ende_child; 
-  std::vector<uint32_t>  _ende_child_ptr; 
-  std::vector<uint32_t> _root_eclass_id;
+  uint32_t _num_ende; // number of enodes
+  std::vector<std::string>  _ende_name; // "Alive + Dead"
+  std::vector<std::string>  _ende_op; // "Alive + Dead"
+  std::vector<float>  _ende_cost; // "Alive + Dead"
+  std::unordered_map<std::string, uint32_t> _ecls_name_to_id; // "Alive + Dead"
+  std::vector<uint32_t>  _ende_ecls; // the eclass that enode belonsg to; // "Alive + Dead"
+  std::vector<uint32_t>  _ende_child; // "Alive + Dead"
+  std::vector<uint32_t>  _ende_child_ptr; // "Alive + Dead"
+  std::vector<uint32_t> _root_eclass_id;// "Alive + Dead"
+
+  uint32_t _num_alive_ecls; // nuber of "Alive" eclasses   
+  uint32_t _num_alive_ende; // number of "Alive" enodes
+  std::vector<bool> _alive_ecls;
+
 
 
   // Print function
