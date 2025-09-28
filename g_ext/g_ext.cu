@@ -218,7 +218,7 @@ void G_EXT::_preprocess() {
   _levelize_from_leaves(super_adj, levelize_leaves_to_roots); 
 
   // Construct queue list 
-  _get_queue_list(); 
+  _get_queue_list(levelize_leaves_to_roots, ecls_id_to_alive_id, comp_nodes, alive_id_to_super_adj); 
 }
 
 void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
@@ -383,8 +383,49 @@ void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_levelize_from_leaves\n"); 
 #endif
-  
+  // Make live easier
+  const size_t N = super_adj.size();
 
+  // Construct in-degree; Note: We want sort levelize from leaves to roots! 
+  std::vector<uint32_t> indeg(N, 0);
+  for (size_t u = 0; u < N; u++) {
+    for (auto v : super_adj[u]) {
+      indeg[v]++;
+    }
+  }
+
+  std::queue<uint32_t> q;
+  for (size_t i = 0; i < N; i++) {
+    if (indeg[i] == 0) { q.push(i); }
+  }
+
+  // BFS
+  while (!q.empty()) {
+    uint32_t u = q.front(); 
+    q.pop();
+    levelize_leaves_to_roots.push_back(u);
+
+    for (auto v : super_adj[u]) {
+      indeg[v]--;
+      if (indeg[v] == 0) { q.push(v); }
+    }
+  }
+  
+  // Note: We want from leaves to roots
+  std::reverse(levelize_leaves_to_roots.begin(), levelize_leaves_to_roots.end());  
+  MY_CHECK(levelize_leaves_to_roots.size() == N, "levelize_leaves_to_roots.size() == N");
+
+#ifdef PRINT_LOG
+  printf("indeg:\n"); 
+  for (uint32_t i = 0; i < indeg.size(); i++) {
+    printf("Node[%u]'s indeg = %u\n", i, indeg[i]);
+  }
+
+  std::cout << "Levelized order (leaf -> root): ";
+  for (auto n : levelize_leaves_to_roots) std::cout << n << " ";
+  std::cout << "\n";
+  printf("\n"); 
+#endif
 }
 
 
