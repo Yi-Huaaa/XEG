@@ -69,23 +69,22 @@ private:
                               std::vector<std::unordered_set<uint32_t>>& super_adj);
     void _levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>>& super_adj,
                               std::vector<uint32_t>& levelize_leaves_to_roots);
-    void _get_queue_list(std::vector<uint32_t>& levelize_leaves_to_roots,
-                        std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
-                        std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
-                        std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj);
+    void _get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_roots,
+                        const std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
+                        const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj);
 
   void _gpu_relaxation(); 
 
   // read in from .json
   uint32_t _num_ecls; // nuber of eclasses 
   uint32_t _num_ende; // number of enodes
-  std::vector<std::string>  _ende_name; // "Alive + Dead"
-  std::vector<std::string>  _ende_op; // "Alive + Dead"
-  std::vector<float>  _ende_cost; // "Alive + Dead"
+  std::vector<std::string> _ende_name; // "Alive + Dead"
+  std::vector<std::string> _ende_op; // "Alive + Dead"
+  std::vector<float> _ende_cost; // "Alive + Dead"
   std::unordered_map<std::string, uint32_t> _ecls_name_to_id; // "Alive + Dead"
-  std::vector<uint32_t>  _ende_ecls; // the eclass that enode belonsg to; // "Alive + Dead"
-  std::vector<uint32_t>  _ende_child; // "Alive + Dead"
-  std::vector<uint32_t>  _ende_child_ptr; // "Alive + Dead"
+  std::vector<uint32_t> _ende_ecls; // the eclass that enode belonsg to; // "Alive + Dead"
+  std::vector<uint32_t> _ende_child; // "Alive + Dead"
+  std::vector<uint32_t> _ende_child_ptr; // "Alive + Dead"
   std::vector<uint32_t> _root_eclass_id;// "Alive + Dead"
 
   // Prune dead enodes info
@@ -94,8 +93,8 @@ private:
   std::vector<bool> _alive_ecls;
 
   // queue list for GPU brute-force algorithm 
-
-
+  std::vector<uint32_t> _queue_list;
+      
 
   // Print function
   void _print_input() const;

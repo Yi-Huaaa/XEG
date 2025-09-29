@@ -217,7 +217,7 @@ void G_EXT::_preprocess() {
   _levelize_from_leaves(super_adj, levelize_leaves_to_roots); 
 
   // Construct queue list 
-  _get_queue_list(levelize_leaves_to_roots, ecls_id_to_alive_id, comp_nodes, alive_id_to_super_adj); 
+  _get_queue_list(levelize_leaves_to_roots, ecls_id_to_alive_id, alive_id_to_super_adj); 
 }
 
 void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
@@ -428,14 +428,65 @@ void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>
 }
 
 
-void G_EXT::_get_queue_list(std::vector<uint32_t>& levelize_leaves_to_roots,
-                            std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
-                            std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
-                            std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj) {
+void G_EXT::_get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_roots,
+                            const std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
+                            const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_get_queue_list\n"); 
 #endif
+  std::vector<uint32_t> super_idx_to_level; // give each super node one level
+  super_idx_to_level.resize(levelize_leaves_to_roots.size()); 
+  for (uint32_t i = 0; i < levelize_leaves_to_roots.size(); i++) {
+    super_idx_to_level[levelize_leaves_to_roots[i]] = i;
+    MY_CHECK(levelize_leaves_to_roots[i] < levelize_leaves_to_roots.size(), "levelize_leaves_to_roots[i] < levelize_leaves_to_roots.size()"); 
+  }
+#ifdef PRINT_LOG
+  printf("super_idx_to_level:\n"); 
+  for (uint32_t i = 0; i < super_idx_to_level.size(); i++) {
+    std::cout << "  super_idx " << i << " -> level " << super_idx_to_level[i] << "\n";
+  }
+#endif 
 
+  uint32_t acc = 0;
+  std::vector<std::vector<uint32_t>> _queue_list_2D; // list
+  _queue_list_2D.resize(levelize_leaves_to_roots.size(), std::vector<uint32_t>());
+  for (uint32_t ende_idx = 0; ende_idx < _num_ende; ende_idx++) {
+    uint32_t ecls = _ende_ecls[ende_idx];
+    if (_alive_ecls[ecls]) {
+      auto it_alive = ecls_id_to_alive_id.find(ecls);
+      uint32_t alive_idx = it_alive->second;
+      auto it_super = alive_id_to_super_adj.find(alive_idx);
+      uint32_t super_idx = it_super->second;
+      MY_CHECK(it_alive != ecls_id_to_alive_id.end(), "ecls not found in ecls_id_to_alive_id");
+      MY_CHECK(it_super != alive_id_to_super_adj.end(), "alive_idx not found in alive_id_to_super_adj");
+      uint32_t level = super_idx_to_level[super_idx];
+      _queue_list_2D[level].push_back(ende_idx);
+      acc++;
+      #ifdef PRINT_LOG 
+        printf("ende_idx = %u, ecls = %u, alive_idx = %u, super_idx = %u, level = %u\n", 
+                ende_idx, ecls, alive_idx, super_idx, level); 
+      #endif
+    } else {
+      #ifdef PRINT_LOG 
+        printf("ende_idx = %u, ecls = %u, dead eclass\n", ende_idx, ecls); 
+      #endif
+    }    
+  }
+  MY_CHECK(acc == _num_alive_ende, "acc == _num_alive_ende");
+
+  _queue_list.reserve(acc);
+  for (const auto& inner : _queue_list_2D) {
+    _queue_list.insert(_queue_list.end(), inner.begin(), inner.end());
+  }
+
+#ifdef PRINT_LOG 
+  std::cout << "_queue_list (size=" << _queue_list.size() << ", with _num_alive_ende=" << _num_alive_ende << "): ";
+  for (size_t i = 0; i < _queue_list.size(); i++) {
+    std::cout << _queue_list[i];
+    if (i + 1 < _queue_list.size()) std::cout << ", ";
+  }
+  std::cout << std::endl;
+#endif
 }
 
 void G_EXT::_gpu_relaxation() {
