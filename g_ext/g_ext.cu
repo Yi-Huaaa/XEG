@@ -495,8 +495,8 @@ void G_EXT::_cpu_relaxation() {
 #endif
   // Make all of the data into CSR format 
   uint32_t N = _queue_list.size();
-  std::vector<float> csr_ende_cost; csr_ende_cost.resize(N); 
-  std::vector<uint32_t> csr_ende_ecls; csr_ende_ecls.resize(N); 
+  std::vector<float> csr_ende_cost; csr_ende_cost.resize(N, 0.0); 
+  std::vector<uint32_t> csr_ende_ecls; csr_ende_ecls.resize(N, 0); 
   std::vector<uint32_t> csr_ende_child;
   std::vector<uint32_t> csr_ende_child_ptr; csr_ende_child_ptr.resize(N+1); 
   std::vector<uint32_t> csr_root_eclass_id(_root_eclass_id); // copy
@@ -504,9 +504,9 @@ void G_EXT::_cpu_relaxation() {
   // Init 
   uint32_t acc = 0;
   for (uint32_t n = 0; n < N; n++) {
-    uint32_t ende = _queue_list[n]; 
-    csr_ende_cost[n] = _ende_ecls[ende];
-    csr_ende_ecls[n] = _ende_cost[ende];
+    uint32_t ende = _queue_list[n];
+    csr_ende_cost[n] = _ende_cost[ende];
+    csr_ende_ecls[n] = _ende_ecls[ende];
     csr_ende_child_ptr[n] = acc; 
     uint32_t start = _ende_child_ptr[ende];
     uint32_t end   = _ende_child_ptr[ende + 1];
@@ -518,14 +518,40 @@ void G_EXT::_cpu_relaxation() {
   }
   csr_ende_child_ptr[N] = acc; 
 
-  // CPU relaxation 
-  
-  
-  
-
 #ifdef PRINT_LOG
+  printf("\n"); 
+  printf("=== CSR Data Dump ===\n");
+  printf("csr_ende_cost:\n");
+  for (size_t i = 0; i < csr_ende_cost.size(); i++) {
+    printf("  [%zu] = %.1f\n", i, csr_ende_cost[i]);
+  }
 
+  printf("\ncsr_ende_ecls:\n");
+  for (size_t i = 0; i < csr_ende_ecls.size(); i++) {
+    printf("  [%zu] = %u\n", i, csr_ende_ecls[i]);
+  }
+
+  printf("\ncsr_ende_child_ptr:\n");
+  for (size_t i = 0; i < csr_ende_child_ptr.size(); i++) {
+    printf("  [%zu] = %u\n", i, csr_ende_child_ptr[i]);
+  }
+
+  printf("\ncsr_ende_child:\n");
+  for (size_t i = 0; i < csr_ende_child.size(); i++) {
+    printf("  [%zu] = %u\n", i, csr_ende_child[i]);
+  }
+
+  printf("\ncsr_root_eclass_id:\n");
+  for (size_t i = 0; i < csr_root_eclass_id.size(); i++) {
+    printf("  [%zu] = %u\n", i, csr_root_eclass_id[i]);
+  }
+  
+  printf("=====================\n");
+  printf("\n"); 
 #endif 
+
+  // CPU relaxation 
+  TODO here /
 }
 
 void G_EXT::_gpu_relaxation() {
