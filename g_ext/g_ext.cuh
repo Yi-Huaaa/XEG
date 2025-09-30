@@ -44,7 +44,8 @@ public:
   /* run */
   void run() {
     _preprocess();
-    _gpu_relaxation();
+    _cpu_relaxation();
+    // _gpu_relaxation();
   }
 
 private:
@@ -73,6 +74,7 @@ private:
                         const std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
                         const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj);
 
+  void _cpu_relaxation(); 
   void _gpu_relaxation(); 
 
   // read in from .json

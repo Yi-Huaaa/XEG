@@ -489,10 +489,50 @@ void G_EXT::_get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_root
 #endif
 }
 
+void G_EXT::_cpu_relaxation() {
+#ifdef PRINT_LOG
+  printf("Inside G_EXT::_gpu_relaxation()\n"); 
+#endif
+  // Make all of the data into CSR format 
+  uint32_t N = _queue_list.size();
+  std::vector<float> csr_ende_cost; csr_ende_cost.resize(N); 
+  std::vector<uint32_t> csr_ende_ecls; csr_ende_ecls.resize(N); 
+  std::vector<uint32_t> csr_ende_child;
+  std::vector<uint32_t> csr_ende_child_ptr; csr_ende_child_ptr.resize(N+1); 
+  std::vector<uint32_t> csr_root_eclass_id(_root_eclass_id); // copy
+
+  // Init 
+  uint32_t acc = 0;
+  for (uint32_t n = 0; n < N; n++) {
+    uint32_t ende = _queue_list[n]; 
+    csr_ende_cost[n] = _ende_ecls[ende];
+    csr_ende_ecls[n] = _ende_cost[ende];
+    csr_ende_child_ptr[n] = acc; 
+    uint32_t start = _ende_child_ptr[ende];
+    uint32_t end   = _ende_child_ptr[ende + 1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t val = _ende_child[jj]; 
+      csr_ende_child.push_back(val);
+      acc++;
+    }
+  }
+  csr_ende_child_ptr[N] = acc; 
+
+  // CPU relaxation 
+  
+  
+  
+
+#ifdef PRINT_LOG
+
+#endif 
+}
+
 void G_EXT::_gpu_relaxation() {
 #ifdef PRINT_LOG
-  printf("Inside G_EXT::_gpu_relaxation\n"); 
+  printf("Inside G_EXT::_gpu_relaxation()\n"); 
 #endif
+  // TODO here 
 
 }
 
