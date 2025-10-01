@@ -37,6 +37,15 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 target_link_libraries(g_ext PRIVATE Threads::Threads)
 
+# -----------------------------------------------------------------------------
+# Find the openMP library
+# -----------------------------------------------------------------------------
+find_package(OpenMP REQUIRED)
+target_link_libraries(g_ext PRIVATE OpenMP::OpenMP_CXX)
+
+
+
+
 # Set compiler flags for the "g_ext" library
 target_compile_options(g_ext PRIVATE
   -Wall

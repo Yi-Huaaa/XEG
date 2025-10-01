@@ -489,7 +489,7 @@ void G_EXT::_get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_root
 #endif
 }
 
-void G_EXT::_cpu_relaxation() {
+float G_EXT::_cpu_relaxation() {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_gpu_relaxation()\n"); 
 #endif
@@ -499,7 +499,6 @@ void G_EXT::_cpu_relaxation() {
   std::vector<uint32_t> csr_ende_ecls; csr_ende_ecls.resize(N, 0); 
   std::vector<uint32_t> csr_ende_child;
   std::vector<uint32_t> csr_ende_child_ptr; csr_ende_child_ptr.resize(N+1); 
-  std::vector<uint32_t> csr_root_eclass_id(_root_eclass_id); // copy
 
   // Init 
   uint32_t acc = 0;
@@ -541,18 +540,60 @@ void G_EXT::_cpu_relaxation() {
     printf("  [%zu] = %u\n", i, csr_ende_child[i]);
   }
 
-  printf("\ncsr_root_eclass_id:\n");
-  for (size_t i = 0; i < csr_root_eclass_id.size(); i++) {
-    printf("  [%zu] = %u\n", i, csr_root_eclass_id[i]);
-  }
-  
   printf("=====================\n");
   printf("\n"); 
 #endif 
 
   // CPU relaxation 
-  TODO here /
+  bool h_update = true;
+  std::vector<float> cost_of_ecls; 
+  cost_of_ecls.resize(_num_ecls, std::numeric_limits<float>::infinity());
+ 
+  while (h_update) {
+    h_update = false;
+
+    #pragma omp parallel
+    {
+      #pragma omp for
+      for (uint32_t t_idx = 0; t_idx < N; t_idx++) {
+        float acc_cost = csr_ende_cost[t_idx];
+        uint32_t start = csr_ende_child_ptr[t_idx];
+        uint32_t end   = csr_ende_child_ptr[t_idx+1];
+        for (uint32_t jj = start; jj < end; jj++) {
+          acc_cost += cost_of_ecls[csr_ende_child[jj]];
+        }
+
+        const uint32_t which_ecls = csr_ende_ecls[t_idx];
+
+        #pragma omp critical
+        {
+          if (acc_cost < cost_of_ecls[which_ecls]) {
+            cost_of_ecls[which_ecls] = acc_cost;
+            h_update = true;
+          }
+        }
+      }
+    }
+  }
+
+#ifdef PRINT_LOG
+  printf("\ncost_of_ecls:\n");
+  for (size_t i = 0; i < cost_of_ecls.size(); i++) {
+    printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
+  }
+  printf("\n");
+#endif
+
+  float ret = std::numeric_limits<float>::infinity();
+  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
+    ret = (ret > cost_of_ecls[_root_eclass_id[r]]) 
+          ? (cost_of_ecls[_root_eclass_id[r]]) 
+          : (ret);
+  }
+
+  return ret; 
 }
+
 
 void G_EXT::_gpu_relaxation() {
 #ifdef PRINT_LOG

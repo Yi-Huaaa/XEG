@@ -17,6 +17,8 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/strong_components.hpp>
 #include <nlohmann/json.hpp>
+#include <limits>
+#include <omp.h>
 
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
@@ -42,9 +44,10 @@ public:
   }
 
   /* run */
-  void run() {
+  float run() {
     _preprocess();
-    _cpu_relaxation();
+    float cpu_res = _cpu_relaxation();
+    return cpu_res;
     // _gpu_relaxation();
   }
 
@@ -74,7 +77,7 @@ private:
                         const std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
                         const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj);
 
-  void _cpu_relaxation(); 
+  float _cpu_relaxation(); 
   void _gpu_relaxation(); 
 
   // read in from .json
