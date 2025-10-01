@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-#define PRINT_LOG
+// #define PRINT_LOG
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
