@@ -193,7 +193,10 @@ void G_EXT::_prune_dead_nodes(uint32_t* num_ende,
 #endif 
 }
 
-void G_EXT::_preprocess() {
+void G_EXT::_preprocess(std::vector<float>& csr_ende_cost, 
+                        std::vector<uint32_t>& csr_ende_ecls,
+                        std::vector<uint32_t>& csr_ende_child,
+                        std::vector<uint32_t>& csr_ende_child_ptr) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_preprocess()\n");
 #endif
@@ -218,6 +221,13 @@ void G_EXT::_preprocess() {
 
   // Construct queue list 
   _get_queue_list(levelize_leaves_to_roots, ecls_id_to_alive_id, alive_id_to_super_adj); 
+
+  // Store things in CSR
+  _CSR(_queue_list, 
+      _ende_cost, _ende_ecls, 
+      _ende_child, _ende_child_ptr,
+      csr_ende_cost, csr_ende_ecls,
+      csr_ende_child, csr_ende_child_ptr);
 }
 
 void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
@@ -489,28 +499,36 @@ void G_EXT::_get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_root
 #endif
 }
 
-float G_EXT::_cpu_relaxation() {
+void G_EXT::_CSR(const std::vector<uint32_t>& queue, 
+                const std::vector<float>& ende_cost, 
+                const std::vector<uint32_t>& ende_ecls,
+                const std::vector<uint32_t>& ende_child,
+                const std::vector<uint32_t>& ende_child_ptr,
+                std::vector<float>& csr_ende_cost, 
+                std::vector<uint32_t>& csr_ende_ecls,
+                std::vector<uint32_t>& csr_ende_child,
+                std::vector<uint32_t>& csr_ende_child_ptr
+) {
 #ifdef PRINT_LOG
-  printf("Inside G_EXT::_gpu_relaxation()\n"); 
+  printf("Inside G_EXT::_cpu_relaxation()\n"); 
 #endif
   // Make all of the data into CSR format 
-  uint32_t N = _queue_list.size();
-  std::vector<float> csr_ende_cost; csr_ende_cost.resize(N, 0.0); 
-  std::vector<uint32_t> csr_ende_ecls; csr_ende_ecls.resize(N, 0); 
-  std::vector<uint32_t> csr_ende_child;
-  std::vector<uint32_t> csr_ende_child_ptr; csr_ende_child_ptr.resize(N+1); 
+  uint32_t N = queue.size();
+  csr_ende_cost.resize(N, 0.0); 
+  csr_ende_ecls.resize(N, 0); 
+  csr_ende_child_ptr.resize(N+1); 
 
   // Init 
   uint32_t acc = 0;
   for (uint32_t n = 0; n < N; n++) {
-    uint32_t ende = _queue_list[n];
-    csr_ende_cost[n] = _ende_cost[ende];
-    csr_ende_ecls[n] = _ende_ecls[ende];
+    uint32_t ende = queue[n];
+    csr_ende_cost[n] = ende_cost[ende];
+    csr_ende_ecls[n] = ende_ecls[ende];
     csr_ende_child_ptr[n] = acc; 
-    uint32_t start = _ende_child_ptr[ende];
-    uint32_t end   = _ende_child_ptr[ende + 1];
+    uint32_t start = ende_child_ptr[ende];
+    uint32_t end   = ende_child_ptr[ende + 1];
     for (uint32_t jj = start; jj < end; jj++) {
-      uint32_t val = _ende_child[jj]; 
+      uint32_t val = ende_child[jj]; 
       csr_ende_child.push_back(val);
       acc++;
     }
@@ -544,6 +562,13 @@ float G_EXT::_cpu_relaxation() {
   printf("\n"); 
 #endif 
 
+}
+
+float G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+                            const std::vector<uint32_t>& csr_ende_ecls,
+                            const std::vector<uint32_t>& csr_ende_child,
+                            const std::vector<uint32_t>& csr_ende_child_ptr
+) {
   // CPU relaxation 
   bool h_update = true;
   std::vector<float> cost_of_ecls; 
@@ -584,23 +609,121 @@ float G_EXT::_cpu_relaxation() {
   printf("\n");
 #endif
 
-  float ret = std::numeric_limits<float>::infinity();
+  float ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
-    ret = (ret > cost_of_ecls[_root_eclass_id[r]]) 
-          ? (cost_of_ecls[_root_eclass_id[r]]) 
-          : (ret);
+    ret += cost_of_ecls[_root_eclass_id[r]];
   }
 
   return ret; 
 }
 
+__device__ float atomicMinFloat(float* addr, float val) {
+  int* addr_as_i = (int*)addr;
+  int old = *addr_as_i, assumed;
 
-void G_EXT::_gpu_relaxation() {
+  do {
+    assumed = old;
+    float old_f = __int_as_float(assumed);
+    if (old_f <= val) break; // 已經比候選值小，直接退出
+    old = atomicCAS(addr_as_i, assumed, __float_as_int(val));
+  } while (assumed != old);
+
+  return __int_as_float(old);
+}
+
+__global__ void relax_enodes_kernel(const uint32_t N, 
+                                    const uint32_t num_endes, 
+                                    const float* csr_ende_cost, 
+                                    const uint32_t* csr_ende_ecls,
+                                    const uint32_t* csr_ende_child,
+                                    const uint32_t* csr_ende_child_ptr,
+                                    bool* update, float* cost_of_ecls
+) {
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num_endes) return;
+
+  float acc_cost = csr_ende_cost[t_idx];
+  uint32_t start = csr_ende_child_ptr[t_idx];
+  uint32_t end   = csr_ende_child_ptr[t_idx+1];
+  for (uint32_t jj = start; jj < end; jj++) {
+    acc_cost += cost_of_ecls[csr_ende_child[jj]];
+  }
+
+  const uint32_t which_ecls = csr_ende_ecls[t_idx];
+
+  float old = atomicMinFloat(&cost_of_ecls[which_ecls], acc_cost);
+  if (acc_cost < old) {
+    *update = true; // No need to be atomic
+  }  
+}
+
+
+
+float G_EXT::_gpu_relaxation(const uint32_t N, 
+                              const std::vector<float>& csr_ende_cost, 
+                              const std::vector<uint32_t>& csr_ende_ecls,
+                              const std::vector<uint32_t>& csr_ende_child,
+                              const std::vector<uint32_t>& csr_ende_child_ptr
+) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_gpu_relaxation()\n"); 
 #endif
-  // TODO here 
+  // CPU relaxation 
+  bool h_update = true;
+  std::vector<float> cost_of_ecls; 
+  cost_of_ecls.resize(_num_ecls, std::numeric_limits<float>::infinity());
 
+  // Device memory 
+  float* dvc_csr_ende_cost; 
+  uint32_t* dvc_csr_ende_ecls;
+  uint32_t* dvc_csr_ende_child;
+  uint32_t* dvc_csr_ende_child_ptr;
+  bool* dvc_update;
+  float* dvc_cost_of_ecls; 
+
+  cudaMalloc(&dvc_csr_ende_cost, csr_ende_cost.size() * sizeof(float));
+  cudaMalloc(&dvc_csr_ende_ecls, csr_ende_ecls.size() * sizeof(uint32_t));
+  cudaMalloc(&dvc_csr_ende_child, csr_ende_child.size() * sizeof(uint32_t));
+  cudaMalloc(&dvc_csr_ende_child_ptr, csr_ende_child_ptr.size() * sizeof(uint32_t));
+  cudaMalloc(&dvc_update, 1 * sizeof(bool));
+  cudaMalloc(&dvc_cost_of_ecls, cost_of_ecls.size() * sizeof(float));
+
+  cudaMemcpy(dvc_csr_ende_cost, csr_ende_cost.data(), csr_ende_cost.size()*sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_csr_ende_ecls, csr_ende_ecls.data(), csr_ende_ecls.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_csr_ende_child, csr_ende_child.data(), csr_ende_child.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_csr_ende_child_ptr, csr_ende_child_ptr.data(), csr_ende_child_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_update, &h_update, 1*sizeof(bool), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_cost_of_ecls, cost_of_ecls.data(), cost_of_ecls.size()*sizeof(float), cudaMemcpyHostToDevice);
+
+  const int threads = 1024;
+  const int blocks = (_num_ende + threads - 1) / threads;
+
+  while (h_update) {
+    h_update = false;
+    cudaMemcpy(dvc_update, &h_update, sizeof(bool), cudaMemcpyHostToDevice);
+
+    relax_enodes_kernel <<< blocks, threads >>> (N, _num_ende,
+                                                dvc_csr_ende_cost,
+                                                dvc_csr_ende_ecls,
+                                                dvc_csr_ende_child,
+                                                dvc_csr_ende_child_ptr,
+                                                dvc_update,
+                                                dvc_cost_of_ecls); 
+
+
+    cudaMemcpy(&h_update, dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
+  }
+
+  // copy data back to CPU 
+  cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(float), cudaMemcpyDeviceToHost);
+
+
+  float ret = 0.0; 
+  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
+    ret += cost_of_ecls[_root_eclass_id[r]];
+  }
+
+  return ret;  
 }
 
 

@@ -44,11 +44,28 @@ public:
   }
 
   /* run */
-  float run() {
-    _preprocess();
-    float cpu_res = _cpu_relaxation();
+  float run_cpu() {
+    std::vector<float> csr_ende_cost;
+    std::vector<uint32_t> csr_ende_ecls;
+    std::vector<uint32_t> csr_ende_child;
+    std::vector<uint32_t> csr_ende_child_ptr;
+
+    _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr); 
+    float cpu_res = _cpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+                                    csr_ende_child, csr_ende_child_ptr);
     return cpu_res;
-    // _gpu_relaxation();
+  }
+
+  float run_gpu() {
+    std::vector<float> csr_ende_cost;
+    std::vector<uint32_t> csr_ende_ecls;
+    std::vector<uint32_t> csr_ende_child;
+    std::vector<uint32_t> csr_ende_child_ptr;
+
+    _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr); 
+    float gpu_res = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+                                    csr_ende_child, csr_ende_child_ptr);
+    return gpu_res;
   }
 
 private:
@@ -62,7 +79,10 @@ private:
                         uint32_t* num_ecls);
   
   /* Run */
-  void _preprocess(); 
+  void _preprocess(std::vector<float>& csr_ende_cost, 
+                  std::vector<uint32_t>& csr_ende_ecls,
+                  std::vector<uint32_t>& csr_ende_child,
+                  std::vector<uint32_t>& csr_ende_child_ptr); 
     void _construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
                                 std::vector<std::unordered_set<uint32_t>>& alive_adj);
     void _find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj,
@@ -76,9 +96,25 @@ private:
     void _get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_roots,
                         const std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
                         const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj);
+    void _CSR (const std::vector<uint32_t>& queue, 
+              const std::vector<float>& ende_cost, 
+              const std::vector<uint32_t>& ende_ecls,
+              const std::vector<uint32_t>& ende_child,
+              const std::vector<uint32_t>& ende_child_ptr,
+              std::vector<float>& csr_ende_cost, 
+              std::vector<uint32_t>& csr_ende_ecls,
+              std::vector<uint32_t>& csr_ende_child,
+              std::vector<uint32_t>& csr_ende_child_ptr);
 
-  float _cpu_relaxation(); 
-  void _gpu_relaxation(); 
+  /* Relaxation */
+  float _cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+                        const std::vector<uint32_t>& csr_ende_ecls,
+                        const std::vector<uint32_t>& csr_ende_child,
+                        const std::vector<uint32_t>& csr_ende_child_ptr); 
+  float _gpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+                        const std::vector<uint32_t>& csr_ende_ecls,
+                        const std::vector<uint32_t>& csr_ende_child,
+                        const std::vector<uint32_t>& csr_ende_child_ptr); 
 
   // read in from .json
   uint32_t _num_ecls; // nuber of eclasses 

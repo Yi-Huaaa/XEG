@@ -30,7 +30,8 @@ int main(int argc, char *argv[]) {
     // g_ext.gpu_print();
 
     g_ext.read(input_path); 
-    float res = g_ext.run(); 
+    float res_cpu = g_ext.run_cpu(); 
+    float res_gpu = g_ext.run_gpu(); 
   
   auto end = std::chrono::steady_clock::now();
   duration = end - start;
@@ -38,7 +39,7 @@ int main(int argc, char *argv[]) {
   cudaEventSynchronize(stopGPU);
   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
 
-  printf("FINAL COST = %.2lf\n", res);
+  printf("FINAL COST = %.2lf, %.2lf\n", res_cpu, res_gpu);
   std::cout << "GPU Time: " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
   printf("GPU Sort Time (ms) : %f (ms)\n", gpuTime);
 
