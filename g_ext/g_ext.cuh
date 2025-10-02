@@ -33,69 +33,55 @@ public:
   // Read input file
   void read(const std::string input_path) {
     // Tempory memory 
-    uint32_t num_ende = 0, num_ecls = 0;
 
-    _read_input(input_path, 
-                &num_ende, 
-                &num_ecls); 
+    _read_input(input_path); 
 
-    _prune_dead_nodes(&num_ende, 
-                      &num_ecls);
+    _prune_dead_nodes();
   }
 
   /* run */
   double round_to(double value, double precision = 1.0) {
     return std::round(value / precision) * precision;
   }
-  float run_cpu() {
+  
+  void run() {
     std::vector<float> csr_ende_cost;
     std::vector<uint32_t> csr_ende_ecls;
     std::vector<uint32_t> csr_ende_child;
     std::vector<uint32_t> csr_ende_child_ptr;
 
     _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr); 
-  std::chrono::duration<double> duration;
-  auto start = std::chrono::steady_clock::now();
-    float cpu_res = _cpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
-                                    csr_ende_child, csr_ende_child_ptr);
-  auto end = std::chrono::steady_clock::now();
-  duration = end - start;
-  std::cout << "CPU Runtime (ms): " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
+    
+    // CPU version
+    std::chrono::duration<double> duration;
+    auto start = std::chrono::steady_clock::now();
+      float res_cpu = _cpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+                                      csr_ende_child, csr_ende_child_ptr);
+    auto end = std::chrono::steady_clock::now();
+    duration = end - start;
+    std::cout << "CPU Runtime (ms): " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
 
-
-    return cpu_res;
-  }
-
-  float run_gpu() {
-    std::vector<float> csr_ende_cost;
-    std::vector<uint32_t> csr_ende_ecls;
-    std::vector<uint32_t> csr_ende_child;
-    std::vector<uint32_t> csr_ende_child_ptr;
-
-    _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr);
-  float gpuTime = 0.;
-  cudaEvent_t startGPU, stopGPU;
-  cudaEventCreate(&startGPU);
-  cudaEventCreate(&stopGPU);    
-  cudaEventRecord(startGPU);
-    float gpu_res = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
-                                    csr_ende_child, csr_ende_child_ptr);
-  cudaEventRecord(stopGPU);
-  cudaEventSynchronize(stopGPU);
-  cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-  printf("GPU Runtime (ms) : %f (ms)\n", gpuTime);
-    return gpu_res;
+    // GPU version
+    float gpuTime = 0.;
+    cudaEvent_t startGPU, stopGPU;
+    cudaEventCreate(&startGPU);
+    cudaEventCreate(&stopGPU);    
+    cudaEventRecord(startGPU);
+      float res_gpu = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+                                      csr_ende_child, csr_ende_child_ptr);
+    cudaEventRecord(stopGPU);
+    cudaEventSynchronize(stopGPU);
+    cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
+    printf("GPU Runtime (ms) : %f (ms)\n", gpuTime);
+    printf("FINAL COST = %.2lf, %.2lf\n", res_cpu, res_gpu);
   }
 
 private:
   void _gpu_private_test() { printf("\nclass G_EXT: Hello world CUDA function!\n"); }
   /* Read */
-  void _read_input(const std::string input_path, 
-                  uint32_t* num_ende,
-                  uint32_t* num_ecls);
+  void _read_input(const std::string input_path);
 
-  void _prune_dead_nodes(uint32_t* num_ende,
-                        uint32_t* num_ecls);
+  void _prune_dead_nodes();
   
   /* Run */
   void _preprocess(std::vector<float>& csr_ende_cost, 

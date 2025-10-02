@@ -8,8 +8,7 @@ double round_to(double value, double precision = 1.0) {
 
 int main(int argc, char *argv[]) {
   // // Timer
-  std::chrono::duration<double> duration_read, duration_run_cpu;
-  float gpuTime = 0.;
+  std::chrono::duration<double> duration_read;
   
   cudaEvent_t startGPU, stopGPU;
   cudaEventCreate(&startGPU);
@@ -29,21 +28,7 @@ int main(int argc, char *argv[]) {
   duration_read = end - start;
   std::cout << "Read Time: " << round_to((duration_read.count()) * 1000, 0.001) << " ms\n";
 
-  // start = std::chrono::steady_clock::now();
-    float res_cpu = g_ext.run_cpu(); 
-  // end = std::chrono::steady_clock::now();
-  // duration_run_cpu = end - start;
+    g_ext.run(); 
 
-  // cudaEventRecord(startGPU);
-    float res_gpu = g_ext.run_gpu(); 
-  // cudaEventRecord(stopGPU);
-  // cudaEventSynchronize(stopGPU);
-  // cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
-
-  printf("FINAL COST = %.2lf, %.2lf\n", res_cpu, res_gpu);
-  // std::cout << "CPU Runtime (ms): " << round_to((duration_run_cpu.count()) * 1000, 0.001) << " ms\n";
-  // printf("GPU Runtime (ms) : %f (ms)\n", gpuTime);
-
-
-  return 0;
+ return 0;
 }

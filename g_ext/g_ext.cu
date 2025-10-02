@@ -44,9 +44,7 @@ void G_EXT::gpu_print() {
     printf("\ngpu_equality_saturator::gpu_print test ends...\n");
 }
 
-void G_EXT::_read_input(const std::string input_path, 
-                        uint32_t* num_ende,
-                        uint32_t* num_ecls) {
+void G_EXT::_read_input(const std::string input_path) {
   std::ifstream ifs(input_path);
   if (!ifs.is_open()) {
     std::cerr << "Error: cannot open file " << input_path << std::endl;
@@ -146,8 +144,7 @@ void G_EXT::_read_input(const std::string input_path,
 #endif   
 }
 
-void G_EXT::_prune_dead_nodes(uint32_t* num_ende,
-                              uint32_t* num_ecls) {
+void G_EXT::_prune_dead_nodes() {
   // Prune dead nodes 
   _alive_ecls.resize(_num_ecls, false); // init
   for (uint32_t ende_idx = 0; ende_idx < _num_ende; ++ende_idx) {
@@ -514,6 +511,7 @@ void G_EXT::_CSR(const std::vector<uint32_t>& queue,
 #endif
   // Make all of the data into CSR format 
   uint32_t N = queue.size();
+  printf("N = %u\n", N);
   csr_ende_cost.resize(N, 0.0); 
   csr_ende_ecls.resize(N, 0); 
   csr_ende_child_ptr.resize(N+1); 
@@ -641,6 +639,8 @@ __global__ void relax_enodes_kernel(const uint32_t N,
 ) {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_endes) return;
+  // printf("blockIdx.x = %d, blockDim.x = %d, threadIdx.x = %d\n", 
+  //         blockIdx.x, blockDim.x, threadIdx.x); 
 
   float acc_cost = csr_ende_cost[t_idx];
   uint32_t start = csr_ende_child_ptr[t_idx];
@@ -687,6 +687,7 @@ float G_EXT::_gpu_relaxation(const uint32_t N,
   cudaMalloc(&dvc_csr_ende_child_ptr, csr_ende_child_ptr.size() * sizeof(uint32_t));
   cudaMalloc(&dvc_update, 1 * sizeof(bool));
   cudaMalloc(&dvc_cost_of_ecls, cost_of_ecls.size() * sizeof(float));
+  cudaCheckErrors("cudaMalloc failed");
 
   cudaMemcpy(dvc_csr_ende_cost, csr_ende_cost.data(), csr_ende_cost.size()*sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_csr_ende_ecls, csr_ende_ecls.data(), csr_ende_ecls.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
@@ -694,15 +695,19 @@ float G_EXT::_gpu_relaxation(const uint32_t N,
   cudaMemcpy(dvc_csr_ende_child_ptr, csr_ende_child_ptr.data(), csr_ende_child_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_update, &h_update, 1*sizeof(bool), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_cost_of_ecls, cost_of_ecls.data(), cost_of_ecls.size()*sizeof(float), cudaMemcpyHostToDevice);
+  cudaCheckErrors("cudaMemcpy failed");
 
   const int threads = 1024;
-  const int blocks = (_num_ende + threads - 1) / threads;
+  const int blocks = (_num_alive_ende + threads - 1) / threads;
+  // printf("blocks = %d, threads = %d, _num_alive_ende = %u, csr_ende_cost.size() = %lu\n", 
+  //       blocks, threads, _num_alive_ende, csr_ende_cost.size()); 
 
   while (h_update) {
+    // printf("bibi inside\n"); 
     h_update = false;
     cudaMemcpy(dvc_update, &h_update, sizeof(bool), cudaMemcpyHostToDevice);
 
-    relax_enodes_kernel <<< blocks, threads >>> (N, _num_ende,
+    relax_enodes_kernel <<< blocks, threads >>> (N, _num_alive_ende,
                                                 dvc_csr_ende_cost,
                                                 dvc_csr_ende_ecls,
                                                 dvc_csr_ende_child,
@@ -710,13 +715,12 @@ float G_EXT::_gpu_relaxation(const uint32_t N,
                                                 dvc_update,
                                                 dvc_cost_of_ecls); 
     cudaCheckErrors("relax_enodes_kernel failed");
-
     cudaMemcpy(&h_update, dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }
 
   // copy data back to CPU 
   cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(float), cudaMemcpyDeviceToHost);
-
+  // printf("_root_eclass_id.size() = %lu\n", _root_eclass_id.size());
 
   float ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
