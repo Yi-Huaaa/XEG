@@ -511,7 +511,7 @@ void G_EXT::_CSR(const std::vector<uint32_t>& queue,
 #endif
   // Make all of the data into CSR format 
   uint32_t N = queue.size();
-  printf("N = %u\n", N);
+  // printf("N = %u\n", N);
   csr_ende_cost.resize(N, 0.0); 
   csr_ende_ecls.resize(N, 0); 
   csr_ende_child_ptr.resize(N+1); 
