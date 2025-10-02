@@ -622,7 +622,7 @@ __device__ float atomicMinFloat(float* addr, float val) {
   do {
     assumed = old;
     float old_f = __int_as_float(assumed);
-    if (old_f <= val) break; // 已經比候選值小，直接退出
+    if (old_f <= val) break; 
     old = atomicCAS(addr_as_i, assumed, __float_as_int(val));
   } while (assumed != old);
 

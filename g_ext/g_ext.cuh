@@ -59,7 +59,7 @@ public:
                                       csr_ende_child, csr_ende_child_ptr);
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU Runtime (ms): " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
+    std::cout << "CPU Runtime (ms): " << round_to((duration.count()) * 1000, 0.01) << " ms\n";
 
     // GPU version
     float gpuTime = 0.;
@@ -72,7 +72,7 @@ public:
     cudaEventRecord(stopGPU);
     cudaEventSynchronize(stopGPU);
     cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-    printf("GPU Runtime (ms) : %f (ms)\n", gpuTime);
+    printf("GPU Runtime (ms) : %.2f (ms)\n", gpuTime);
     printf("FINAL COST = %.2lf, %.2lf\n", res_cpu, res_gpu);
   }
 
