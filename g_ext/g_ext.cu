@@ -709,7 +709,7 @@ float G_EXT::_gpu_relaxation(const uint32_t N,
                                                 dvc_csr_ende_child_ptr,
                                                 dvc_update,
                                                 dvc_cost_of_ecls); 
-
+    cudaCheckErrors("relax_enodes_kernel failed");
 
     cudaMemcpy(&h_update, dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }

@@ -8,7 +8,7 @@ double round_to(double value, double precision = 1.0) {
 
 int main(int argc, char *argv[]) {
   // // Timer
-  std::chrono::duration<double> duration;
+  std::chrono::duration<double> duration_read, duration_run_cpu;
   float gpuTime = 0.;
   
   cudaEvent_t startGPU, stopGPU;
@@ -21,27 +21,28 @@ int main(int argc, char *argv[]) {
   
   // Input file 
   std::string input_path = argv[1];
+  G_EXT g_ext;
 
-  cudaEventRecord(startGPU);
   auto start = std::chrono::steady_clock::now();
-  
-    G_EXT g_ext;
-    // g_ext.gpu_public_test();
-    // g_ext.gpu_print();
-
     g_ext.read(input_path); 
-    float res_cpu = g_ext.run_cpu(); 
-    float res_gpu = g_ext.run_gpu(); 
-  
   auto end = std::chrono::steady_clock::now();
-  duration = end - start;
-  cudaEventRecord(stopGPU);
-  cudaEventSynchronize(stopGPU);
-  cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
+  duration_read = end - start;
+  std::cout << "Read Time: " << round_to((duration_read.count()) * 1000, 0.001) << " ms\n";
+
+  // start = std::chrono::steady_clock::now();
+    float res_cpu = g_ext.run_cpu(); 
+  // end = std::chrono::steady_clock::now();
+  // duration_run_cpu = end - start;
+
+  // cudaEventRecord(startGPU);
+    float res_gpu = g_ext.run_gpu(); 
+  // cudaEventRecord(stopGPU);
+  // cudaEventSynchronize(stopGPU);
+  // cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);
 
   printf("FINAL COST = %.2lf, %.2lf\n", res_cpu, res_gpu);
-  std::cout << "GPU Time: " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
-  printf("GPU Sort Time (ms) : %f (ms)\n", gpuTime);
+  // std::cout << "CPU Runtime (ms): " << round_to((duration_run_cpu.count()) * 1000, 0.001) << " ms\n";
+  // printf("GPU Runtime (ms) : %f (ms)\n", gpuTime);
 
 
   return 0;

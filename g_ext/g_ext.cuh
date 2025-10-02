@@ -44,6 +44,9 @@ public:
   }
 
   /* run */
+  double round_to(double value, double precision = 1.0) {
+    return std::round(value / precision) * precision;
+  }
   float run_cpu() {
     std::vector<float> csr_ende_cost;
     std::vector<uint32_t> csr_ende_ecls;
@@ -51,8 +54,15 @@ public:
     std::vector<uint32_t> csr_ende_child_ptr;
 
     _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr); 
+  std::chrono::duration<double> duration;
+  auto start = std::chrono::steady_clock::now();
     float cpu_res = _cpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
                                     csr_ende_child, csr_ende_child_ptr);
+  auto end = std::chrono::steady_clock::now();
+  duration = end - start;
+  std::cout << "CPU Runtime (ms): " << round_to((duration.count()) * 1000, 0.001) << " ms\n";
+
+
     return cpu_res;
   }
 
@@ -62,9 +72,18 @@ public:
     std::vector<uint32_t> csr_ende_child;
     std::vector<uint32_t> csr_ende_child_ptr;
 
-    _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr); 
+    _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr);
+  float gpuTime = 0.;
+  cudaEvent_t startGPU, stopGPU;
+  cudaEventCreate(&startGPU);
+  cudaEventCreate(&stopGPU);    
+  cudaEventRecord(startGPU);
     float gpu_res = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
                                     csr_ende_child, csr_ende_child_ptr);
+  cudaEventRecord(stopGPU);
+  cudaEventSynchronize(stopGPU);
+  cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
+  printf("GPU Runtime (ms) : %f (ms)\n", gpuTime);
     return gpu_res;
   }
 
