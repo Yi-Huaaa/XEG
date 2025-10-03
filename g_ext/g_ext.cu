@@ -77,7 +77,18 @@ void G_EXT::_read_input(const std::string input_path) {
   for (auto &[ename, node] : nodes.items()) {
     std::string op = node["op"];
     float cost = node["cost"];
-    std::string ecls_name = node["eclass"];
+    // std::string ecls_name = node["eclass"];
+    // uint32_t ecls_id = get_ecls_id(ecls_name, _ecls_name_to_id);
+    
+    // eclass
+    std::string ecls_name;
+    if (node["eclass"].is_string()) {
+      ecls_name = node["eclass"].get<std::string>();
+    } else if (node["eclass"].is_number_integer()) {
+      ecls_name = std::to_string(node["eclass"].get<int>());
+    } else {
+      throw std::runtime_error("Unsupported eclass type in JSON (must be string or int)");
+    }
     uint32_t ecls_id = get_ecls_id(ecls_name, _ecls_name_to_id);
 
     _ende_name.push_back(ename);     // enode 的 id (e.g., "0__0")
@@ -85,12 +96,30 @@ void G_EXT::_read_input(const std::string input_path) {
     _ende_cost.push_back(cost);      // cost
     _ende_ecls.push_back(ecls_id);   // enode's eclass
 
+    // // children
+    // for (auto &ch : node["children"]) {
+    //   std::string child_enode = ch.get<std::string>();
+    //   std::string child_ecls = nodes[child_enode]["eclass"];
+    //   uint32_t child_ecls_id = get_ecls_id(child_ecls, _ecls_name_to_id);
+    //   _ende_child.push_back(child_ecls_id);
+    // }
+
     // children
     for (auto &ch : node["children"]) {
-      std::string child_enode = ch.get<std::string>();
-      std::string child_ecls = nodes[child_enode]["eclass"];
-      uint32_t child_ecls_id = get_ecls_id(child_ecls, _ecls_name_to_id);
-      _ende_child.push_back(child_ecls_id);
+      if (ch.is_string()) {
+        // === egg / extraction-gym format ===
+        std::string child_enode = ch.get<std::string>();
+        std::string child_ecls = nodes[child_enode]["eclass"];
+        uint32_t child_ecls_id = get_ecls_id(child_ecls, _ecls_name_to_id);
+        _ende_child.push_back(child_ecls_id);
+      } else if (ch.is_number_integer()) {
+        // === eboost / BoolE format ===
+        std::string child_ecls = std::to_string(ch.get<int>());
+        uint32_t child_ecls_id = get_ecls_id(child_ecls, _ecls_name_to_id);
+        _ende_child.push_back(child_ecls_id);
+      } else {
+        throw std::runtime_error("Unsupported child type in JSON (must be string or int)");
+      }
     }
 
     _ende_child_ptr.push_back(_ende_child.size());
@@ -98,9 +127,22 @@ void G_EXT::_read_input(const std::string input_path) {
 
   _num_ecls = ecls_counter; // get number of eclasses
 
+  // // roots
+  // for (auto &r : j["root_eclasses"]) {
+  //   std::string ecls_name = r.get<std::string>();
+  //   _root_eclass_id.push_back(get_ecls_id(ecls_name, _ecls_name_to_id));
+  // }
+
   // roots
   for (auto &r : j["root_eclasses"]) {
-    std::string ecls_name = r.get<std::string>();
+    std::string ecls_name;
+    if (r.is_string()) {
+      ecls_name = r.get<std::string>();
+    } else if (r.is_number_integer()) {
+      ecls_name = std::to_string(r.get<int>());
+    } else {
+      throw std::runtime_error("Unsupported root_eclass type (must be string or int)");
+    }
     _root_eclass_id.push_back(get_ecls_id(ecls_name, _ecls_name_to_id));
   }
 
@@ -108,6 +150,29 @@ void G_EXT::_read_input(const std::string input_path) {
   MY_CHECK(_ende_op.size() == _num_ende, "!= num_ende 2");
   MY_CHECK(_ende_cost.size() == _num_ende, "!= num_ende 3");
   MY_CHECK(_ende_ecls.size() == _num_ende, "!= num_ende 4");
+
+  // === Sanity check: every eclass must have at least one enode ===
+  // === Sanity check: every eclass must have at least one enode ===
+  std::vector<int> eclass_node_count(_num_ecls, 0);
+  for (uint32_t i = 0; i < _ende_ecls.size(); i++) {
+    eclass_node_count[_ende_ecls[i]]++;
+  }
+
+  for (uint32_t eid = 0; eid < _num_ecls; eid++) {
+    if (eclass_node_count[eid] == 0) {
+      std::cerr << "[ERROR] EClass " << eid << " (";
+      // reverse lookup name
+      for (auto &kv : _ecls_name_to_id) {
+        if (kv.second == eid) {
+          std::cerr << kv.first;
+          break;
+        }
+      }
+      std::cerr << ") has no enodes!" << std::endl;
+      throw std::runtime_error("Invalid JSON: eclass with no enodes detected");
+    }
+  }
+
 
   // printf
 #ifdef PRINT_LOG
