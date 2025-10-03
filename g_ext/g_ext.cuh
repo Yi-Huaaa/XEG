@@ -49,14 +49,15 @@ public:
     std::vector<uint32_t> csr_ende_ecls;
     std::vector<uint32_t> csr_ende_child;
     std::vector<uint32_t> csr_ende_child_ptr;
+    double res_cpu, res_gpu; 
 
     _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr); 
     
     // CPU version
     std::chrono::duration<double> duration;
     auto start = std::chrono::steady_clock::now();
-      float res_cpu = _cpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
-                                      csr_ende_child, csr_ende_child_ptr);
+      res_cpu = _cpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+                                csr_ende_child, csr_ende_child_ptr);
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU Runtime (ms): " << round_to((duration.count()) * 1000, 0.01) << " ms\n";
@@ -67,8 +68,8 @@ public:
     cudaEventCreate(&startGPU);
     cudaEventCreate(&stopGPU);    
     cudaEventRecord(startGPU);
-      float res_gpu = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
-                                      csr_ende_child, csr_ende_child_ptr);
+      res_gpu = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+                                csr_ende_child, csr_ende_child_ptr);
     cudaEventRecord(stopGPU);
     cudaEventSynchronize(stopGPU);
     cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
@@ -112,11 +113,11 @@ private:
               std::vector<uint32_t>& csr_ende_child_ptr);
 
   /* Relaxation */
-  float _cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+  double _cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
                         const std::vector<uint32_t>& csr_ende_ecls,
                         const std::vector<uint32_t>& csr_ende_child,
                         const std::vector<uint32_t>& csr_ende_child_ptr); 
-  float _gpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+  double _gpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
                         const std::vector<uint32_t>& csr_ende_ecls,
                         const std::vector<uint32_t>& csr_ende_child,
                         const std::vector<uint32_t>& csr_ende_child_ptr); 

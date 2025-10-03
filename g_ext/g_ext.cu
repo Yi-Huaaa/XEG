@@ -151,29 +151,6 @@ void G_EXT::_read_input(const std::string input_path) {
   MY_CHECK(_ende_cost.size() == _num_ende, "!= num_ende 3");
   MY_CHECK(_ende_ecls.size() == _num_ende, "!= num_ende 4");
 
-  // === Sanity check: every eclass must have at least one enode ===
-  // === Sanity check: every eclass must have at least one enode ===
-  std::vector<int> eclass_node_count(_num_ecls, 0);
-  for (uint32_t i = 0; i < _ende_ecls.size(); i++) {
-    eclass_node_count[_ende_ecls[i]]++;
-  }
-
-  for (uint32_t eid = 0; eid < _num_ecls; eid++) {
-    if (eclass_node_count[eid] == 0) {
-      std::cerr << "[ERROR] EClass " << eid << " (";
-      // reverse lookup name
-      for (auto &kv : _ecls_name_to_id) {
-        if (kv.second == eid) {
-          std::cerr << kv.first;
-          break;
-        }
-      }
-      std::cerr << ") has no enodes!" << std::endl;
-      throw std::runtime_error("Invalid JSON: eclass with no enodes detected");
-    }
-  }
-
-
   // printf
 #ifdef PRINT_LOG
   std::cout << "\n========== G_EXT Internal State ==========\n";
@@ -572,7 +549,7 @@ void G_EXT::_CSR(const std::vector<uint32_t>& queue,
                 std::vector<uint32_t>& csr_ende_child_ptr
 ) {
 #ifdef PRINT_LOG
-  printf("Inside G_EXT::_cpu_relaxation()\n"); 
+  printf("Inside G_EXT::_CSR()\n"); 
 #endif
   // Make all of the data into CSR format 
   uint32_t N = queue.size();
@@ -627,15 +604,18 @@ void G_EXT::_CSR(const std::vector<uint32_t>& queue,
 
 }
 
-float G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+double G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
                             const std::vector<uint32_t>& csr_ende_ecls,
                             const std::vector<uint32_t>& csr_ende_child,
                             const std::vector<uint32_t>& csr_ende_child_ptr
 ) {
+#ifdef PRINT_LOG
+  printf("Inside G_EXT::_cpu_relaxation()\n"); 
+#endif
   // CPU relaxation 
   bool h_update = true;
-  std::vector<float> cost_of_ecls; 
-  cost_of_ecls.resize(_num_ecls, std::numeric_limits<float>::infinity());
+  std::vector<double> cost_of_ecls; 
+  cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
  
   while (h_update) {
     h_update = false;
@@ -644,7 +624,7 @@ float G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_end
     {
       #pragma omp for
       for (uint32_t t_idx = 0; t_idx < N; t_idx++) {
-        float acc_cost = csr_ende_cost[t_idx];
+        double acc_cost = csr_ende_cost[t_idx];
         uint32_t start = csr_ende_child_ptr[t_idx];
         uint32_t end   = csr_ende_child_ptr[t_idx+1];
         for (uint32_t jj = start; jj < end; jj++) {
@@ -672,7 +652,7 @@ float G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_end
   printf("\n");
 #endif
 
-  float ret = 0.0; 
+  double ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
     ret += cost_of_ecls[_root_eclass_id[r]];
   }
@@ -694,20 +674,36 @@ __device__ float atomicMinFloat(float* addr, float val) {
   return __int_as_float(old);
 }
 
+__device__ double atomicMinDouble(double* addr, double val) {
+  unsigned long long int* addr_as_ull = (unsigned long long int*)addr;
+  unsigned long long int old = *addr_as_ull, assumed;
+
+  do {
+    assumed = old;
+    double old_val = __longlong_as_double(assumed);
+    if (old_val <= val) break;
+    old = atomicCAS(addr_as_ull, assumed, __double_as_longlong(val));
+  } while (assumed != old);
+
+  return __longlong_as_double(old);
+}
+
+
 __global__ void relax_enodes_kernel(const uint32_t N, 
                                     const uint32_t num_endes, 
                                     const float* csr_ende_cost, 
                                     const uint32_t* csr_ende_ecls,
                                     const uint32_t* csr_ende_child,
                                     const uint32_t* csr_ende_child_ptr,
-                                    bool* update, float* cost_of_ecls
+                                    bool* update, double* cost_of_ecls
 ) {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_endes) return;
   // printf("blockIdx.x = %d, blockDim.x = %d, threadIdx.x = %d\n", 
   //         blockIdx.x, blockDim.x, threadIdx.x); 
 
-  float acc_cost = csr_ende_cost[t_idx];
+  // float acc_cost = csr_ende_cost[t_idx];
+  double acc_cost = (double)csr_ende_cost[t_idx]; // promote from float
   uint32_t start = csr_ende_child_ptr[t_idx];
   uint32_t end   = csr_ende_child_ptr[t_idx+1];
   for (uint32_t jj = start; jj < end; jj++) {
@@ -716,7 +712,8 @@ __global__ void relax_enodes_kernel(const uint32_t N,
 
   const uint32_t which_ecls = csr_ende_ecls[t_idx];
 
-  float old = atomicMinFloat(&cost_of_ecls[which_ecls], acc_cost);
+  // float old = atomicMinFloat(&cost_of_ecls[which_ecls], acc_cost);
+  double old = atomicMinDouble(&cost_of_ecls[which_ecls], acc_cost);
   if (acc_cost < old) {
     *update = true; // No need to be atomic
   }  
@@ -724,7 +721,7 @@ __global__ void relax_enodes_kernel(const uint32_t N,
 
 
 
-float G_EXT::_gpu_relaxation(const uint32_t N, 
+double G_EXT::_gpu_relaxation(const uint32_t N, 
                               const std::vector<float>& csr_ende_cost, 
                               const std::vector<uint32_t>& csr_ende_ecls,
                               const std::vector<uint32_t>& csr_ende_child,
@@ -735,8 +732,8 @@ float G_EXT::_gpu_relaxation(const uint32_t N,
 #endif
   // CPU relaxation 
   bool h_update = true;
-  std::vector<float> cost_of_ecls; 
-  cost_of_ecls.resize(_num_ecls, std::numeric_limits<float>::infinity());
+  std::vector<double> cost_of_ecls; 
+  cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
 
   // Device memory 
   float* dvc_csr_ende_cost; 
@@ -744,14 +741,14 @@ float G_EXT::_gpu_relaxation(const uint32_t N,
   uint32_t* dvc_csr_ende_child;
   uint32_t* dvc_csr_ende_child_ptr;
   bool* dvc_update;
-  float* dvc_cost_of_ecls; 
+  double* dvc_cost_of_ecls; 
 
   cudaMalloc(&dvc_csr_ende_cost, csr_ende_cost.size() * sizeof(float));
   cudaMalloc(&dvc_csr_ende_ecls, csr_ende_ecls.size() * sizeof(uint32_t));
   cudaMalloc(&dvc_csr_ende_child, csr_ende_child.size() * sizeof(uint32_t));
   cudaMalloc(&dvc_csr_ende_child_ptr, csr_ende_child_ptr.size() * sizeof(uint32_t));
   cudaMalloc(&dvc_update, 1 * sizeof(bool));
-  cudaMalloc(&dvc_cost_of_ecls, cost_of_ecls.size() * sizeof(float));
+  cudaMalloc(&dvc_cost_of_ecls, cost_of_ecls.size() * sizeof(double));
   cudaCheckErrors("cudaMalloc failed");
 
   cudaMemcpy(dvc_csr_ende_cost, csr_ende_cost.data(), csr_ende_cost.size()*sizeof(float), cudaMemcpyHostToDevice);
@@ -759,7 +756,7 @@ float G_EXT::_gpu_relaxation(const uint32_t N,
   cudaMemcpy(dvc_csr_ende_child, csr_ende_child.data(), csr_ende_child.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_csr_ende_child_ptr, csr_ende_child_ptr.data(), csr_ende_child_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_update, &h_update, 1*sizeof(bool), cudaMemcpyHostToDevice);
-  cudaMemcpy(dvc_cost_of_ecls, cost_of_ecls.data(), cost_of_ecls.size()*sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_cost_of_ecls, cost_of_ecls.data(), cost_of_ecls.size()*sizeof(double), cudaMemcpyHostToDevice);
   cudaCheckErrors("cudaMemcpy failed");
 
   const int threads = 1024;
@@ -784,10 +781,10 @@ float G_EXT::_gpu_relaxation(const uint32_t N,
   }
 
   // copy data back to CPU 
-  cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(float), cudaMemcpyDeviceToHost);
+  cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(double), cudaMemcpyDeviceToHost);
   // printf("_root_eclass_id.size() = %lu\n", _root_eclass_id.size());
 
-  float ret = 0.0; 
+  double ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
     ret += cost_of_ecls[_root_eclass_id[r]];
   }

@@ -73,10 +73,10 @@ int main(int argc, char *argv[]) {
     g_ext.run(); 
 
 
-  // ===== OR-Tools CP-SAT test starts =====
-  printf("bibi test\n");
-  std::cout << "Running CP-SAT test..." << std::endl;
-  SimpleSatProgram(); 
+  // // ===== OR-Tools CP-SAT test starts =====
+  // printf("bibi test\n");
+  // std::cout << "Running CP-SAT test..." << std::endl;
+  // SimpleSatProgram(); 
 
 
   return 0;
