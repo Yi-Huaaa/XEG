@@ -32,20 +32,6 @@
 
 
 // G_EXT fucntions
-
-__global__ void GPU_print_test(
-) {
-  printf("threadIdx.x = %d, hello world!\n", threadIdx.x);
-}
-
-void G_EXT::gpu_print(
-) {
-  printf("Get inside G_EXT::gpu_print, starts to launch GPU_print_test...\n");
-  GPU_print_test <<< 1, 32 >>>();
-  cudaDeviceSynchronize(); 
-  printf("\ngpu_equality_saturator::gpu_print test ends...\n");
-}
-
 void G_EXT::_read_input(const std::string input_path
 ) {
   std::ifstream ifs(input_path);
@@ -388,6 +374,7 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj,
     std::cout << "This is a DAG (no SCC)\n\n";
     acc = _num_alive_ecls;
   }
+  // printf("_num_alive_ecls = %u, acc = %u\n", _num_alive_ecls, acc);
   MY_CHECK(_num_alive_ecls == acc, "_num_alive_ecls == acc");
   printf("\n");
 #endif
@@ -764,11 +751,8 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
 
   const int threads = 1024;
   const int blocks = (_num_alive_ende + threads - 1) / threads;
-  // printf("blocks = %d, threads = %d, _num_alive_ende = %u, csr_ende_cost.size() = %lu\n", 
-  //       blocks, threads, _num_alive_ende, csr_ende_cost.size()); 
 
   while (h_update) {
-    // printf("bibi inside\n"); 
     h_update = false;
     cudaMemcpy(dvc_update, &h_update, sizeof(bool), cudaMemcpyHostToDevice);
 
@@ -785,7 +769,6 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
 
   // copy data back to CPU 
   cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(double), cudaMemcpyDeviceToHost);
-  // printf("_root_eclass_id.size() = %lu\n", _root_eclass_id.size());
 
   double ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
@@ -796,6 +779,37 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
 }
 
 
+// =========================== ILP Solver functions =========================== // 
+using namespace operations_research;
+using namespace sat;
+
+void G_EXT::SimpleSatProgram() {
+  // 1. Create the CP-SAT model.
+  CpModelBuilder cp_model;
+
+  // 2. Define the variables.
+  const Domain domain(0, 100);
+  IntVar a = cp_model.NewIntVar(domain).WithName("a");
+  IntVar b = cp_model.NewIntVar(domain).WithName("b");
+  IntVar c = cp_model.NewIntVar(domain).WithName("c");
+
+  // 3. Define the constraints.
+  cp_model.AddEquality(a + b + c, 200);
+
+  // 4. Solve the model.
+  CpSolverResponse response = Solve(cp_model.Build());
+
+  // 5. Interpret the results.
+  if (response.status() == CpSolverStatus::OPTIMAL ||
+    response.status() == CpSolverStatus::FEASIBLE) {
+    LOG(INFO) << "Solution found:";
+    LOG(INFO) << "a = " << SolutionIntegerValue(response, a);
+    LOG(INFO) << "b = " << SolutionIntegerValue(response, b);
+    LOG(INFO) << "c = " << SolutionIntegerValue(response, c);
+  } else {
+    LOG(INFO) << "No solution found.";
+  }
+}
 
 // =========================== Print functions =========================== // 
 

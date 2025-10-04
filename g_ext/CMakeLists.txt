@@ -8,13 +8,11 @@ add_library(g_ext
   g_ext.cu g_ext.cuh
 )
 
-
 # -----------------------------------------------------------------------------
 # Link OpenMP for CUDA partition (needed for OpenMP support in CUDA code)
 # -----------------------------------------------------------------------------
 # target_link_libraries(g_ext PRIVATE OpenMP::OpenMP_CXX)
 target_compile_options(g_ext PRIVATE ${OpenMP_CXX_FLAGS})
-
 
 # -----------------------------------------------------------------------------
 # Add cuBLAS library if necessary
@@ -23,7 +21,6 @@ if (g_ext_BUILD_CUDA)
   target_link_libraries(g_ext PRIVATE ${CUBLAS_LIBRARIES})
   target_include_directories(g_ext PRIVATE ${CUBLAS_INCLUDE_DIRS})
 endif()
-
 
 # -----------------------------------------------------------------------------
 # Include taskflow
@@ -43,10 +40,29 @@ target_link_libraries(g_ext PRIVATE Threads::Threads)
 find_package(OpenMP REQUIRED)
 target_link_libraries(g_ext PRIVATE OpenMP::OpenMP_CXX)
 
+# -----------------------------------------------------------------------------
+# OR-Tools: 假設在 $HOME/or-tools_x86_64_Ubuntu-22.04_cpp_v9.7.2996
+# Note: my OR-Tools locates at ~/
+# -----------------------------------------------------------------------------
+set(ORTOOLS_HOME "$ENV{HOME}/or-tools_x86_64_Ubuntu-22.04_cpp_v9.7.2996")
+target_include_directories(g_ext
+  PUBLIC
+    ${ORTOOLS_HOME}/include
+)
+target_link_directories(g_ext
+  PUBLIC
+    ${ORTOOLS_HOME}/lib
+)
+target_link_libraries(g_ext
+  PRIVATE
+    ${ORTOOLS_HOME}/lib/libortools.so
+    protobuf
+    pthread
+)
 
-
-
+# -----------------------------------------------------------------------------
 # Set compiler flags for the "g_ext" library
+# -----------------------------------------------------------------------------
 target_compile_options(g_ext PRIVATE
   -Wall
   -Wextra

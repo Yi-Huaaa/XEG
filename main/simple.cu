@@ -1,52 +1,41 @@
 #include <chrono>
 #include <iostream>
 #include <g_ext/G_EXT.hpp>
-
+#include <vector>
 #include "ortools/sat/cp_model.h"
 #include "ortools/sat/cp_model.pb.h"
 #include "ortools/sat/cp_model_solver.h"
 #include "ortools/base/logging.h" // For LOG(INFO)
-#include <iostream>
-#include <vector>
 
+// using namespace operations_research;
+// using namespace sat;
+// void AA() {
+//   // 1. Create the CP-SAT model.
+//   CpModelBuilder cp_model;
 
-double round_to(double value, double precision = 1.0) {
-  return std::round(value / precision) * precision;
-}
+//   // 2. Define the variables.
+//   const Domain domain(0, 100);
+//   IntVar a = cp_model.NewIntVar(domain).WithName("a");
+//   IntVar b = cp_model.NewIntVar(domain).WithName("b");
+//   IntVar c = cp_model.NewIntVar(domain).WithName("c");
 
-using namespace operations_research;
-using namespace sat;
+//   // 3. Define the constraints.
+//   cp_model.AddEquality(a + b + c, 200);
 
-// -----------------------------------------------------------------------------
-// CP-SAT Example
-// -----------------------------------------------------------------------------
-void SimpleSatProgram() {
-  // 1. Create the CP-SAT model.
-  CpModelBuilder cp_model;
+//   // 4. Solve the model.
+//   CpSolverResponse response = Solve(cp_model.Build());
 
-  // 2. Define the variables.
-  const Domain domain(0, 100);
-  IntVar a = cp_model.NewIntVar(domain).WithName("a");
-  IntVar b = cp_model.NewIntVar(domain).WithName("b");
-  IntVar c = cp_model.NewIntVar(domain).WithName("c");
-
-  // 3. Define the constraints.
-  cp_model.AddEquality(a + b + c, 200);
-
-  // 4. Solve the model.
-  CpSolverResponse response = Solve(cp_model.Build());
-
-  // 5. Interpret the results.
-  if (response.status() == CpSolverStatus::OPTIMAL ||
-    response.status() == CpSolverStatus::FEASIBLE) {
-    LOG(INFO) << "Solution found:";
-    LOG(INFO) << "a = " << SolutionIntegerValue(response, a);
-    LOG(INFO) << "b = " << SolutionIntegerValue(response, b);
-    LOG(INFO) << "c = " << SolutionIntegerValue(response, c);
-  } else {
-    LOG(INFO) << "No solution found.";
-  }
-}
+//   // 5. Interpret the results.
+//   if (response.status() == CpSolverStatus::OPTIMAL ||
+//     response.status() == CpSolverStatus::FEASIBLE) {
+//     LOG(INFO) << "Solution found:";
+//     LOG(INFO) << "a = " << SolutionIntegerValue(response, a);
+//     LOG(INFO) << "b = " << SolutionIntegerValue(response, b);
+//     LOG(INFO) << "c = " << SolutionIntegerValue(response, c);
+//   } else {
+//     LOG(INFO) << "No solution found.";
+//   }
+// }
 
 int main(int argc, char *argv[]) {
   // // Timer
@@ -68,15 +57,14 @@ int main(int argc, char *argv[]) {
     g_ext.read(input_path); 
   auto end = std::chrono::steady_clock::now();
   duration_read = end - start;
-  std::cout << "Read Time: " << round_to((duration_read.count()) * 1000, 0.001) << " ms\n";
+  std::cout << "Read Time: " << g_ext.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
     g_ext.run(); 
 
 
-  // // ===== OR-Tools CP-SAT test starts =====
-  // printf("bibi test\n");
-  // std::cout << "Running CP-SAT test..." << std::endl;
-  // SimpleSatProgram(); 
+  // ===== OR-Tools CP-SAT test starts =====
+  std::cout << "Running CP-SAT test example..." << std::endl;
+  g_ext.SimpleSatProgram(); 
 
 
   return 0;

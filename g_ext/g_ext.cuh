@@ -20,22 +20,22 @@
 #include <limits>
 #include <omp.h>
 
+/* ILP Solver */
+#include "ortools/sat/cp_model.h"
+#include "ortools/sat/cp_model.pb.h"
+#include "ortools/sat/cp_model_solver.h"
+#include "ortools/base/logging.h" // For LOG(INFO)
+
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
-
-__global__ void GPU_print_test(); 
 
 class G_EXT {
 
 public:
-  void gpu_public_test() { _gpu_private_test(); }
-  void gpu_print();
   // Read input file
   void read(const std::string input_path) {
     // Tempory memory 
-
     _read_input(input_path); 
-
     _prune_dead_nodes();
   }
 
@@ -60,7 +60,7 @@ public:
                                 csr_ende_child, csr_ende_child_ptr);
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU Runtime (ms): " << round_to((duration.count()) * 1000, 0.01) << " ms\n";
+    std::cout << "CPU Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
 
     // GPU version
     float gpuTime = 0.;
@@ -73,9 +73,12 @@ public:
     cudaEventRecord(stopGPU);
     cudaEventSynchronize(stopGPU);
     cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-    printf("GPU Runtime (ms) : %.2f (ms)\n", gpuTime);
+    printf("GPU Runtime: %.2f (ms)\n", gpuTime);
     printf("FINAL TREE COST: CPU = %.2lf, GPU = %.2lf\n", res_cpu, res_gpu);
   }
+
+  // ILP Solver functions 
+  void SimpleSatProgram();
 
 private:
   void _gpu_private_test() { printf("\nclass G_EXT: Hello world CUDA function!\n"); }
