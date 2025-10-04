@@ -33,18 +33,21 @@
 
 // G_EXT fucntions
 
-__global__ void GPU_print_test() {
-    printf("threadIdx.x = %d, hello world!\n", threadIdx.x);
+__global__ void GPU_print_test(
+) {
+  printf("threadIdx.x = %d, hello world!\n", threadIdx.x);
 }
 
-void G_EXT::gpu_print() {
-    printf("Get inside G_EXT::gpu_print, starts to launch GPU_print_test...\n");
-    GPU_print_test <<< 1, 32 >>>();
-    cudaDeviceSynchronize(); 
-    printf("\ngpu_equality_saturator::gpu_print test ends...\n");
+void G_EXT::gpu_print(
+) {
+  printf("Get inside G_EXT::gpu_print, starts to launch GPU_print_test...\n");
+  GPU_print_test <<< 1, 32 >>>();
+  cudaDeviceSynchronize(); 
+  printf("\ngpu_equality_saturator::gpu_print test ends...\n");
 }
 
-void G_EXT::_read_input(const std::string input_path) {
+void G_EXT::_read_input(const std::string input_path
+) {
   std::ifstream ifs(input_path);
   if (!ifs.is_open()) {
     std::cerr << "Error: cannot open file " << input_path << std::endl;
@@ -235,7 +238,8 @@ void G_EXT::_prune_dead_nodes() {
 void G_EXT::_preprocess(std::vector<float>& csr_ende_cost, 
                         std::vector<uint32_t>& csr_ende_ecls,
                         std::vector<uint32_t>& csr_ende_child,
-                        std::vector<uint32_t>& csr_ende_child_ptr) {
+                        std::vector<uint32_t>& csr_ende_child_ptr
+) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_preprocess()\n");
 #endif
@@ -270,7 +274,8 @@ void G_EXT::_preprocess(std::vector<float>& csr_ende_cost,
 }
 
 void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
-                                  std::vector<std::unordered_set<uint32_t>>& alive_adj) {
+                                  std::vector<std::unordered_set<uint32_t>>& alive_adj
+) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_construct_alive_graph()\n"); 
 #endif
@@ -315,7 +320,8 @@ void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_
 }
 
 void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj,
-                      std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes) {
+                      std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes
+) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_find_SCC()\n"); 
 #endif
@@ -390,7 +396,8 @@ void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj,
 void G_EXT::_construct_superGraph(const std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
                                   const std::vector<std::unordered_set<uint32_t>>& alive_adj,
                                   std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj,
-                                  std::vector<std::unordered_set<uint32_t>>& super_adj) {
+                                  std::vector<std::unordered_set<uint32_t>>& super_adj
+) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_construct_superGraph\n"); 
 #endif
@@ -427,7 +434,8 @@ void G_EXT::_construct_superGraph(const std::unordered_map<uint32_t, std::vector
 }
 
 void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>>& super_adj,
-                                  std::vector<uint32_t>& levelize_leaves_to_roots) {
+                                  std::vector<uint32_t>& levelize_leaves_to_roots
+) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_levelize_from_leaves\n"); 
 #endif
@@ -476,10 +484,10 @@ void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>
 #endif
 }
 
-
 void G_EXT::_get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_roots,
                             const std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
-                            const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj) {
+                            const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj
+) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_get_queue_list\n"); 
 #endif
@@ -688,7 +696,6 @@ __device__ double atomicMinDouble(double* addr, double val) {
   return __longlong_as_double(old);
 }
 
-
 __global__ void relax_enodes_kernel(const uint32_t N, 
                                     const uint32_t num_endes, 
                                     const float* csr_ende_cost, 
@@ -699,8 +706,6 @@ __global__ void relax_enodes_kernel(const uint32_t N,
 ) {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_endes) return;
-  // printf("blockIdx.x = %d, blockDim.x = %d, threadIdx.x = %d\n", 
-  //         blockIdx.x, blockDim.x, threadIdx.x); 
 
   // float acc_cost = csr_ende_cost[t_idx];
   double acc_cost = (double)csr_ende_cost[t_idx]; // promote from float
@@ -718,8 +723,6 @@ __global__ void relax_enodes_kernel(const uint32_t N,
     *update = true; // No need to be atomic
   }  
 }
-
-
 
 double G_EXT::_gpu_relaxation(const uint32_t N, 
                               const std::vector<float>& csr_ende_cost, 
@@ -796,7 +799,8 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
 
 // =========================== Print functions =========================== // 
 
-void G_EXT::_print_adj(const std::vector<std::unordered_set<uint32_t>>& adj) const {
+void G_EXT::_print_adj(const std::vector<std::unordered_set<uint32_t>>& adj
+) const {
   for (uint32_t fm = 0; fm < adj.size(); fm++) {
     printf("fm_node = %u, to nodes = [", fm); 
     for (const auto& elem : adj[fm]) {

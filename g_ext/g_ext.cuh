@@ -74,7 +74,7 @@ public:
     cudaEventSynchronize(stopGPU);
     cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
     printf("GPU Runtime (ms) : %.2f (ms)\n", gpuTime);
-    printf("FINAL COST = %.2lf, %.2lf\n", res_cpu, res_gpu);
+    printf("FINAL TREE COST: CPU = %.2lf, GPU = %.2lf\n", res_cpu, res_gpu);
   }
 
 private:
