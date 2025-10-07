@@ -49,32 +49,40 @@ public:
     std::vector<uint32_t> csr_ende_ecls;
     std::vector<uint32_t> csr_ende_child;
     std::vector<uint32_t> csr_ende_child_ptr;
-    double res_cpu, res_gpu; 
+    double best_tree_cost_gpu = 0.; 
+    double dag_cost_gpu = 0.; 
 
     _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr); 
     
     // CPU version
     std::chrono::duration<double> duration;
     auto start = std::chrono::steady_clock::now();
-      res_cpu = _cpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
                                 csr_ende_child, csr_ende_child_ptr);
+      
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
+              best_tree_cost_cpu, dag_cost_cpu);
 
-    // GPU version
-    float gpuTime = 0.;
-    cudaEvent_t startGPU, stopGPU;
-    cudaEventCreate(&startGPU);
-    cudaEventCreate(&stopGPU);    
-    cudaEventRecord(startGPU);
-      res_gpu = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
-                                csr_ende_child, csr_ende_child_ptr);
-    cudaEventRecord(stopGPU);
-    cudaEventSynchronize(stopGPU);
-    cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-    printf("GPU Runtime: %.2f (ms)\n", gpuTime);
-    printf("FINAL TREE COST: CPU = %.2lf, GPU = %.2lf\n", res_cpu, res_gpu);
+
+    // // GPU version
+    // float gpuTime = 0.;
+    // cudaEvent_t startGPU, stopGPU;
+    // cudaEventCreate(&startGPU);
+    // cudaEventCreate(&stopGPU);    
+    // cudaEventRecord(startGPU);
+    //   best_tree_cost_gpu = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+    //                             csr_ende_child, csr_ende_child_ptr);
+    // cudaEventRecord(stopGPU);
+    // cudaEventSynchronize(stopGPU);
+    // cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
+    // printf("GPU Runtime: %.2f (ms)\n", gpuTime);
+    // printf("FINAL TREE COST: CPU = %.2lf, GPU = %.2lf\n", best_tree_cost_cpu, best_tree_cost_gpu);
+
+    // _cpsat_solver();
+
   }
 
   // ILP Solver functions 
@@ -84,7 +92,6 @@ private:
   void _gpu_private_test() { printf("\nclass G_EXT: Hello world CUDA function!\n"); }
   /* Read */
   void _read_input(const std::string input_path);
-
   void _prune_dead_nodes();
   
   /* Run */
@@ -115,16 +122,22 @@ private:
               std::vector<uint32_t>& csr_ende_child,
               std::vector<uint32_t>& csr_ende_child_ptr);
 
-  /* Relaxation */
-  double _cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+  /* Tree Level Relaxation */
+  std::pair<double, double> _cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
                         const std::vector<uint32_t>& csr_ende_ecls,
                         const std::vector<uint32_t>& csr_ende_child,
                         const std::vector<uint32_t>& csr_ende_child_ptr); 
   double _gpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
                         const std::vector<uint32_t>& csr_ende_ecls,
                         const std::vector<uint32_t>& csr_ende_child,
-                        const std::vector<uint32_t>& csr_ende_child_ptr); 
+                        const std::vector<uint32_t>& csr_ende_child_ptr);
+  
+  
+  /* ILP solver */ 
+  void _cpsat_solver();
 
+
+  /* Private members */
   // read in from .json
   uint32_t _num_ecls; // nuber of eclasses 
   uint32_t _num_ende; // number of enodes
@@ -144,7 +157,6 @@ private:
 
   // queue list for GPU brute-force algorithm 
   std::vector<uint32_t> _queue_list;
-      
 
   // Print function
   void _print_input() const;

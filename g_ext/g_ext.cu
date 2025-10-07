@@ -599,7 +599,7 @@ void G_EXT::_CSR(const std::vector<uint32_t>& queue,
 
 }
 
-double G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+std::pair<double, double> G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
                             const std::vector<uint32_t>& csr_ende_ecls,
                             const std::vector<uint32_t>& csr_ende_child,
                             const std::vector<uint32_t>& csr_ende_child_ptr
@@ -609,8 +609,12 @@ double G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_en
 #endif
   // CPU relaxation 
   bool h_update = true;
-  std::vector<double> cost_of_ecls; 
+  std::vector<double> cost_of_ecls; // Final cost of each eclass
+  std::vector<double> cost_of_ende; // Final cost of each enode
+  std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass 
   cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
+  cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
+  best_ende_of_ecls.resize(_num_ecls, 0);
  
   while (h_update) {
     h_update = false;
@@ -626,12 +630,15 @@ double G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_en
           acc_cost += cost_of_ecls[csr_ende_child[jj]];
         }
 
+        cost_of_ende[t_idx] = (acc_cost < cost_of_ende[t_idx]) ? (acc_cost) : (cost_of_ende[t_idx]);
+
         const uint32_t which_ecls = csr_ende_ecls[t_idx];
 
         #pragma omp critical
         {
           if (acc_cost < cost_of_ecls[which_ecls]) {
             cost_of_ecls[which_ecls] = acc_cost;
+            best_ende_of_ecls[which_ecls] = t_idx;
             h_update = true;
           }
         }
@@ -644,16 +651,83 @@ double G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_en
   for (size_t i = 0; i < cost_of_ecls.size(); i++) {
     printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
   }
-  printf("\n");
+
+  printf("\ncost_of_ende:\n");
+  for (size_t i = 0; i < cost_of_ende.size(); i++) {
+    printf("  [%zu] = %.1f\n", i, cost_of_ende[i]);
+  }
+  printf("\n");  
+
+  printf("\nbest_ende_of_ecls:\n");
+  for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
+    printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
+  }
+  printf("\n");    
 #endif
 
-  double ret = 0.0; 
+  // Get best tree cost 
+  double tree_ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
-    ret += cost_of_ecls[_root_eclass_id[r]];
+    tree_ret += cost_of_ecls[_root_eclass_id[r]];
+  }
+  
+  // Get best dag cost 
+  double dag_ret = 0.0; 
+  std::vector<bool> picked_endes;
+  picked_endes.resize(_num_ende, false); 
+
+  std::vector<bool> visited_eclasses(_num_ecls, false);
+  std::queue<uint32_t> q;
+
+  // enqueue all roots
+  for (uint32_t rid : _root_eclass_id) {
+    if (rid < _num_ecls) {
+      q.push(rid);
+      visited_eclasses[rid] = true;
+    }
   }
 
-  return ret; 
+  while (!q.empty()) {
+    uint32_t cur_ecls = q.front();
+    q.pop();
+
+    uint32_t ende_idx = best_ende_of_ecls[cur_ecls];
+    if (ende_idx >= _num_ende) continue;
+
+    if (!picked_endes[ende_idx]) {
+      picked_endes[ende_idx] = true;
+      dag_ret += csr_ende_cost[ende_idx];
+    }
+
+    uint32_t start = csr_ende_child_ptr[ende_idx];
+    uint32_t end   = csr_ende_child_ptr[ende_idx + 1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t child_ecls = csr_ende_child[jj];
+      if (!visited_eclasses[child_ecls]) {
+        visited_eclasses[child_ecls] = true;
+        q.push(child_ecls);
+      }
+    }
+  }
+
+#ifdef PRINT_LOG
+  printf("\nActivated enodes in DAG traversal:\n");
+  for (size_t i = 0; i < picked_endes.size(); i++) {
+    if (picked_endes[i]) {
+      printf("  enode[%zu] (eclass %u, cost %.1f)\n", 
+             i, csr_ende_ecls[i], csr_ende_cost[i]);
+    }
+  }
+  printf("DAG total active enodes: %zu\n", 
+         std::count(picked_endes.begin(), picked_endes.end(), true));
+#endif
+
+  
+  return std::make_pair(tree_ret, dag_ret);
 }
+
+
+
 
 __device__ float atomicMinFloat(float* addr, float val) {
   int* addr_as_i = (int*)addr;
@@ -810,6 +884,16 @@ void G_EXT::SimpleSatProgram() {
     LOG(INFO) << "No solution found.";
   }
 }
+
+void G_EXT::_cpsat_solver(
+) {
+// #ifdef PRINT_LOG
+  printf("Inside G_EXT::_cpsat_solver()\n"); 
+// #endif
+
+
+}
+
 
 // =========================== Print functions =========================== // 
 

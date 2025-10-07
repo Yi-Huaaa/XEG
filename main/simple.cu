@@ -62,9 +62,9 @@ int main(int argc, char *argv[]) {
     g_ext.run(); 
 
 
-  // ===== OR-Tools CP-SAT test starts =====
-  std::cout << "Running CP-SAT test example..." << std::endl;
-  g_ext.SimpleSatProgram(); 
+  // // ===== OR-Tools CP-SAT test starts =====
+  // std::cout << "Running CP-SAT test example..." << std::endl;
+  // g_ext.SimpleSatProgram(); 
 
 
   return 0;
