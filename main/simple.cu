@@ -59,7 +59,7 @@ int main(int argc, char *argv[]) {
   duration_read = end - start;
   std::cout << "Read Time: " << g_ext.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
-    g_ext.run(true, 360); 
+    g_ext.run(true, 100); 
 
 
   // // ===== OR-Tools CP-SAT test starts =====
