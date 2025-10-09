@@ -224,7 +224,8 @@ void G_EXT::_prune_dead_nodes() {
 void G_EXT::_preprocess(std::vector<float>& csr_ende_cost, 
                         std::vector<uint32_t>& csr_ende_ecls,
                         std::vector<uint32_t>& csr_ende_child,
-                        std::vector<uint32_t>& csr_ende_child_ptr
+                        std::vector<uint32_t>& csr_ende_child_ptr,
+                        std::vector<std::vector<uint32_t>>& ecls_its_ende
 ) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_preprocess()\n");
@@ -256,7 +257,7 @@ void G_EXT::_preprocess(std::vector<float>& csr_ende_cost,
       _ende_cost, _ende_ecls, 
       _ende_child, _ende_child_ptr,
       csr_ende_cost, csr_ende_ecls,
-      csr_ende_child, csr_ende_child_ptr);
+      csr_ende_child, csr_ende_child_ptr, ecls_its_ende);
 }
 
 void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
@@ -541,17 +542,20 @@ void G_EXT::_CSR(const std::vector<uint32_t>& queue,
                 std::vector<float>& csr_ende_cost, 
                 std::vector<uint32_t>& csr_ende_ecls,
                 std::vector<uint32_t>& csr_ende_child,
-                std::vector<uint32_t>& csr_ende_child_ptr
+                std::vector<uint32_t>& csr_ende_child_ptr,
+                std::vector<std::vector<uint32_t>>& ecls_its_ende
 ) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_CSR()\n"); 
 #endif
   // Make all of the data into CSR format 
+
   uint32_t N = queue.size();
   // printf("N = %u\n", N);
   csr_ende_cost.resize(N, 0.0); 
   csr_ende_ecls.resize(N, 0); 
   csr_ende_child_ptr.resize(N+1); 
+  ecls_its_ende.resize(_num_ecls, std::vector<uint32_t>());
 
   // Init 
   uint32_t acc = 0;
@@ -559,6 +563,7 @@ void G_EXT::_CSR(const std::vector<uint32_t>& queue,
     uint32_t ende = queue[n];
     csr_ende_cost[n] = ende_cost[ende];
     csr_ende_ecls[n] = ende_ecls[ende];
+    ecls_its_ende[ende_ecls[ende]].push_back(n);
     csr_ende_child_ptr[n] = acc; 
     uint32_t start = ende_child_ptr[ende];
     uint32_t end   = ende_child_ptr[ende + 1];
@@ -602,16 +607,16 @@ void G_EXT::_CSR(const std::vector<uint32_t>& queue,
 std::pair<double, double> G_EXT::_cpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
                             const std::vector<uint32_t>& csr_ende_ecls,
                             const std::vector<uint32_t>& csr_ende_child,
-                            const std::vector<uint32_t>& csr_ende_child_ptr
+                            const std::vector<uint32_t>& csr_ende_child_ptr,
+                            std::vector<double>& cost_of_ecls,
+                            std::vector<double>& cost_of_ende,
+                            std::vector<uint32_t>& best_ende_of_ecls, std::vector<bool>& picked_endes
 ) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_cpu_relaxation()\n"); 
 #endif
   // CPU relaxation 
   bool h_update = true;
-  std::vector<double> cost_of_ecls; // Final cost of each eclass
-  std::vector<double> cost_of_ende; // Final cost of each enode
-  std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass 
   cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
   cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
   best_ende_of_ecls.resize(_num_ecls, 0);
@@ -673,7 +678,6 @@ std::pair<double, double> G_EXT::_cpu_relaxation(const uint32_t N, const std::ve
   
   // Get best dag cost 
   double dag_ret = 0.0; 
-  std::vector<bool> picked_endes;
   picked_endes.resize(_num_ende, false); 
 
   std::vector<bool> visited_eclasses(_num_ecls, false);
@@ -849,7 +853,7 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
     ret += cost_of_ecls[_root_eclass_id[r]];
   }
 
-  return ret;  
+  return ret;
 }
 
 
@@ -885,13 +889,297 @@ void G_EXT::SimpleSatProgram() {
   }
 }
 
+
 void G_EXT::_cpsat_solver(
+  const double time_limit,
+  const std::vector<float>& csr_ende_cost, 
+  const std::vector<uint32_t>& csr_ende_ecls,
+  const std::vector<uint32_t>& csr_ende_child,
+  const std::vector<uint32_t>& csr_ende_child_ptr,
+  const std::vector<std::vector<uint32_t>>& ecls_its_ende,
+  const std::vector<double>& cost_of_ecls,
+  const std::vector<double>& cost_of_ende,
+  const std::vector<uint32_t>& best_ende_of_ecls,
+  const std::vector<bool>& picked_endes
 ) {
+#ifdef PRINT_LOG
+  printf("Inside G_EXT::_cpsat_solver() Time_limit = %.2lf (sec)\n", time_limit);
+
+  printf("ecls_its_ende\n");
+  for (uint32_t i = 0; i < ecls_its_ende.size(); i++) {
+    bool alive = (ecls_its_ende[i].size() == 0) ? (false) : (true); 
+    if (alive) {
+      printf("eclass %u, activate; with enodes: ", i); 
+    } else {
+      printf("eclass %u, deactivate;", i); 
+    }
+    for (uint32_t j = 0; j < ecls_its_ende[i].size(); j++) {
+      printf("%u, ", ecls_its_ende[i][j]); 
+    }
+    printf("\n");  
+  }
+  std::vector<std::pair<uint32_t, uint32_t>> dep_log; // (parent_ecls, child_ecls)
+  std::vector<std::tuple<uint32_t, uint32_t, int>> cost_log; // (eclass, enode, int_cost)
+  std::vector<uint32_t> root_log;
+  // std::vector<uint32_t> level_log;
+  // std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> level_constr_log; // (parent_ecls, child_ecls, ende_idx)
+
+#endif
+
+  std::unordered_map<uint32_t, BoolVar> active; // ClassId
+  std::unordered_map<uint32_t, std::unordered_map<uint32_t, BoolVar>> nodes_vars; // ClassId / NodeId
+
+  CpModelBuilder cp_model;
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;  // skip dead eclasses
+    
+    active[cid] = cp_model.NewBoolVar();
+    for (uint32_t ende_idx : enodes) {
+      nodes_vars[cid].insert({ende_idx, cp_model.NewBoolVar()});
+    }
+    
+    LinearExpr sum_nodes;
+    for (const auto &v : nodes_vars[cid]) {
+      sum_nodes += v.second;
+    }
+    cp_model.AddEquality(sum_nodes, active[cid]);
+  }
+
+#ifdef PRINT_LOG
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+    printf("EClass %u: %zu enodes\n", cid, enodes.size());
+  }
+#endif
+  
+  // 对于每个节点，如果其被选中，则要求所有其子 e-class 也必须被激活
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+
+    const auto& vars = nodes_vars[cid];
+    for (uint32_t ende_idx : enodes) {
+      uint32_t start = csr_ende_child_ptr[ende_idx];
+      uint32_t end   = csr_ende_child_ptr[ende_idx+1];
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t chd_ecls_idx = csr_ende_child[jj];
+        cp_model.AddLessOrEqual(vars.at(ende_idx), active[chd_ecls_idx]);
+        #ifdef PRINT_LOG
+          // log (parent enode → child_ecls)
+          dep_log.emplace_back(ende_idx, chd_ecls_idx);
+        #endif
+      }
+    }
+  }
+
+#ifdef PRINT_LOG
+  printf("==== Dependency Constraints (node → child eclass) ====\n");
+  for (const auto& [parent_ecls, child_ecls] : dep_log) {
+    printf("  parent enodeIdx=%u -> child_ecls=%u\n", parent_ecls, child_ecls);
+  }
+  printf("======================================================\n\n");
+#endif
+
+  // Part 3. 目标函数：最小化所有选中节点的成本
+  LinearExpr objective;
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+
+    const auto& vars = nodes_vars[cid];
+    for (uint32_t ende_idx : enodes) {
+      // const Node &node = egraph[ende_idx];
+      const double cost = csr_ende_cost[ende_idx];
+      int int_cost = static_cast<int>(cost);
+      if (int_cost != 0) {
+        if (int_cost == 1) {
+          objective += vars.at(ende_idx);
+        } else {
+          objective += int_cost * vars.at(ende_idx);
+        }
+        #ifdef PRINT_LOG
+          cost_log.emplace_back(cid, ende_idx, int_cost);
+        #endif
+      }
+    }
+  }
+  cp_model.Minimize(objective);
+
+  // Part 4. 强制根 e-class 激活
+  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
+    uint32_t root_idx = _root_eclass_id[r];
+    cp_model.AddEquality(active[root_idx], 1);
+    #ifdef PRINT_LOG
+      root_log.push_back(root_idx);
+    #endif  
+  }  
+
+#ifdef PRINT_LOG
+  printf("==== Objective Cost Terms (active nodes) ====\n");
+  for (const auto& [cid, ende_idx, int_cost] : cost_log) {
+    printf("  eclass=%u, enode=%u, cost=%d\n", cid, ende_idx, int_cost);
+  }
+  printf("Total contributing terms: %zu\n", cost_log.size());
+  printf("=================================================\n\n");
+
+  printf("==== Root E-Class Activation Constraints ====\n");
+  for (uint32_t rid : root_log) {
+    printf("  Root eclass=%u forced active\n", rid);
+  }
+  printf("Total roots: %zu\n", root_log.size());
+  printf("=============================================\n\n");
+#endif
+
+  // Part 5. 为每个 e-class 创建层次变量，用于防止环路（范围 [0, num_classes]）
+  int num_classes = ecls_its_ende.size();
+  std::unordered_map<uint32_t, IntVar, std::hash<uint32_t>> level;
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    level[cid] = cp_model.NewIntVar(Domain(0, num_classes));
+  }
+
+  // Part 6. 添加约束：如果一个节点被选中，则其所有子 e-class 的层次至少比当前 e-class 高 1
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+
+    const auto& vars = nodes_vars[cid];
+    for (uint32_t ende_idx : enodes) {
+      uint32_t start = csr_ende_child_ptr[ende_idx];
+      uint32_t end   = csr_ende_child_ptr[ende_idx+1];
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t child_cid = csr_ende_child[jj];
+        cp_model.AddGreaterOrEqual(LinearExpr(level[child_cid]) - level[cid], 1)
+            .OnlyEnforceIf(vars.at(ende_idx));
+      }
+    }
+  }  
+
+
+  // Part 7. 读取 zero_node.mst 文件，将对应节点变量固定为 0
+  // Skip it now, this is the pruning part from e-boost, e-boost prunes more enodes with setting larger alpha
+
+
+
 // #ifdef PRINT_LOG
-  printf("Inside G_EXT::_cpsat_solver()\n"); 
+//   printf("==== Level Variable Allocation (防环层级变量建立) ====\n");
+//   printf("Total e-classes with level vars: %zu\n", level_log.size());
+//   for (uint32_t cid : level_log) {
+//     printf("  eclass=%u, level domain=[0,%d]\n", cid, num_classes);
+//   }
+//   printf("======================================================\n\n");
+
+//   printf("==== Level Constraints (防环约束) ====\n");
+//   printf("Format: parent_ecls -> child_ecls (enode_idx)\n");
+//   for (const auto& [parent_cid, child_cid, ende_idx] : level_constr_log) {
+//     printf("  %u -> %u (enode=%u)\n", parent_cid, child_cid, ende_idx);
+//   }
+//   printf("Total constraints: %zu\n", level_constr_log.size());
+//   printf("======================================\n\n");
 // #endif
 
+  // Part 7. 读取 zero_node.mst 文件，将对应节点变量固定为 0
+  // Skip zero_node.mst pruning
+  // Add warm-start hint from CPU relaxation
 
+#ifdef PRINT_LOG
+  uint32_t hint_count_1 = 0;
+  uint32_t hint_count_0 = 0;
+  printf("==== Warm Start Hints (from CPU best_ende_of_ecls and picked_endes) ====\n");
+  printf("%-10s %-10s %-10s %-10s\n", "Eclass", "EnodeIdx", "Hint", "Remark");
+#endif
+
+
+  // Part 8. 添加 warm start hint：依據 picked_endes
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+    const auto& vars = nodes_vars[cid];
+
+    uint32_t best_idx = best_ende_of_ecls[cid];
+    if (vars.find(best_idx) == vars.end()) continue;
+
+    // 為該 eclass 的所有 enode 設 hint (picked = 1, 其他 = 0)
+    for (uint32_t ende_idx : enodes) {
+      if (vars.find(ende_idx) == vars.end()) continue;
+
+      int hint_val = (ende_idx == best_idx && picked_endes[best_idx]) ? 1 : 0;
+      cp_model.AddHint(vars.at(ende_idx), hint_val);
+
+      #ifdef PRINT_LOG
+        if (hint_val == 1) {
+          hint_count_1++;
+          printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 1, "<= picked best enode");
+        } else {
+          hint_count_0++;
+          printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 0, "");
+        }
+      #endif
+    }
+  }
+
+#ifdef PRINT_LOG
+  printf("---------------------------------------------------------\n");
+  printf("Total hints set to 1: %u\n", hint_count_1);
+  printf("Total hints set to 0: %u\n", hint_count_0);
+  printf("Grand total hints:    %u\n", hint_count_1 + hint_count_0);
+  printf("=========================================================\n\n");
+#endif
+
+  // Part 9. 设置求解器观察器、参数并求解
+  Model model;
+  int num_solutions = 0;
+  auto start = std::chrono::high_resolution_clock::now();
+
+  // 可選：觀察者，用來打印目前最好的解
+  model.Add(NewFeasibleSolutionObserver([&](const CpSolverResponse& r) {
+      auto current_time = std::chrono::high_resolution_clock::now();
+      double elapsed_seconds =
+          std::chrono::duration_cast<std::chrono::duration<double>>(current_time - start).count();
+
+      std::cout << "Incumbent Solution: "
+                << elapsed_seconds << "s; objective = "
+                << r.objective_value() << std::endl;
+      num_solutions++;
+  })); // model.Add
+
+  // 設定求解時間上限
+  if (time_limit > 0.0) {
+    SatParameters parameters;
+    parameters.set_max_time_in_seconds(time_limit);
+    // parameters.set_max_time_in_seconds(3600.0);
+    // parameters.set_log_search_progress(true);  // 如果想看完整 solver log 可開
+    model.Add(NewSatParameters(parameters));
+  }
+
+  // 真正開始求解
+  const CpSolverResponse response = SolveCpModel(cp_model.Build(), &model);
+
+  // 結果輸出
+  if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) {
+    std::cout << "=========================================\n";
+    std::cout << "Solver finished.\n";
+    std::cout << "Objective value = " << response.objective_value() << "\n";
+    std::cout << "Runtime = " << response.wall_time() << " (s)\n";
+    std::cout << "Feasible solutions found = " << num_solutions << "\n";
+
+    // // Optional: 印出所有 active 節點
+    // std::cout << "==== Active enodes (solution) ====\n";
+    // for (const auto& [cid, node_map] : nodes_vars) {
+    //   for (const auto& [node_id, var] : node_map) {
+    //     bool value = SolutionBooleanValue(response, var);
+    //     if (value) {
+    //       std::cout << "EClass " << cid
+    //                 << " -> enode " << node_id
+    //                 << " (cost " << csr_ende_cost[node_id] << ")\n";
+    //     }
+    //   }
+    // }
+    // std::cout << "=========================================\n";
+  } else {
+    std::cout << "No feasible solution found.\n";
+  }
 }
 
 
