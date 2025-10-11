@@ -47,54 +47,60 @@ public:
   void run(const bool ILP_solver = false, 
           const double ILP_time_limit = 360
 ) {
-    std::vector<float> csr_ende_cost;
-    std::vector<uint32_t> csr_ende_ecls;
-    std::vector<uint32_t> csr_ende_child;
-    std::vector<uint32_t> csr_ende_child_ptr;
-    std::vector<std::vector<uint32_t>> ecls_its_ende;
-    double best_tree_cost_gpu = 0.; 
-    double dag_cost_gpu = 0.; 
+    printf("Hellow bibi\n");
+    // std::vector<float> csr_ende_cost;
+    // std::vector<uint32_t> csr_ende_ecls;
+    // std::vector<uint32_t> csr_ende_child;
+    // std::vector<uint32_t> csr_ende_child_ptr;
+    // std::vector<std::vector<uint32_t>> ecls_its_ende;
 
-    _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr, ecls_its_ende); 
+    // _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr, ecls_its_ende); 
     
-    // CPU version
-    std::vector<double> cost_of_ecls; // Final cost of each eclass
-    std::vector<double> cost_of_ende; // Final cost of each enode
-    std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
-    std::vector<bool> picked_endes;
-    std::chrono::duration<double> duration;
-    auto start = std::chrono::steady_clock::now();
-      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_relaxation(_queue_list.size(), 
-                                                                csr_ende_cost, csr_ende_ecls,
-                                                                csr_ende_child, csr_ende_child_ptr,
-                                                                cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
-    auto end = std::chrono::steady_clock::now();
-    duration = end - start;
-    std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
-              best_tree_cost_cpu, dag_cost_cpu);
-    
-    if (ILP_solver) {
-      _cpsat_solver(ILP_time_limit, 
-                    csr_ende_cost, csr_ende_ecls,
-                    csr_ende_child, csr_ende_child_ptr, ecls_its_ende, 
-                    cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
-    }
+    // // CPU version
+    // std::vector<double> cost_of_ecls; // Final cost of each eclass
+    // std::vector<double> cost_of_ende; // Final cost of each enode
+    // std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
+    // std::vector<bool> picked_endes;
+    // std::chrono::duration<double> duration;
+    // auto start = std::chrono::steady_clock::now();
+    //   auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_relaxation(_queue_list.size(), 
+    //                                                             csr_ende_cost, csr_ende_ecls,
+    //                                                             csr_ende_child, csr_ende_child_ptr,
+    //                                                             cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
+    //   double cpu_dag_refine = _cpu_dag_refinement(_queue_list.size(), 
+    //                                               csr_ende_cost, csr_ende_ecls,
+    //                                               csr_ende_child, csr_ende_child_ptr,
+    //                                               cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes,
+    //                                               dag_cost_cpu); 
 
+    // auto end = std::chrono::steady_clock::now();
+    // duration = end - start;
+    // std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    // printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf, cpu_dag_refine = %.2lf\n", 
+    //           best_tree_cost_cpu, dag_cost_cpu, cpu_dag_refine);
 
-    // // GPU version
-    // float gpuTime = 0.;
-    // cudaEvent_t startGPU, stopGPU;
-    // cudaEventCreate(&startGPU);
-    // cudaEventCreate(&stopGPU);    
-    // cudaEventRecord(startGPU);
-    //   best_tree_cost_gpu = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
-    //                             csr_ende_child, csr_ende_child_ptr);
-    // cudaEventRecord(stopGPU);
-    // cudaEventSynchronize(stopGPU);
-    // cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-    // printf("GPU Runtime: %.2f (ms)\n", gpuTime);
-    // printf("FINAL TREE COST: CPU = %.2lf, GPU = %.2lf\n", best_tree_cost_cpu, best_tree_cost_gpu);
+    // // // GPU version
+    // // float gpuTime = 0.;
+    // // cudaEvent_t startGPU, stopGPU;
+    // // cudaEventCreate(&startGPU);
+    // // cudaEventCreate(&stopGPU);    
+    // // cudaEventRecord(startGPU);
+    // //   auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_relaxation(_queue_list.size(), csr_ende_cost, csr_ende_ecls,
+    // //                                                             csr_ende_child, csr_ende_child_ptr);
+    // // cudaEventRecord(stopGPU);
+    // // cudaEventSynchronize(stopGPU);
+    // // cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
+    // // printf("GPU Runtime: %.2f (ms)\n", gpuTime);
+    // // printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
+    // //           best_tree_cost_gpu, dag_cost_gpu);
+
+    // if (ILP_solver) {
+    //   _cpsat_solver(ILP_time_limit, 
+    //                 csr_ende_cost, csr_ende_ecls,
+    //                 csr_ende_child, csr_ende_child_ptr, ecls_its_ende, 
+    //                 cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
+    // }
+
   }
 
   // ILP Solver functions 
@@ -144,10 +150,25 @@ private:
                                             std::vector<double>& cost_of_ende,
                                             std::vector<uint32_t>& best_ende_of_ecls,
                                             std::vector<bool>& picked_endes); 
-  double _gpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
-                        const std::vector<uint32_t>& csr_ende_ecls,
-                        const std::vector<uint32_t>& csr_ende_child,
-                        const std::vector<uint32_t>& csr_ende_child_ptr);
+  double _compute_dag_cost(const std::vector<uint32_t>& csr_ende_ecls,
+                          const std::vector<float>& csr_ende_cost, 
+                          const std::vector<uint32_t>& csr_ende_child,
+                          const std::vector<uint32_t>& csr_ende_child_ptr,
+                          const std::vector<uint32_t>& best_ende_of_ecls,
+                          std::vector<bool>& picked_endes);
+  double _cpu_dag_refinement(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+                            const std::vector<uint32_t>& csr_ende_ecls,
+                            const std::vector<uint32_t>& csr_ende_child,
+                            const std::vector<uint32_t>& csr_ende_child_ptr,
+                            std::vector<double>& cost_of_ecls,
+                            std::vector<double>& cost_of_ende,
+                            std::vector<uint32_t>& best_ende_of_ecls,
+                            std::vector<bool>& picked_endes,
+                            const double init_dag_cost);
+  std::pair<double, double> _gpu_relaxation(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+                                            const std::vector<uint32_t>& csr_ende_ecls,
+                                            const std::vector<uint32_t>& csr_ende_child,
+                                            const std::vector<uint32_t>& csr_ende_child_ptr);
   
   
   /* ILP solver */ 

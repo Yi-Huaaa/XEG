@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-// #define PRINT_LOG
+#define PRINT_LOG
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -221,318 +221,322 @@ void G_EXT::_prune_dead_nodes() {
 #endif 
 }
 
-void G_EXT::_preprocess(std::vector<float>& csr_ende_cost, 
-                        std::vector<uint32_t>& csr_ende_ecls,
-                        std::vector<uint32_t>& csr_ende_child,
-                        std::vector<uint32_t>& csr_ende_child_ptr,
-                        std::vector<std::vector<uint32_t>>& ecls_its_ende
-) {
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_preprocess()\n");
-#endif
+// void G_EXT::_preprocess(std::vector<float>& csr_ende_cost, 
+//                         std::vector<uint32_t>& csr_ende_ecls,
+//                         std::vector<uint32_t>& csr_ende_child,
+//                         std::vector<uint32_t>& csr_ende_child_ptr,
+//                         std::vector<std::vector<uint32_t>>& ecls_its_ende
+// ) {
+// #ifdef PRINT_LOG
+//   printf("Inside G_EXT::_preprocess()\n");
+// #endif
 
-  // Construct adj for the following step to find the SCC 
-  std::unordered_map<uint32_t, uint32_t> ecls_id_to_alive_id;
-  std::vector<std::unordered_set<uint32_t>> alive_adj;
-  _construct_alive_graph(ecls_id_to_alive_id, alive_adj); 
+  // // Construct adj for the following step to find the SCC 
+  // std::unordered_map<uint32_t, uint32_t> ecls_id_to_alive_id;
+  // std::vector<std::unordered_set<uint32_t>> alive_adj;
+  // _construct_alive_graph(ecls_id_to_alive_id, alive_adj); 
 
-  // Find SCC
-  std::unordered_map<uint32_t, std::vector<uint32_t>> comp_nodes;
-  _find_SCC(alive_adj, comp_nodes);
+  // // Find SCC
+  // std::unordered_map<uint32_t, std::vector<uint32_t>> comp_nodes;
+  // _find_SCC(alive_adj, comp_nodes);
 
-  // Construct supernode adj 
-  std::unordered_map<uint32_t, uint32_t> alive_id_to_super_adj;
-  std::vector<std::unordered_set<uint32_t>> super_adj;
-  _construct_superGraph(comp_nodes, alive_adj, alive_id_to_super_adj, super_adj);
+  // // Construct supernode adj 
+  // std::unordered_map<uint32_t, uint32_t> alive_id_to_super_adj;
+  // std::vector<std::unordered_set<uint32_t>> super_adj;
+  // _construct_superGraph(comp_nodes, alive_adj, alive_id_to_super_adj, super_adj);
 
-  // Levelize supergraph
-  std::vector<uint32_t> levelize_leaves_to_roots; 
-  _levelize_from_leaves(super_adj, levelize_leaves_to_roots); 
+  // // Levelize supergraph
+  // std::vector<uint32_t> levelize_leaves_to_roots; 
+  // _levelize_from_leaves(super_adj, levelize_leaves_to_roots); 
 
-  // Construct queue list 
-  _get_queue_list(levelize_leaves_to_roots, ecls_id_to_alive_id, alive_id_to_super_adj); 
+  // // Construct queue list 
+  // _get_queue_list(levelize_leaves_to_roots, ecls_id_to_alive_id, alive_id_to_super_adj); 
 
-  // Store things in CSR
-  _CSR(_queue_list, 
-      _ende_cost, _ende_ecls, 
-      _ende_child, _ende_child_ptr,
-      csr_ende_cost, csr_ende_ecls,
-      csr_ende_child, csr_ende_child_ptr, ecls_its_ende);
-}
+  // directly constrcut the CSR format without dead eclasses/enodes
+  // _queue_list.resize(_num_alive_ende);
 
-void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
-                                  std::vector<std::unordered_set<uint32_t>>& alive_adj
-) {
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_construct_alive_graph()\n"); 
-#endif
 
-  uint32_t acc = 0; 
-  for (uint32_t ecls = 0; ecls < _alive_ecls.size(); ecls++) {
-    if (_alive_ecls[ecls]) {
-      ecls_id_to_alive_id[ecls] = acc; 
-      acc++; 
-    }
-  }
-  MY_CHECK(acc = _num_alive_ecls, "acc = _num_alive_ecls");
+  // // Store things in CSR
+  // _CSR(_queue_list, 
+  //     _ende_cost, _ende_ecls, 
+  //     _ende_child, _ende_child_ptr,
+  //     csr_ende_cost, csr_ende_ecls,
+  //     csr_ende_child, csr_ende_child_ptr, ecls_its_ende);
+// }
 
-#ifdef PRINT_LOG
-  std::cout << "\necls_id_to_alive_id:\n";
-  for (auto &kv : ecls_id_to_alive_id) {
-    std::cout << "  " << kv.first << " -> " << kv.second << "\n";
-  }
-#endif
+// void G_EXT::_construct_alive_graph(std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id, 
+//                                   std::vector<std::unordered_set<uint32_t>>& alive_adj
+// ) {
+// #ifdef PRINT_LOG
+//   printf("Inside G_EXT::_construct_alive_graph()\n"); 
+// #endif
 
-  alive_adj.resize(_num_alive_ecls);
-  for (uint32_t ende_idx = 0; ende_idx < _num_ende; ++ende_idx) {
-    uint32_t start = _ende_child_ptr[ende_idx];
-    uint32_t end   = _ende_child_ptr[ende_idx+1];
-    uint32_t ecls = _ende_ecls[ende_idx];
-    uint32_t new_ecls = ecls_id_to_alive_id[ecls];
+//   uint32_t acc = 0; 
+//   for (uint32_t ecls = 0; ecls < _alive_ecls.size(); ecls++) {
+//     if (_alive_ecls[ecls]) {
+//       ecls_id_to_alive_id[ecls] = acc; 
+//       acc++; 
+//     }
+//   }
+//   MY_CHECK(acc = _num_alive_ecls, "acc = _num_alive_ecls");
 
-    for (uint32_t j = start; j < end; j++) {
-      uint32_t cd_ecls_idx = _ende_child[j];
-      uint32_t new_cd_ecls_idx = ecls_id_to_alive_id[cd_ecls_idx];
-      if (_alive_ecls[ecls] && (new_ecls != new_cd_ecls_idx)) {
-        alive_adj[new_ecls].insert(new_cd_ecls_idx); 
-      }
-    }
-  }
+// #ifdef PRINT_LOG
+//   std::cout << "\necls_id_to_alive_id:\n";
+//   for (auto &kv : ecls_id_to_alive_id) {
+//     std::cout << "  " << kv.first << " -> " << kv.second << "\n";
+//   }
+// #endif
 
-#ifdef PRINT_LOG
-  printf("alive_adj: \n"); 
-  _print_adj(alive_adj); 
-  printf("\n"); 
-#endif  
-}
+//   alive_adj.resize(_num_alive_ecls);
+//   for (uint32_t ende_idx = 0; ende_idx < _num_ende; ++ende_idx) {
+//     uint32_t start = _ende_child_ptr[ende_idx];
+//     uint32_t end   = _ende_child_ptr[ende_idx+1];
+//     uint32_t ecls = _ende_ecls[ende_idx];
+//     uint32_t new_ecls = ecls_id_to_alive_id[ecls];
 
-void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj,
-                      std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes
-) {
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_find_SCC()\n"); 
-#endif
-  using namespace boost;
+//     for (uint32_t j = start; j < end; j++) {
+//       uint32_t cd_ecls_idx = _ende_child[j];
+//       uint32_t new_cd_ecls_idx = ecls_id_to_alive_id[cd_ecls_idx];
+//       if (_alive_ecls[ecls] && (new_ecls != new_cd_ecls_idx)) {
+//         alive_adj[new_ecls].insert(new_cd_ecls_idx); 
+//       }
+//     }
+//   }
 
-  typedef adjacency_list<vecS, vecS, directedS> Graph;
-  Graph g(adj.size());
+// #ifdef PRINT_LOG
+//   printf("alive_adj: \n"); 
+//   _print_adj(alive_adj); 
+//   printf("\n"); 
+// #endif  
+// }
 
-  for (size_t u = 0; u < adj.size(); u++) {
-    for (auto v : adj[u]) {
-      add_edge(u, v, g);
-    }
-  }
+// void G_EXT::_find_SCC(const std::vector<std::unordered_set<uint32_t>>& adj,
+//                       std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes
+// ) {
+// #ifdef PRINT_LOG
+//   printf("Inside G_EXT::_find_SCC()\n"); 
+// #endif
+//   using namespace boost;
 
-  std::vector<uint32_t> component(num_vertices(g));
-  uint32_t num = strong_components(
-    g, make_iterator_property_map(component.begin(), get(vertex_index, g))
-  );
+//   typedef adjacency_list<vecS, vecS, directedS> Graph;
+//   Graph g(adj.size());
+
+//   for (size_t u = 0; u < adj.size(); u++) {
+//     for (auto v : adj[u]) {
+//       add_edge(u, v, g);
+//     }
+//   }
+
+//   std::vector<uint32_t> component(num_vertices(g));
+//   uint32_t num = strong_components(
+//     g, make_iterator_property_map(component.begin(), get(vertex_index, g))
+//   );
   
-  for (size_t i = 0; i < component.size(); i++) {
-    comp_nodes[component[i]].push_back(i);
-  }
+//   for (size_t i = 0; i < component.size(); i++) {
+//     comp_nodes[component[i]].push_back(i);
+//   }
 
-#ifdef PRINT_LOG  
-  std::cout << "\n========== comp_nodes dump ==========\n";
-  for (const auto& kv : comp_nodes) {
-    uint32_t comp_id = kv.first;
-    const auto& nodes = kv.second;
-    std::cout << "Component " << comp_id << " (size=" << nodes.size() << "): { ";
-    for (size_t i = 0; i < nodes.size(); i++) {
-      std::cout << nodes[i];
-      if (i + 1 < nodes.size()) std::cout << ", ";
-    }
-    std::cout << " }\n";
-  }
-  std::cout << "=====================================\n\n";  
+// #ifdef PRINT_LOG  
+//   std::cout << "\n========== comp_nodes dump ==========\n";
+//   for (const auto& kv : comp_nodes) {
+//     uint32_t comp_id = kv.first;
+//     const auto& nodes = kv.second;
+//     std::cout << "Component " << comp_id << " (size=" << nodes.size() << "): { ";
+//     for (size_t i = 0; i < nodes.size(); i++) {
+//       std::cout << nodes[i];
+//       if (i + 1 < nodes.size()) std::cout << ", ";
+//     }
+//     std::cout << " }\n";
+//   }
+//   std::cout << "=====================================\n\n";  
 
-  std::vector<std::vector<uint32_t>> real_sccs; // only used for check and debug
-  std::vector<uint32_t> singletons; // only used for check and debug
-  for (auto &kv : comp_nodes) {
-    if (kv.second.size() > 1) {
-      real_sccs.push_back(kv.second);
-    } else {
-      singletons.push_back(kv.second[0]);
-    }
-  }
-  uint32_t acc = 0; // only used for check and debug
-  if (!real_sccs.empty()) {
-    std::cout << "Totally have " << real_sccs.size() << " SCCs in this graph\n";
-    for (size_t i = 0; i < real_sccs.size(); i++) {
-      std::cout << "SCC " << (i+1) << " (size = " << real_sccs[i].size() << ")"<< " {";
-      for (size_t j = 0; j < real_sccs[i].size(); j++) {
-        std::cout << real_sccs[i][j];
-        if (j + 1 < real_sccs[i].size()) std::cout << ", ";
-        acc++;
-      }
-      std::cout << "}\n";
-    }
-    if (!singletons.empty()) {
-      std::cout << "The remaining nodes (not in SCCs) (size = " << singletons.size() << ") \n";
-      acc += singletons.size();
-    }
-  } else {
-    std::cout << "This is a DAG (no SCC)\n\n";
-    acc = _num_alive_ecls;
-  }
-  // printf("_num_alive_ecls = %u, acc = %u\n", _num_alive_ecls, acc);
-  MY_CHECK(_num_alive_ecls == acc, "_num_alive_ecls == acc");
-  printf("\n");
-#endif
-}
+//   std::vector<std::vector<uint32_t>> real_sccs; // only used for check and debug
+//   std::vector<uint32_t> singletons; // only used for check and debug
+//   for (auto &kv : comp_nodes) {
+//     if (kv.second.size() > 1) {
+//       real_sccs.push_back(kv.second);
+//     } else {
+//       singletons.push_back(kv.second[0]);
+//     }
+//   }
+//   uint32_t acc = 0; // only used for check and debug
+//   if (!real_sccs.empty()) {
+//     std::cout << "Totally have " << real_sccs.size() << " SCCs in this graph\n";
+//     for (size_t i = 0; i < real_sccs.size(); i++) {
+//       std::cout << "SCC " << (i+1) << " (size = " << real_sccs[i].size() << ")"<< " {";
+//       for (size_t j = 0; j < real_sccs[i].size(); j++) {
+//         std::cout << real_sccs[i][j];
+//         if (j + 1 < real_sccs[i].size()) std::cout << ", ";
+//         acc++;
+//       }
+//       std::cout << "}\n";
+//     }
+//     if (!singletons.empty()) {
+//       std::cout << "The remaining nodes (not in SCCs) (size = " << singletons.size() << ") \n";
+//       acc += singletons.size();
+//     }
+//   } else {
+//     std::cout << "This is a DAG (no SCC)\n\n";
+//     acc = _num_alive_ecls;
+//   }
+//   // printf("_num_alive_ecls = %u, acc = %u\n", _num_alive_ecls, acc);
+//   MY_CHECK(_num_alive_ecls == acc, "_num_alive_ecls == acc");
+//   printf("\n");
+// #endif
+// }
 
-void G_EXT::_construct_superGraph(const std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
-                                  const std::vector<std::unordered_set<uint32_t>>& alive_adj,
-                                  std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj,
-                                  std::vector<std::unordered_set<uint32_t>>& super_adj
-) {
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_construct_superGraph\n"); 
-#endif
+// void G_EXT::_construct_superGraph(const std::unordered_map<uint32_t, std::vector<uint32_t>>& comp_nodes,
+//                                   const std::vector<std::unordered_set<uint32_t>>& alive_adj,
+//                                   std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj,
+//                                   std::vector<std::unordered_set<uint32_t>>& super_adj
+// ) {
+// #ifdef PRINT_LOG
+//   printf("Inside G_EXT::_construct_superGraph\n"); 
+// #endif
 
-  // Construct alive_id_to_super_adj
-  for (const auto& kv : comp_nodes) {
-    uint32_t comp_id = kv.first;
-    const auto& nodes = kv.second;
-    for (size_t i = 0; i < nodes.size(); i++) {
-      alive_id_to_super_adj[nodes[i]] = comp_id;
-    }
-  }
+//   // Construct alive_id_to_super_adj
+//   for (const auto& kv : comp_nodes) {
+//     uint32_t comp_id = kv.first;
+//     const auto& nodes = kv.second;
+//     for (size_t i = 0; i < nodes.size(); i++) {
+//       alive_id_to_super_adj[nodes[i]] = comp_id;
+//     }
+//   }
   
-  // Construct super_adj
-  super_adj.resize(comp_nodes.size());
-  for (uint32_t ecls = 0; ecls < alive_adj.size(); ecls++) {
-    uint32_t new_ecls = alive_id_to_super_adj[ecls];
-    for (uint32_t cd_ecls : alive_adj[ecls]) {
-      uint32_t new_cd_ecls_idx = alive_id_to_super_adj[cd_ecls];
-      if (new_ecls != new_cd_ecls_idx)
-        super_adj[new_ecls].insert(new_cd_ecls_idx);
-    }
-  }
+//   // Construct super_adj
+//   super_adj.resize(comp_nodes.size());
+//   for (uint32_t ecls = 0; ecls < alive_adj.size(); ecls++) {
+//     uint32_t new_ecls = alive_id_to_super_adj[ecls];
+//     for (uint32_t cd_ecls : alive_adj[ecls]) {
+//       uint32_t new_cd_ecls_idx = alive_id_to_super_adj[cd_ecls];
+//       if (new_ecls != new_cd_ecls_idx)
+//         super_adj[new_ecls].insert(new_cd_ecls_idx);
+//     }
+//   }
 
-#ifdef PRINT_LOG
-  std::cout << "\nalive_id_to_super_adj:\n";
-  for (auto &kv : alive_id_to_super_adj) {
-    std::cout << "  " << kv.first << " -> " << kv.second << "\n";
-  }
-  printf("super_adj:\n"); 
-  _print_adj(super_adj);
-  printf("\n"); 
-#endif
-}
+// #ifdef PRINT_LOG
+//   std::cout << "\nalive_id_to_super_adj:\n";
+//   for (auto &kv : alive_id_to_super_adj) {
+//     std::cout << "  " << kv.first << " -> " << kv.second << "\n";
+//   }
+//   printf("super_adj:\n"); 
+//   _print_adj(super_adj);
+//   printf("\n"); 
+// #endif
+// }
 
-void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>>& super_adj,
-                                  std::vector<uint32_t>& levelize_leaves_to_roots
-) {
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_levelize_from_leaves\n"); 
-#endif
-  // Make live easier
-  const size_t N = super_adj.size();
+// void G_EXT::_levelize_from_leaves(const std::vector<std::unordered_set<uint32_t>>& super_adj,
+//                                   std::vector<uint32_t>& levelize_leaves_to_roots
+// ) {
+// #ifdef PRINT_LOG
+//   printf("Inside G_EXT::_levelize_from_leaves\n"); 
+// #endif
+//   // Make live easier
+//   const size_t N = super_adj.size();
 
-  // Construct in-degree; Note: We want sort levelize from leaves to roots! 
-  std::vector<uint32_t> indeg(N, 0);
-  for (size_t u = 0; u < N; u++) {
-    for (auto v : super_adj[u]) {
-      indeg[v]++;
-    }
-  }
+//   // Construct in-degree; Note: We want sort levelize from leaves to roots! 
+//   std::vector<uint32_t> indeg(N, 0);
+//   for (size_t u = 0; u < N; u++) {
+//     for (auto v : super_adj[u]) {
+//       indeg[v]++;
+//     }
+//   }
 
-  std::queue<uint32_t> q;
-  for (size_t i = 0; i < N; i++) {
-    if (indeg[i] == 0) { q.push(i); }
-  }
+//   std::queue<uint32_t> q;
+//   for (size_t i = 0; i < N; i++) {
+//     if (indeg[i] == 0) { q.push(i); }
+//   }
 
-  // BFS
-  while (!q.empty()) {
-    uint32_t u = q.front(); 
-    q.pop();
-    levelize_leaves_to_roots.push_back(u);
+//   // BFS
+//   while (!q.empty()) {
+//     uint32_t u = q.front(); 
+//     q.pop();
+//     levelize_leaves_to_roots.push_back(u);
 
-    for (auto v : super_adj[u]) {
-      indeg[v]--;
-      if (indeg[v] == 0) { q.push(v); }
-    }
-  }
+//     for (auto v : super_adj[u]) {
+//       indeg[v]--;
+//       if (indeg[v] == 0) { q.push(v); }
+//     }
+//   }
   
-  // Note: We want from leaves to roots
-  std::reverse(levelize_leaves_to_roots.begin(), levelize_leaves_to_roots.end());  
-  MY_CHECK(levelize_leaves_to_roots.size() == N, "levelize_leaves_to_roots.size() == N");
+//   // Note: We want from leaves to roots
+//   std::reverse(levelize_leaves_to_roots.begin(), levelize_leaves_to_roots.end());  
+//   MY_CHECK(levelize_leaves_to_roots.size() == N, "levelize_leaves_to_roots.size() == N");
 
-#ifdef PRINT_LOG
-  printf("indeg:\n"); 
-  for (uint32_t i = 0; i < indeg.size(); i++) {
-    printf("Node[%u]'s indeg = %u\n", i, indeg[i]);
-  }
+// #ifdef PRINT_LOG
+//   printf("indeg:\n"); 
+//   for (uint32_t i = 0; i < indeg.size(); i++) {
+//     printf("Node[%u]'s indeg = %u\n", i, indeg[i]);
+//   }
 
-  std::cout << "Levelized order (leaf -> root): ";
-  for (auto n : levelize_leaves_to_roots) std::cout << n << " ";
-  std::cout << "\n";
-  printf("\n"); 
-#endif
-}
+//   std::cout << "Levelized order (leaf -> root): ";
+//   for (auto n : levelize_leaves_to_roots) std::cout << n << " ";
+//   std::cout << "\n";
+//   printf("\n"); 
+// #endif
+// }
 
-void G_EXT::_get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_roots,
-                            const std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
-                            const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj
-) {
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_get_queue_list\n"); 
-#endif
-  std::vector<uint32_t> super_idx_to_level; // give each super node one level
-  super_idx_to_level.resize(levelize_leaves_to_roots.size()); 
-  for (uint32_t i = 0; i < levelize_leaves_to_roots.size(); i++) {
-    super_idx_to_level[levelize_leaves_to_roots[i]] = i;
-    MY_CHECK(levelize_leaves_to_roots[i] < levelize_leaves_to_roots.size(), "levelize_leaves_to_roots[i] < levelize_leaves_to_roots.size()"); 
-  }
-#ifdef PRINT_LOG
-  printf("super_idx_to_level:\n"); 
-  for (uint32_t i = 0; i < super_idx_to_level.size(); i++) {
-    std::cout << "  super_idx " << i << " -> level " << super_idx_to_level[i] << "\n";
-  }
-#endif 
+// void G_EXT::_get_queue_list(const std::vector<uint32_t>& levelize_leaves_to_roots,
+//                             const std::unordered_map<uint32_t, uint32_t>& ecls_id_to_alive_id,
+//                             const std::unordered_map<uint32_t, uint32_t>& alive_id_to_super_adj
+// ) {
+// #ifdef PRINT_LOG
+//   printf("Inside G_EXT::_get_queue_list\n"); 
+// #endif
+//   std::vector<uint32_t> super_idx_to_level; // give each super node one level
+//   super_idx_to_level.resize(levelize_leaves_to_roots.size()); 
+//   for (uint32_t i = 0; i < levelize_leaves_to_roots.size(); i++) {
+//     super_idx_to_level[levelize_leaves_to_roots[i]] = i;
+//     MY_CHECK(levelize_leaves_to_roots[i] < levelize_leaves_to_roots.size(), "levelize_leaves_to_roots[i] < levelize_leaves_to_roots.size()"); 
+//   }
+// #ifdef PRINT_LOG
+//   printf("super_idx_to_level:\n"); 
+//   for (uint32_t i = 0; i < super_idx_to_level.size(); i++) {
+//     std::cout << "  super_idx " << i << " -> level " << super_idx_to_level[i] << "\n";
+//   }
+// #endif 
 
-  uint32_t acc = 0;
-  std::vector<std::vector<uint32_t>> _queue_list_2D; // list
-  _queue_list_2D.resize(levelize_leaves_to_roots.size(), std::vector<uint32_t>());
-  for (uint32_t ende_idx = 0; ende_idx < _num_ende; ende_idx++) {
-    uint32_t ecls = _ende_ecls[ende_idx];
-    if (_alive_ecls[ecls]) {
-      auto it_alive = ecls_id_to_alive_id.find(ecls);
-      uint32_t alive_idx = it_alive->second;
-      auto it_super = alive_id_to_super_adj.find(alive_idx);
-      uint32_t super_idx = it_super->second;
-      MY_CHECK(it_alive != ecls_id_to_alive_id.end(), "ecls not found in ecls_id_to_alive_id");
-      MY_CHECK(it_super != alive_id_to_super_adj.end(), "alive_idx not found in alive_id_to_super_adj");
-      uint32_t level = super_idx_to_level[super_idx];
-      _queue_list_2D[level].push_back(ende_idx);
-      acc++;
-      #ifdef PRINT_LOG 
-        printf("ende_idx = %u, ecls = %u, alive_idx = %u, super_idx = %u, level = %u\n", 
-                ende_idx, ecls, alive_idx, super_idx, level); 
-      #endif
-    } else {
-      #ifdef PRINT_LOG 
-        printf("ende_idx = %u, ecls = %u, dead eclass\n", ende_idx, ecls); 
-      #endif
-    }    
-  }
-  MY_CHECK(acc == _num_alive_ende, "acc == _num_alive_ende");
+//   uint32_t acc = 0;
+//   std::vector<std::vector<uint32_t>> _queue_list_2D; // list
+//   _queue_list_2D.resize(levelize_leaves_to_roots.size(), std::vector<uint32_t>());
+//   for (uint32_t ende_idx = 0; ende_idx < _num_ende; ende_idx++) {
+//     uint32_t ecls = _ende_ecls[ende_idx];
+//     if (_alive_ecls[ecls]) {
+//       auto it_alive = ecls_id_to_alive_id.find(ecls);
+//       uint32_t alive_idx = it_alive->second;
+//       auto it_super = alive_id_to_super_adj.find(alive_idx);
+//       uint32_t super_idx = it_super->second;
+//       MY_CHECK(it_alive != ecls_id_to_alive_id.end(), "ecls not found in ecls_id_to_alive_id");
+//       MY_CHECK(it_super != alive_id_to_super_adj.end(), "alive_idx not found in alive_id_to_super_adj");
+//       uint32_t level = super_idx_to_level[super_idx];
+//       _queue_list_2D[level].push_back(ende_idx);
+//       acc++;
+//       #ifdef PRINT_LOG 
+//         printf("ende_idx = %u, ecls = %u, alive_idx = %u, super_idx = %u, level = %u\n", 
+//                 ende_idx, ecls, alive_idx, super_idx, level); 
+//       #endif
+//     } else {
+//       #ifdef PRINT_LOG 
+//         printf("ende_idx = %u, ecls = %u, dead eclass\n", ende_idx, ecls); 
+//       #endif
+//     }    
+//   }
+//   MY_CHECK(acc == _num_alive_ende, "acc == _num_alive_ende");
 
-  _queue_list.reserve(acc);
-  for (const auto& inner : _queue_list_2D) {
-    _queue_list.insert(_queue_list.end(), inner.begin(), inner.end());
-  }
+//   _queue_list.reserve(acc);
+//   for (const auto& inner : _queue_list_2D) {
+//     _queue_list.insert(_queue_list.end(), inner.begin(), inner.end());
+//   }
 
-#ifdef PRINT_LOG 
-  std::cout << "_queue_list (size=" << _queue_list.size() << ", with _num_alive_ende=" << _num_alive_ende << "): ";
-  for (size_t i = 0; i < _queue_list.size(); i++) {
-    std::cout << _queue_list[i];
-    if (i + 1 < _queue_list.size()) std::cout << ", ";
-  }
-  std::cout << std::endl;
-#endif
-}
+// #ifdef PRINT_LOG 
+//   std::cout << "_queue_list (size=" << _queue_list.size() << ", with _num_alive_ende=" << _num_alive_ende << "): ";
+//   for (size_t i = 0; i < _queue_list.size(); i++) {
+//     std::cout << _queue_list[i];
+//     if (i + 1 < _queue_list.size()) std::cout << ", ";
+//   }
+//   std::cout << std::endl;
+// #endif
+// }
 
 void G_EXT::_CSR(const std::vector<uint32_t>& queue, 
                 const std::vector<float>& ende_cost, 
@@ -675,7 +679,22 @@ std::pair<double, double> G_EXT::_cpu_relaxation(const uint32_t N, const std::ve
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
     tree_ret += cost_of_ecls[_root_eclass_id[r]];
   }
-  
+  double dag_ret = _compute_dag_cost(csr_ende_ecls,
+                                    csr_ende_cost,
+                                    csr_ende_child, csr_ende_child_ptr,
+                                    best_ende_of_ecls, picked_endes); 
+                    
+  return std::make_pair(tree_ret, dag_ret);
+}
+
+double G_EXT::_compute_dag_cost(
+  const std::vector<uint32_t>& csr_ende_ecls,
+  const std::vector<float>& csr_ende_cost, 
+  const std::vector<uint32_t>& csr_ende_child,
+  const std::vector<uint32_t>& csr_ende_child_ptr,
+  const std::vector<uint32_t>& best_ende_of_ecls,
+  std::vector<bool>& picked_endes
+) {
   // Get best dag cost 
   double dag_ret = 0.0; 
   picked_endes.resize(_num_ende, false); 
@@ -725,11 +744,93 @@ std::pair<double, double> G_EXT::_cpu_relaxation(const uint32_t N, const std::ve
   printf("DAG total active enodes: %zu\n", 
          std::count(picked_endes.begin(), picked_endes.end(), true));
 #endif
-
-  
-  return std::make_pair(tree_ret, dag_ret);
+  return dag_ret;
 }
 
+double G_EXT::_cpu_dag_refinement(const uint32_t N, const std::vector<float>& csr_ende_cost, 
+                                  const std::vector<uint32_t>& csr_ende_ecls,
+                                  const std::vector<uint32_t>& csr_ende_child,
+                                  const std::vector<uint32_t>& csr_ende_child_ptr,
+                                  std::vector<double>& cost_of_ecls,
+                                  std::vector<double>& cost_of_ende,
+                                  std::vector<uint32_t>& best_ende_of_ecls,
+                                  std::vector<bool>& picked_endes,
+                                  const double init_dag_cost
+) {
+  printf("Inside G_EXT::_cpu_dag_refinement()\n");
+  printf("Bibi checking()\n");
+  std::vector<uint32_t> level;
+  level.resize(csr_ende_cost.size(), 0);
+  // for (uint32_t i = 0; i < csr_ende_cost.size(); i++) {
+
+  // }
+
+
+
+
+
+  // float gamma = 0.8; // 用來把 cost 變小
+  // float alpha = 1/gamma; // 用來把 cost 變大
+  
+  // std::vector<double> tmp_cost_of_ecls(cost_of_ecls);
+  // std::vector<double> tmp_cost_of_ende(cost_of_ende);
+  // std::vector<uint32_t> tmp_best_ende_of_ecls(best_ende_of_ecls);
+  // std::vector<bool> tmp_picked_endes(picked_endes);
+
+  // // Preprocess the cost of each enode cost 
+  // std::vector<float> tmp_csr_ende_cost(csr_ende_cost); // updated csr_ende_cost
+  // for (uint32_t ende = 0; ende < picked_endes.size(); ende++) {
+  //   if (picked_endes[ende]) {
+  //     tmp_csr_ende_cost[ende] *= gamma;
+  //   }
+  // }
+
+  // tmp_csr_ende_cost[7]*= alpha*alpha;
+  // printf("csr_ende_cost[7] = %.2lf, tmp_csr_ende_cost[7] = %.2lf\n", csr_ende_cost[7], tmp_csr_ende_cost[7]); 
+  
+  // // 重新跑一次 
+  // bool h_update = true;
+
+  // while (h_update) {
+  //   h_update = false;
+
+  //   #pragma omp parallel
+  //   {
+  //     #pragma omp for
+  //     for (uint32_t t_idx = 0; t_idx < N; t_idx++) {
+  //       double acc_cost = tmp_csr_ende_cost[t_idx];
+  //       uint32_t start = csr_ende_child_ptr[t_idx];
+  //       uint32_t end   = csr_ende_child_ptr[t_idx+1];
+  //       for (uint32_t jj = start; jj < end; jj++) {
+  //         acc_cost += tmp_cost_of_ecls[csr_ende_child[jj]];
+  //       }
+
+  //       tmp_cost_of_ende[t_idx] = (acc_cost < tmp_cost_of_ende[t_idx]) ? (acc_cost) : (tmp_cost_of_ende[t_idx]);
+
+  //       const uint32_t which_ecls = csr_ende_ecls[t_idx];
+
+  //       #pragma omp critical
+  //       {
+  //         if (acc_cost < tmp_cost_of_ecls[which_ecls]) {
+  //           tmp_cost_of_ecls[which_ecls] = acc_cost;
+  //           tmp_best_ende_of_ecls[which_ecls] = t_idx;
+  //           h_update = true;
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
+
+  // // double dag_ret = 0.09;
+  // double dag_ret = _compute_dag_cost(csr_ende_ecls,
+  //                                   tmp_csr_ende_cost,
+  //                                   csr_ende_child, csr_ende_child_ptr,
+  //                                   tmp_best_ende_of_ecls, tmp_picked_endes); 
+                    
+           
+  // return dag_ret;
+  return 0.0;
+}
 
 
 
@@ -767,7 +868,10 @@ __global__ void relax_enodes_kernel(const uint32_t N,
                                     const uint32_t* csr_ende_ecls,
                                     const uint32_t* csr_ende_child,
                                     const uint32_t* csr_ende_child_ptr,
-                                    bool* update, double* cost_of_ecls
+                                    bool* update, 
+                                    double* cost_of_ecls,
+                                    double* cost_of_ende,
+                                    uint32_t* best_ende_of_ecls
 ) {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_endes) return;
@@ -780,28 +884,33 @@ __global__ void relax_enodes_kernel(const uint32_t N,
     acc_cost += cost_of_ecls[csr_ende_child[jj]];
   }
 
+  cost_of_ende[t_idx] = fmin(cost_of_ende[t_idx], acc_cost);
   const uint32_t which_ecls = csr_ende_ecls[t_idx];
 
   // float old = atomicMinFloat(&cost_of_ecls[which_ecls], acc_cost);
   double old = atomicMinDouble(&cost_of_ecls[which_ecls], acc_cost);
   if (acc_cost < old) {
+    best_ende_of_ecls[which_ecls] = t_idx;
     *update = true; // No need to be atomic
   }  
 }
 
-double G_EXT::_gpu_relaxation(const uint32_t N, 
-                              const std::vector<float>& csr_ende_cost, 
-                              const std::vector<uint32_t>& csr_ende_ecls,
-                              const std::vector<uint32_t>& csr_ende_child,
-                              const std::vector<uint32_t>& csr_ende_child_ptr
+std::pair<double, double> G_EXT::_gpu_relaxation(const uint32_t N, 
+                                                  const std::vector<float>& csr_ende_cost, 
+                                                  const std::vector<uint32_t>& csr_ende_ecls,
+                                                  const std::vector<uint32_t>& csr_ende_child,
+                                                  const std::vector<uint32_t>& csr_ende_child_ptr
 ) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_gpu_relaxation()\n"); 
 #endif
   // CPU relaxation 
   bool h_update = true;
-  std::vector<double> cost_of_ecls; 
+  std::vector<double> cost_of_ecls, cost_of_ende; 
+  std::vector<uint32_t> best_ende_of_ecls;
   cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
+  cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
+  best_ende_of_ecls.resize(_num_ecls, 0);
 
   // Device memory 
   float* dvc_csr_ende_cost; 
@@ -810,6 +919,8 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
   uint32_t* dvc_csr_ende_child_ptr;
   bool* dvc_update;
   double* dvc_cost_of_ecls; 
+  double* dvc_cost_of_ende; 
+  uint32_t* dvc_best_ende_of_ecls;
 
   cudaMalloc(&dvc_csr_ende_cost, csr_ende_cost.size() * sizeof(float));
   cudaMalloc(&dvc_csr_ende_ecls, csr_ende_ecls.size() * sizeof(uint32_t));
@@ -817,6 +928,8 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
   cudaMalloc(&dvc_csr_ende_child_ptr, csr_ende_child_ptr.size() * sizeof(uint32_t));
   cudaMalloc(&dvc_update, 1 * sizeof(bool));
   cudaMalloc(&dvc_cost_of_ecls, cost_of_ecls.size() * sizeof(double));
+  cudaMalloc(&dvc_cost_of_ende, cost_of_ende.size() * sizeof(double));
+  cudaMalloc(&dvc_best_ende_of_ecls, best_ende_of_ecls.size() * sizeof(uint32_t));
   cudaCheckErrors("cudaMalloc failed");
 
   cudaMemcpy(dvc_csr_ende_cost, csr_ende_cost.data(), csr_ende_cost.size()*sizeof(float), cudaMemcpyHostToDevice);
@@ -825,6 +938,8 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
   cudaMemcpy(dvc_csr_ende_child_ptr, csr_ende_child_ptr.data(), csr_ende_child_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_update, &h_update, 1*sizeof(bool), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_cost_of_ecls, cost_of_ecls.data(), cost_of_ecls.size()*sizeof(double), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_cost_of_ende, cost_of_ende.data(), cost_of_ende.size()*sizeof(double), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_best_ende_of_ecls, best_ende_of_ecls.data(), best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaCheckErrors("cudaMemcpy failed");
 
   const int threads = 1024;
@@ -833,27 +948,72 @@ double G_EXT::_gpu_relaxation(const uint32_t N,
   while (h_update) {
     h_update = false;
     cudaMemcpy(dvc_update, &h_update, sizeof(bool), cudaMemcpyHostToDevice);
+    relax_enodes_kernel<<<blocks, threads>>>(N, _num_alive_ende,
+                                            dvc_csr_ende_cost,
+                                            dvc_csr_ende_ecls,
+                                            dvc_csr_ende_child,
+                                            dvc_csr_ende_child_ptr,
+                                            dvc_update,
+                                            dvc_cost_of_ecls,
+                                            dvc_cost_of_ende,
+                                            dvc_best_ende_of_ecls);
 
-    relax_enodes_kernel <<< blocks, threads >>> (N, _num_alive_ende,
-                                                dvc_csr_ende_cost,
-                                                dvc_csr_ende_ecls,
-                                                dvc_csr_ende_child,
-                                                dvc_csr_ende_child_ptr,
-                                                dvc_update,
-                                                dvc_cost_of_ecls); 
     cudaCheckErrors("relax_enodes_kernel failed");
     cudaMemcpy(&h_update, dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }
 
   // copy data back to CPU 
   cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(double), cudaMemcpyDeviceToHost);
+  cudaMemcpy(cost_of_ende.data(), dvc_cost_of_ende, cost_of_ende.size()*sizeof(double), cudaMemcpyDeviceToHost);
+  cudaMemcpy(best_ende_of_ecls.data(), dvc_best_ende_of_ecls, best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost);
 
-  double ret = 0.0; 
+  // Get best tree cost 
+  double tree_ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
-    ret += cost_of_ecls[_root_eclass_id[r]];
+    tree_ret += cost_of_ecls[_root_eclass_id[r]];
+  }
+  
+  // Get best dag cost 
+  double dag_ret = 0.0;
+  std::vector<bool> picked_endes; 
+  picked_endes.resize(_num_ende, false); 
+
+  std::vector<bool> visited_eclasses(_num_ecls, false);
+  std::queue<uint32_t> q;
+
+  // enqueue all roots
+  for (uint32_t rid : _root_eclass_id) {
+    if (rid < _num_ecls) {
+      q.push(rid);
+      visited_eclasses[rid] = true;
+    }
   }
 
-  return ret;
+  while (!q.empty()) {
+    uint32_t cur_ecls = q.front();
+    q.pop();
+
+    uint32_t ende_idx = best_ende_of_ecls[cur_ecls];
+    if (ende_idx >= _num_ende) continue;
+
+    if (!picked_endes[ende_idx]) {
+      picked_endes[ende_idx] = true;
+      dag_ret += csr_ende_cost[ende_idx];
+    }
+
+    uint32_t start = csr_ende_child_ptr[ende_idx];
+    uint32_t end   = csr_ende_child_ptr[ende_idx + 1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t child_ecls = csr_ende_child[jj];
+      if (!visited_eclasses[child_ecls]) {
+        visited_eclasses[child_ecls] = true;
+        q.push(child_ecls);
+      }
+    }
+  }
+
+
+  return std::make_pair(tree_ret, dag_ret);
 }
 
 
