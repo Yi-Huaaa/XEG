@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-#define PRINT_LOG
+// #define PRINT_LOG
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -424,6 +424,323 @@ double G_EXT::_compute_dag_cost(
   return dag_ret;
 }
 
+// bool G_EXT::_levelize_enodes()
+// {
+// // #ifdef PRINT_LOG
+//   printf("Inside G_EXT::_levelize_enodes()\n");
+// // #endif
+
+//   // === Step 1. 建立 enode-level adjacency (展開 eclass 下所有 enodes)
+//   std::vector<std::vector<uint32_t>> adj(_num_ende);
+//   for (uint32_t parent_idx = 0; parent_idx < _num_ende; ++parent_idx) {
+//     uint32_t start = _ende_child_ptr[parent_idx];
+//     uint32_t end   = _ende_child_ptr[parent_idx + 1];
+
+//     for (uint32_t jj = start; jj < end; ++jj) {
+//       uint32_t child_ecls = _ende_child[jj];
+//       if (child_ecls >= _ecls_its_ende.size()) continue;
+
+//       for (uint32_t child_enode : _ecls_its_ende[child_ecls]) {
+//         adj[parent_idx].push_back(child_enode);
+//       }
+//     }
+//   }
+
+//   // === Step 2. Tarjan’s SCC algorithm ===
+//   uint32_t n = _num_ende;
+//   std::vector<int> index(n, -1), lowlink(n, -1);
+//   std::vector<bool> on_stack(n, false);
+//   std::stack<uint32_t> st;
+//   std::vector<std::vector<uint32_t>> sccs;
+//   int idx = 0;
+
+//   std::function<void(uint32_t)> tarjan = [&](uint32_t v) {
+//     index[v] = lowlink[v] = idx++;
+//     st.push(v);
+//     on_stack[v] = true;
+
+//     for (uint32_t w : adj[v]) {
+//       if (index[w] == -1) {
+//         tarjan(w);
+//         lowlink[v] = std::min(lowlink[v], lowlink[w]);
+//       } else if (on_stack[w]) {
+//         lowlink[v] = std::min(lowlink[v], index[w]);
+//       }
+//     }
+
+//     // Root of SCC
+//     if (lowlink[v] == index[v]) {
+//       std::vector<uint32_t> comp;
+//       uint32_t w;
+//       do {
+//         w = st.top();
+//         st.pop();
+//         on_stack[w] = false;
+//         comp.push_back(w);
+//       } while (w != v);
+//       sccs.push_back(comp);
+//     }
+//   };
+
+//   for (uint32_t v = 0; v < n; ++v) {
+//     if (index[v] == -1)
+//       tarjan(v);
+//   }
+
+//   // === Step 3. 檢查是否有 cycle (SCC size > 1)
+//   bool has_cycle = false;
+//   for (auto &comp : sccs) {
+//     if (comp.size() > 1) {
+//       has_cycle = true;
+// // #ifdef PRINT_LOG
+//       printf("\n[ERROR] Detected SCC (cycle) of size %zu: { ", comp.size());
+//       // for (size_t i = 0; i < comp.size(); i++) {
+//       //   uint32_t e = comp[i];
+//       //   printf("%u", e);
+//       //   if (i + 1 < comp.size()) printf(", ");
+//       // }
+//       // printf(" }\n");
+//       // for (uint32_t e : comp) {
+//       //   printf("  ↳ enode[%u] (eclass=%u, op=%s)\n", e, _ende_ecls[e], _ende_op[e].c_str());
+//       // }
+// // #endif
+//     }
+//   }
+
+//   if (has_cycle) {
+// // #ifdef PRINT_LOG
+//     printf("\nAbort: graph contains SCCs (cannot levelize).\n");
+// // #endif
+//     return false;
+//   }
+
+// // #ifdef PRINT_LOG
+//   printf("No SCCs detected — graph is a DAG.\n");
+// // #endif
+
+//   // === Step 4. 若沒有 SCC，進行 levelization (Kahn’s algorithm) ===
+//   std::vector<uint32_t> indegree(_num_ende, 0);
+//   for (uint32_t u = 0; u < _num_ende; ++u)
+//     for (uint32_t v : adj[u])
+//       indegree[v]++;
+
+//   std::queue<uint32_t> q;
+//   std::vector<uint32_t> level(_num_ende, 0);
+
+//   for (uint32_t i = 0; i < _num_ende; ++i)
+//     if (indegree[i] == 0)
+//       q.push(i);
+
+//   uint32_t max_level = 0;
+//   uint32_t visited = 0;
+//   while (!q.empty()) {
+//     uint32_t cur = q.front();
+//     q.pop();
+//     visited++;
+
+//     for (uint32_t nxt : adj[cur]) {
+//       level[nxt] = std::max(level[nxt], level[cur] + 1);
+//       max_level = std::max(max_level, level[nxt]);
+//       if (--indegree[nxt] == 0)
+//         q.push(nxt);
+//     }
+//   }
+
+//   if (visited != _num_ende) {
+// // #ifdef PRINT_LOG
+//     printf("[WARN] Not all nodes were levelized (visited=%u/%u)\n", visited, _num_ende);
+// // #endif
+//     return false;
+//   }
+
+// #ifdef PRINT_LOG
+//   printf("\n========== Enode Levels ==========\n");
+//   for (uint32_t i = 0; i < _num_ende; ++i)
+//     printf("enode[%u] (eclass=%u, op=%s) -> level = %u\n",
+//            i, _ende_ecls[i], _ende_op[i].c_str(), level[i]);
+//   printf("Max level = %u\n", max_level);
+// #endif
+
+//   return true;
+// }
+// bool G_EXT::_levelize_enodes()
+// {
+//   printf("Inside G_EXT::_levelize_enodes()\n");
+
+//   // === Step 1. 建立 enode-level adjacency (展開 eclass 下所有 enodes)
+//   std::vector<std::vector<uint32_t>> adj(_num_ende);
+//   for (uint32_t parent_idx = 0; parent_idx < _num_ende; ++parent_idx) {
+//     uint32_t start = _ende_child_ptr[parent_idx];
+//     uint32_t end   = _ende_child_ptr[parent_idx + 1];
+
+//     for (uint32_t jj = start; jj < end; ++jj) {
+//       uint32_t child_ecls = _ende_child[jj];
+//       if (child_ecls >= _ecls_its_ende.size()) continue;
+
+//       for (uint32_t child_enode : _ecls_its_ende[child_ecls]) {
+//         adj[parent_idx].push_back(child_enode);
+//       }
+//     }
+//   }
+
+//   // === Step 2. Tarjan’s SCC algorithm (cycle check) ===
+//   uint32_t n = _num_ende;
+//   std::vector<int> index(n, -1), lowlink(n, -1);
+//   std::vector<bool> on_stack(n, false);
+//   std::stack<uint32_t> st;
+//   std::vector<std::vector<uint32_t>> sccs;
+//   int idx = 0;
+
+//   std::function<void(uint32_t)> tarjan = [&](uint32_t v) {
+//     index[v] = lowlink[v] = idx++;
+//     st.push(v);
+//     on_stack[v] = true;
+
+//     for (uint32_t w : adj[v]) {
+//       if (index[w] == -1) {
+//         tarjan(w);
+//         lowlink[v] = std::min(lowlink[v], lowlink[w]);
+//       } else if (on_stack[w]) {
+//         lowlink[v] = std::min(lowlink[v], index[w]);
+//       }
+//     }
+
+//     // Root of SCC
+//     if (lowlink[v] == index[v]) {
+//       std::vector<uint32_t> comp;
+//       uint32_t w;
+//       do {
+//         w = st.top();
+//         st.pop();
+//         on_stack[w] = false;
+//         comp.push_back(w);
+//       } while (w != v);
+//       sccs.push_back(comp);
+//     }
+//   };
+
+//   for (uint32_t v = 0; v < n; ++v)
+//     if (index[v] == -1)
+//       tarjan(v);
+
+//   bool has_cycle = false;
+//   for (auto &comp : sccs) {
+//     if (comp.size() > 1) {
+//       has_cycle = true;
+//       printf("\n[ERROR] Detected SCC (cycle) of size %zu: { ", comp.size());
+//       for (size_t i = 0; i < comp.size(); i++) {
+//         printf("%u", comp[i]);
+//         if (i + 1 < comp.size()) printf(", ");
+//       }
+//       printf(" }\n");
+//     }
+//   }
+
+//   if (has_cycle)
+//     printf("\nGraph contains cycles — continuing with cycle-tolerant levelization.\n");
+//   else
+//     printf("No SCCs detected — graph is a DAG.\n");
+
+//   // === Step 3. BFS-based levelization (logical edge removal) ===
+//   std::vector<uint32_t> indegree(_num_ende, 0);
+//   for (uint32_t u = 0; u < _num_ende; ++u)
+//     for (uint32_t v : adj[u])
+//       indegree[v]++;
+
+//   std::queue<uint32_t> q;
+//   std::vector<uint32_t> level_bfs(_num_ende, 0);
+//   std::vector<bool> visited_bfs(_num_ende, false);
+//   std::vector<std::vector<bool>> edge_used(_num_ende);
+//   for (uint32_t i = 0; i < _num_ende; ++i)
+//     edge_used[i].resize(adj[i].size(), false);
+
+//   for (uint32_t i = 0; i < _num_ende; ++i)
+//     if (indegree[i] == 0)
+//       q.push(i);
+
+//   while (!q.empty()) {
+//     uint32_t cur = q.front(); q.pop();
+//     visited_bfs[cur] = true;
+//     for (size_t idx = 0; idx < adj[cur].size(); ++idx) {
+//       uint32_t nxt = adj[cur][idx];
+//       edge_used[cur][idx] = true;
+//       if (--indegree[nxt] == 0)
+//         q.push(nxt);
+//       level_bfs[nxt] = std::max(level_bfs[nxt], level_bfs[cur] + 1);
+//     }
+//   }
+
+//   uint32_t total_edges = 0, used_edges_bfs = 0;
+//   for (uint32_t u = 0; u < _num_ende; ++u) {
+//     total_edges += adj[u].size();
+//     for (bool used : edge_used[u])
+//       if (used) used_edges_bfs++;
+//   }
+//   uint32_t removed_edges_bfs = total_edges - used_edges_bfs;
+
+//   // === Step 4. DFS-based levelization (explicit back-edge removal) ===
+//   std::vector<bool> visited(_num_ende, false);
+//   std::vector<bool> in_stack(_num_ende, false);
+//   std::vector<uint32_t> level_dfs(_num_ende, 0);
+//   uint32_t removed_edges_dfs = 0;
+
+//   std::function<void(uint32_t)> dfs = [&](uint32_t u) {
+//     visited[u] = true;
+//     in_stack[u] = true;
+//     for (uint32_t v : adj[u]) {
+//       if (!visited[v]) {
+//         level_dfs[v] = std::max(level_dfs[v], level_dfs[u] + 1);
+//         dfs(v);
+//       } else if (in_stack[v]) {
+//         removed_edges_dfs++;  // back edge
+//       } else {
+//         level_dfs[v] = std::max(level_dfs[v], level_dfs[u] + 1);
+//       }
+//     }
+//     in_stack[u] = false;
+//   };
+
+//   for (uint32_t i = 0; i < _num_ende; ++i)
+//     if (!visited[i])
+//       dfs(i);
+
+//   // === Step 5. Re-evaluate removed edges based on level consistency ===
+//   uint32_t removed_edges_bfs_refined = 0;
+//   uint32_t removed_edges_dfs_refined = 0;
+
+//   for (uint32_t u = 0; u < _num_ende; ++u) {
+//     for (uint32_t v : adj[u]) {
+//       // 若 level[v] <= level[u]，代表方向與 DAG 層級矛盾，視為刪邊
+//       if (level_bfs[v] <= level_bfs[u]) removed_edges_bfs_refined++;
+//       if (level_dfs[v] <= level_dfs[u]) removed_edges_dfs_refined++;
+//     }
+//   }
+
+//   printf("\n========== Levelization Summary ==========\n");
+//   printf("Total edges            : %u\n", total_edges);
+//   printf("Removed edges (BFS)    : %u (%.2f%%)\n",
+//         removed_edges_bfs_refined,
+//         100.0 * removed_edges_bfs_refined / std::max(1u, total_edges));
+//   printf("Removed edges (DFS)    : %u (%.2f%%)\n",
+//         removed_edges_dfs_refined,
+//         100.0 * removed_edges_dfs_refined / std::max(1u, total_edges));
+//   printf("==========================================\n\n");
+
+//   printf("\nBFS levels:\n");
+//   for (uint32_t i = 0; i < _num_ende; ++i)
+//     printf("  enode[%u] -> level %u (BFS)\n", i, level_bfs[i]);
+
+//   printf("\nDFS levels:\n");
+//   for (uint32_t i = 0; i < _num_ende; ++i)
+//     printf("  enode[%u] -> level %u (DFS)\n", i, level_dfs[i]);
+
+//   printf("==========================================\n\n");
+//   return true;
+// }
+
+
+
+
 __device__ float atomicMinFloat(float* addr, float val) {
   int* addr_as_i = (int*)addr;
   int old = *addr_as_i, assumed;
@@ -460,8 +777,8 @@ __global__ void relax_enodes_kernel(const uint32_t num_endes,
                                     bool* update, 
                                     double* cost_of_ecls,
                                     double* cost_of_ende,
-                                    uint32_t* best_ende_of_ecls
-) {
+                                    uint32_t* best_ende_of_ecls) 
+{
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_endes) return;
 
@@ -483,6 +800,7 @@ __global__ void relax_enodes_kernel(const uint32_t num_endes,
     *update = true; // No need to be atomic
   }  
 }
+
 
 std::pair<double, double> G_EXT::_gpu_relaxation() 
 {
@@ -546,6 +864,18 @@ std::pair<double, double> G_EXT::_gpu_relaxation()
     cudaCheckErrors("relax_enodes_kernel failed");
     cudaMemcpy(&h_update, dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }
+
+  // // 我在把 cost_of_ende[t_idx] = fmin(cost_of_ende[t_idx], acc_cost);
+  // //   best_ende_of_ecls[which_ecls] = t_idx;
+  // //   讓他保證正確比較重要
+  // printf("bibi check\n");
+  // uint32_t ll = 0; 
+  // for (uint32_t i = 0; i < _ecls_its_ende.size(); i++) {
+  //   uint32_t L = _ecls_its_ende[i].size(); 
+  //   ll = (L > ll) ? (L) : (ll);
+  // }
+  // printf("bibi check ll = %u\n", ll);
+
 
   // copy data back to CPU 
   cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(double), cudaMemcpyDeviceToHost);

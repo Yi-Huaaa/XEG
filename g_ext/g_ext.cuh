@@ -59,17 +59,18 @@ public:
     auto start = std::chrono::steady_clock::now();
       auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_relaxation(cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
       double cpu_dag_refine = 0.0;
-      // double cpu_dag_refine = _cpu_dag_refinement(_queue_list.size(), 
-      //                                             csr_ende_cost, csr_ende_ecls,
-      //                                             csr_ende_child, csr_ende_child_ptr,
-      //                                             cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes,
-      //                                             dag_cost_cpu); 
 
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf, cpu_dag_refine = %.2lf\n", 
               best_tree_cost_cpu, dag_cost_cpu, cpu_dag_refine);
+      // bool lvl_success = _levelize_enodes(); 
+      // if (lvl_success) {
+      //   printf("SUCCESS, ENODES NO CYCLE!\n"); 
+      // } else {
+      //   printf("FAIL, ENODES has CYCLE.\n"); 
+      // }
 
     // // GPU version
     // float gpuTime = 0.;
@@ -92,9 +93,6 @@ public:
 
   }
 
-  // ILP Solver functions 
-  void SimpleSatProgram();
-
 private:
   /* Read */
   void _read_input(const std::string input_path);
@@ -116,15 +114,7 @@ private:
                                             std::vector<bool>& picked_endes); 
   double _compute_dag_cost(const std::vector<uint32_t>& best_ende_of_ecls,
                           std::vector<bool>& picked_endes);
-  // double _cpu_dag_refinement(const uint32_t N, const std::vector<float>& csr_ende_cost, 
-  //                           const std::vector<uint32_t>& csr_ende_ecls,
-  //                           const std::vector<uint32_t>& csr_ende_child,
-  //                           const std::vector<uint32_t>& csr_ende_child_ptr,
-  //                           std::vector<double>& cost_of_ecls,
-  //                           std::vector<double>& cost_of_ende,
-  //                           std::vector<uint32_t>& best_ende_of_ecls,
-  //                           std::vector<bool>& picked_endes,
-  //                           const double init_dag_cost);
+  bool _levelize_enodes();
   std::pair<double, double> _gpu_relaxation();
   
   
