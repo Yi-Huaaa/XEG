@@ -57,20 +57,19 @@ public:
     std::vector<bool> picked_endes;
     std::chrono::duration<double> duration;
     auto start = std::chrono::steady_clock::now();
-      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_relaxation(cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
-      double cpu_dag_refine = 0.0;
+      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_relaxation(_ende_cost, cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
+      double cpu_dag_refine = _cpu_dag_refinement(cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
 
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf, cpu_dag_refine = %.2lf\n", 
               best_tree_cost_cpu, dag_cost_cpu, cpu_dag_refine);
-      // bool lvl_success = _levelize_enodes(); 
-      // if (lvl_success) {
-      //   printf("SUCCESS, ENODES NO CYCLE!\n"); 
-      // } else {
-      //   printf("FAIL, ENODES has CYCLE.\n"); 
-      // }
+    if (dag_cost_cpu > cpu_dag_refine) {
+      printf("Oh ya!!!\n");
+    } else {
+      printf("QQ\n");
+    }
 
     // // GPU version
     // float gpuTime = 0.;
@@ -108,13 +107,19 @@ private:
   
   /* Run */
   /* Tree Level Relaxation */
-  std::pair<double, double> _cpu_relaxation(std::vector<double>& cost_of_ecls,
+  std::pair<double, double> _cpu_relaxation(const std::vector<float>& tmp_ende_cost,
+                                            std::vector<double>& cost_of_ecls,
                                             std::vector<double>& cost_of_ende,
                                             std::vector<uint32_t>& best_ende_of_ecls,
                                             std::vector<bool>& picked_endes); 
   double _compute_dag_cost(const std::vector<uint32_t>& best_ende_of_ecls,
                           std::vector<bool>& picked_endes);
-  bool _levelize_enodes();
+  double _cpu_dag_refinement(std::vector<double>& cost_of_ecls,
+                            std::vector<double>& cost_of_ende,
+                            std::vector<uint32_t>& best_ende_of_ecls,
+                            std::vector<bool>& picked_endes);
+  // bool _levelize_enodes();
+
   std::pair<double, double> _gpu_relaxation();
   
   
@@ -139,6 +144,17 @@ private:
   std::vector<uint32_t> _root_eclass_id;
 
   std::vector<std::vector<uint32_t>> _ecls_its_ende; // enodes under that eclasses
+  std::vector<bool> _ecls_leaf_gr_1; // that eclass has more than one leaf enodes
+
+  // for refinement
+  uint32_t _round_refinements = 0; 
+  std::vector<float> _tmp_ende_cost;
+  std::vector<double> _tmp_cost_of_ecls;
+  std::vector<double> _tmp_cost_of_ende;
+  std::vector<uint32_t> _tmp_best_ende_of_ecls;
+  std::vector<bool> _tmp_picked_endes; 
+
+
 
   // Print function
   void _print_input() const;
