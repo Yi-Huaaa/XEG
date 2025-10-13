@@ -189,6 +189,7 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
     alive_ecls[r] = true;
   }
 
+
   // Reconstruct all things 
   std::vector<uint32_t> new_ecls_idx_mapping; 
   new_ecls_idx_mapping.resize(tmp_num_ecls, UINT32_MAX); 
@@ -261,21 +262,6 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
     _root_eclass_id.push_back(new_r); 
   }
 
-  std::vector<uint32_t> num_leaf_enodes; num_leaf_enodes.resize(_num_ecls, 0);
-  _ecls_leaf_gr_1.resize(_num_ecls, false);
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    const uint32_t which_ecls = _ende_ecls[ende]; 
-    uint32_t num_chd = _ende_child_ptr[ende+1] - _ende_child_ptr[ende];
-    if (num_chd == 0) {
-      num_leaf_enodes[which_ecls]++;
-    }
-  }
-  for (uint32_t ecls = 0; ecls < num_leaf_enodes.size(); ecls++) {
-    if (num_leaf_enodes[ecls] > 1) { // that eclass has more than one leaf enodes
-      _ecls_leaf_gr_1[ecls] = true; 
-    }
-  }
-
   MY_CHECK((_num_ecls+dead_ecls_idx.size()) == tmp_num_ecls, "_num_ecls+dead_ecls_idx.size()");
   MY_CHECK(_root_eclass_id.size() == tmp_root_eclass_id.size(), "_root_eclass_id.size()");
 
@@ -305,49 +291,19 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
                       _ende_child_ptr,
                       _root_eclass_id);   
 #endif 
-  // std::cout << "\n========== G_EXT Internal State ==========\n";
-  // std::cout << "num_ende: " << _num_ende << ", " << "num_ecls: " << _num_ecls << "\n\n";
-
-  // uint32_t a = 0;
-  // std::cout << "Enodes info:\n";
-  // for (uint32_t i = 0; i < _num_ende; i++) {
-  //   if (_ende_cost[i] != 1) {
-  //     a++;
-  //     std::cout << "  enode[" << i << "]: "
-  //               << "name=" << _ende_name[i] 
-  //               << ", op=" << _ende_op[i] 
-  //               << ", cost=" << _ende_cost[i]
-  //               << ", eclass=" << _ende_ecls[i]
-  //               << "\n";
-
-  //     uint32_t start = _ende_child_ptr[i];
-  //     uint32_t end   = _ende_child_ptr[i + 1];
-  //     std::cout << "    children: ";
-  //     for (uint32_t jj = start; jj < end; jj++) {
-  //       std::cout << _ende_child[jj] << " ";
-  //     }
-  //     std::cout << "\n";
-  //   }
-  // }
-
-  // std::cout << "\nRoot eclasses:\n";
-  // for (auto r : _root_eclass_id) {
-  //   std::cout << "  " << r << "\n";
-  // }
-  // printf("a = %u, _num_ende = %u\n", a, _num_ende);
 }
 
 // =========================== TREE/DAG functions =========================== // 
 
 
-std::pair<double, double> G_EXT::_cpu_relaxation(const std::vector<float>& tmp_ende_cost,
+std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_ende_cost,
                                                 std::vector<double>& cost_of_ecls,
                                                 std::vector<double>& cost_of_ende,
                                                 std::vector<uint32_t>& best_ende_of_ecls, 
                                                 std::vector<bool>& picked_endes)
 {
 #ifdef PRINT_LOG
-  printf("Inside G_EXT::_cpu_relaxation()\n"); 
+  printf("Inside G_EXT::_cpu_best_tree()\n"); 
 #endif
   // CPU relaxation 
   bool h_update = true;
@@ -464,84 +420,10 @@ double G_EXT::_compute_dag_cost(
              i, _ende_ecls[i], _ende_cost[i]);
     }
   }
-  // printf("DAG total active enodes: %zu\n", 
-  //        std::count(picked_endes.begin(), picked_endes.end(), true));
 #endif
   return dag_ret;
 }
 
-double G_EXT::_cpu_dag_refinement(
-  std::vector<double>& cost_of_ecls,
-  std::vector<double>& cost_of_ende,
-  std::vector<uint32_t>& best_ende_of_ecls,
-  std::vector<bool>& picked_endes
-) {
-// #ifdef PRINT_LOG
-  printf("Inside G_EXT::_cpu_dag_refinement()\n");
-// #endif
-  double ret;
-  // if (_round_refinements == 0) {
-  //   _tmp_cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
-  //   _tmp_cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
-  //   _tmp_best_ende_of_ecls.resize(_num_ecls, 0);
-  // } else {
-  //   std::fill(_tmp_cost_of_ecls.begin(), _tmp_cost_of_ecls.end(), std::numeric_limits<double>::infinity());
-  //   std::fill(_tmp_cost_of_ende.begin(), _tmp_cost_of_ende.end(), std::numeric_limits<double>::infinity());
-  //   std::fill(_tmp_best_ende_of_ecls.begin(), _tmp_best_ende_of_ecls.end(), 0);
-  // }
-  _round_refinements++; 
-  printf("Round %u of refinement\n", _round_refinements);
-
-  // Find candidate eclass
-  const uint32_t num_target_enodes = 1; 
-  std::unordered_set<uint32_t> candidate_ecls; 
-  for (uint32_t p = 0; p < picked_endes.size(); p++) {
-    if (picked_endes[p]) {
-      // 先判斷他是不是 leaf
-      bool is_leaf = (_ende_child_ptr[p+1] - _ende_child_ptr[p]) == 0;
-      // 如果是 leaf enode 我們就不能把它加入 candidate 
-      if (is_leaf) continue;
-      else {
-        // 至少該要有其他東西可以換
-        const uint32_t picked_ecls = _ende_ecls[p];
-        if (_ecls_its_ende[picked_ecls].size() > 1) {
-            candidate_ecls.insert(picked_ecls);
-        }
-      }
-    }
-  }
-  // for (uint32_t elem : candidate_ecls) {
-  //   printf("elem = %u\n", elem);
-  // }
-
-  // Set new cost value 
-  uint32_t acc_tar = 0;
-  for (uint32_t can_ecls : candidate_ecls) {
-    _tmp_ende_cost = _ende_cost;    
-    uint32_t ori_p_ecls = best_ende_of_ecls[can_ecls];
-    _tmp_ende_cost[ori_p_ecls] = std::numeric_limits<double>::infinity();
-
-    // printf("_tmp_ende_cost\n");
-    // for (uint32_t i = 0; i < _num_ende; i++) {
-    //   std::cout << "  enode[" << i << "]: "
-    //             << "cost=" << _tmp_ende_cost[i]
-    //             << ", eclass=" << _ende_ecls[i]
-    //             << "\n";
-    // }
-
-    auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_relaxation(_tmp_ende_cost, _tmp_cost_of_ecls, 
-                                                              _tmp_cost_of_ende, _tmp_best_ende_of_ecls, 
-                                                              _tmp_picked_endes);  
-    ret = dag_cost_cpu;
-    acc_tar++;
-    // printf("New dag_cost_cpu = %.2lf\n", dag_cost_cpu);
-    if (acc_tar>= num_target_enodes) {
-      break;
-    }                                                            
-  }
-
-  return ret;
-}
 
 __device__ float atomicMinFloat(float* addr, float val) {
   int* addr_as_i = (int*)addr;
@@ -604,10 +486,10 @@ __global__ void relax_enodes_kernel(const uint32_t num_endes,
 }
 
 
-std::pair<double, double> G_EXT::_gpu_relaxation() 
+std::pair<double, double> G_EXT::_gpu_best_tree() 
 {
 #ifdef PRINT_LOG
-  printf("Inside G_EXT::_gpu_relaxation()\n"); 
+  printf("Inside G_EXT::_gpu_best_tree()\n"); 
 #endif
   // CPU relaxation 
   bool h_update = true;
@@ -731,6 +613,195 @@ std::pair<double, double> G_EXT::_gpu_relaxation()
 
   return std::make_pair(tree_ret, dag_ret);
 }
+
+
+void G_EXT::_reconstruct_graph(std::vector<double> cost_of_ecls,
+                                std::vector<double> cost_of_ende,
+                                std::vector<uint32_t> best_ende_of_ecls,
+                                std::vector<bool> picked_endes) 
+{
+  printf("Inside G_EXT::_reconstruct_graph()\n"); 
+  // Reconstruct graph that can be levelization
+  printf("picked_endes\n");
+  for (uint32_t i = 0; i < picked_endes.size(); i++) {
+    if (picked_endes[i]) {
+      std::cout << "picked_endes[" << i << "]: TRUE\n"; 
+    }
+  }
+  for (uint32_t i = 0; i < picked_endes.size(); i++) {
+    if (!picked_endes[i]) {
+      std::cout << "picked_endes[" << i << "]: FALSE\n"; 
+    }
+  }
+
+  // Construct inv adj
+  std::vector<std::unordered_set<uint32_t>> inv_adj;
+  inv_adj.resize(_num_ecls, std::unordered_set<uint32_t>()); 
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    uint32_t start = _ende_child_ptr[ende]; 
+    uint32_t end = _ende_child_ptr[ende+1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t chd_ecls = _ende_child[jj];
+      inv_adj[chd_ecls].insert(ende);
+    }
+  }
+  printf("_ende_child mapping (ende Id -> ecls Id):\n");
+  for (uint32_t ende = 0; ende + 1 < _num_ende; ende++) {
+    uint32_t start = _ende_child_ptr[ende];
+    uint32_t end = _ende_child_ptr[ende + 1];
+    printf("  enode %u:", ende);
+    for (uint32_t jj = start; jj < end; jj++) {
+      printf(" %u", _ende_child[jj]);
+    }
+    printf("\n");
+  }
+  printf("inv_adj mapping (ecls Id -> ende Id):\n");
+  for (uint32_t ecls = 0; ecls < inv_adj.size(); ecls++) {
+    printf("  inv_adj[%u]:", ecls);
+    for (auto ende : inv_adj[ecls]) {
+      printf(" %u", ende);
+    }
+    printf("\n");
+  }
+
+  // levelize the new graph with the picked enode 
+  std::vector<uint32_t> indegree(_num_ende, 0);
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if (!picked_endes[ende]) continue;
+    uint32_t start = _ende_child_ptr[ende];
+    uint32_t end = _ende_child_ptr[ende + 1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t chd_ecls = _ende_child[jj];
+      for (uint32_t i = 0; i < _ecls_its_ende[chd_ecls].size(); i++) {
+        uint32_t chd_ende = _ecls_its_ende[chd_ecls][i]; 
+        if (picked_endes[chd_ende]) {
+          indegree[chd_ende]++; 
+        }
+      }
+    }
+  }
+  for (uint32_t i = 0; i < indegree.size(); i++) {
+    if (picked_endes[i]) {
+      printf("indegree of enode[%u] = %u (picked: T)\n", i, indegree[i]);
+    } else {
+      printf("indegree of enode[%u] = %u (picked: F)\n", i, indegree[i]);
+    }
+  }
+
+  // init queue
+  std::queue<uint32_t> q;
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if ((indegree[ende] == 0) && picked_endes[ende]) {
+      q.push(ende);
+      printf("Queue init push in %u\n", ende);
+    }
+  } printf("\n"); 
+
+  std::vector<int> level(_num_ende, -1);
+  std::vector<std::vector<uint32_t>> ende_in_level;
+  ende_in_level.push_back(std::vector<uint32_t>()); 
+  // BFS（由 roots：indegree==0 的 picked enodes 出發）
+  int cur_level = 0;
+  while (!q.empty()) {
+    size_t layer = q.size();
+    for (size_t t = 0; t < layer; ++t) {
+      uint32_t u = q.front(); q.pop();
+      level[u] = cur_level;
+      ende_in_level[cur_level].push_back(u); 
+      printf("Current enode %u, level[%u] = %u\n", u, u, level[u]);
+
+      uint32_t start = _ende_child_ptr[u];
+      uint32_t end   = _ende_child_ptr[u + 1];
+      for (uint32_t jj = start; jj < end; ++jj) {
+        uint32_t chd_ecls = _ende_child[jj];
+        const auto& vec = _ecls_its_ende[chd_ecls];
+        for (uint32_t k = 0; k < vec.size(); ++k) {
+          uint32_t v = vec[k];                // child enode
+          if (!picked_endes[v]) continue;     // 只考慮 picked
+          if (indegree[v] > 0 && --indegree[v] == 0) {
+            q.push(v);
+            // printf("Push %u (indegree->0)\n", v);
+          }
+        }
+      }
+    }
+    ++cur_level;  // 層切換
+    if (!q.empty())
+      ende_in_level.push_back(std::vector<uint32_t>()); 
+  }
+
+  // Step 5. Print 結果
+  printf("=== Levelization result ===\n");
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if (level[ende] >= 0)
+      printf("ENode %u -> Level %d\n", ende, level[ende]);
+  }
+  for (uint32_t lvl = 0; lvl < ende_in_level.size(); lvl++) {
+    printf("level %u: ", lvl); 
+    for (uint32_t ende = 0; ende < ende_in_level[lvl].size(); ende++) {
+      printf("%u, ", ende_in_level[lvl][ende]); 
+    } printf("\n"); 
+  }
+
+
+  // std::vector<bool> on_new_Gph; // the enode located on the new graph
+  std::vector<bool> has_parent_ende; // has at least one of parent enode located on the new graph 
+  std::vector<bool> has_chldrn_ecls; // has at least one of chldrn eclss located on the new graph 
+  has_parent_ende.resize(_num_ende, false);
+  has_chldrn_ecls.resize(_num_ende, false);
+  /*
+  概念：若 has_parent_ende && has_chldrn_ecls 則代表該 enode 存在在新的 graph 上
+  */
+  
+  // Init 
+  for (uint32_t i = 0; i < picked_endes.size(); i++) {
+    if (picked_endes[i]) {
+      // on_new_Gph[i] = true; 
+      has_parent_ende[i] = true; 
+      has_chldrn_ecls[i] = true; 
+    } 
+  }
+
+  // relaxation new graph 
+  bool update = true; 
+  while (update){
+    update = false; 
+    
+    for (uint32_t ende = 0; ende < _num_ende; ende++) {
+      if (!has_parent_ende[ende]) {
+        // 檢查他所有的 parent enode 是否有任一 enode 存在在該 new graph 上，若有，則可拉成 true 
+      }
+
+      if (!has_chldrn_ecls[ende]) {
+
+      }
+    }
+  }
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // =========================== ILP Solver functions =========================== // 
 using namespace operations_research;

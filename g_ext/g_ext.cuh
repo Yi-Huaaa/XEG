@@ -47,9 +47,8 @@ public:
   void run(const bool ILP_solver = false, 
           const double ILP_time_limit = 360
 ) {
-    // printf("Hello bibi\n");
-    // _preprocess(csr_ende_cost, csr_ende_ecls, csr_ende_child, csr_ende_child_ptr, ecls_its_ende); 
-    
+    printf("Hello bibi\n");
+
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
     std::vector<double> cost_of_ende; // Final cost of each enode
@@ -57,19 +56,19 @@ public:
     std::vector<bool> picked_endes;
     std::chrono::duration<double> duration;
     auto start = std::chrono::steady_clock::now();
-      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_relaxation(_ende_cost, cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
-      double cpu_dag_refine = _cpu_dag_refinement(cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
+      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
+      // double cpu_dag_refine = _cpu_dag_refinement(cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
 
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    double cpu_dag_refine = 0.;
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf, cpu_dag_refine = %.2lf\n", 
               best_tree_cost_cpu, dag_cost_cpu, cpu_dag_refine);
-    if (dag_cost_cpu > cpu_dag_refine) {
-      printf("Oh ya!!!\n");
-    } else {
-      printf("QQ\n");
-    }
+
+    _reconstruct_graph(cost_of_ecls, cost_of_ende, 
+                        best_ende_of_ecls, picked_endes); 
+
 
     // // GPU version
     // float gpuTime = 0.;
@@ -77,7 +76,7 @@ public:
     // cudaEventCreate(&startGPU);
     // cudaEventCreate(&stopGPU);    
     // cudaEventRecord(startGPU);
-    //   auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_relaxation();
+    //   auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
     // cudaEventRecord(stopGPU);
     // cudaEventSynchronize(stopGPU);
     // cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
@@ -107,20 +106,19 @@ private:
   
   /* Run */
   /* Tree Level Relaxation */
-  std::pair<double, double> _cpu_relaxation(const std::vector<float>& tmp_ende_cost,
+  std::pair<double, double> _cpu_best_tree(const std::vector<float>& tmp_ende_cost,
                                             std::vector<double>& cost_of_ecls,
                                             std::vector<double>& cost_of_ende,
                                             std::vector<uint32_t>& best_ende_of_ecls,
                                             std::vector<bool>& picked_endes); 
   double _compute_dag_cost(const std::vector<uint32_t>& best_ende_of_ecls,
                           std::vector<bool>& picked_endes);
-  double _cpu_dag_refinement(std::vector<double>& cost_of_ecls,
-                            std::vector<double>& cost_of_ende,
-                            std::vector<uint32_t>& best_ende_of_ecls,
-                            std::vector<bool>& picked_endes);
-  // bool _levelize_enodes();
-
-  std::pair<double, double> _gpu_relaxation();
+  std::pair<double, double> _gpu_best_tree();
+  /* DAG level relxation */
+  void _reconstruct_graph(std::vector<double> cost_of_ecls,
+                          std::vector<double> cost_of_ende,
+                          std::vector<uint32_t> best_ende_of_ecls,
+                          std::vector<bool> picked_endes);
   
   
   /* ILP solver */ 
@@ -139,21 +137,15 @@ private:
   std::vector<std::string> _ende_op; 
   std::vector<float> _ende_cost; 
   std::vector<uint32_t> _ende_ecls; // the eclass that enode belonsg to; 
-  std::vector<uint32_t> _ende_child; 
-  std::vector<uint32_t> _ende_child_ptr; 
+  std::vector<uint32_t> _ende_child; // enode point to its child eclass
+  std::vector<uint32_t> _ende_child_ptr; // enode point to its child eclass
   std::vector<uint32_t> _root_eclass_id;
 
   std::vector<std::vector<uint32_t>> _ecls_its_ende; // enodes under that eclasses
-  std::vector<bool> _ecls_leaf_gr_1; // that eclass has more than one leaf enodes
 
-  // for refinement
-  uint32_t _round_refinements = 0; 
-  std::vector<float> _tmp_ende_cost;
-  std::vector<double> _tmp_cost_of_ecls;
-  std::vector<double> _tmp_cost_of_ende;
-  std::vector<uint32_t> _tmp_best_ende_of_ecls;
-  std::vector<bool> _tmp_picked_endes; 
-
+  // For refinement 
+  std::vector<uint32_t> _ecls_parnt; // eclass point to its parent enode
+  std::vector<uint32_t> _ecls_parnt_ptr; // eclass point to its parent enode
 
 
   // Print function
