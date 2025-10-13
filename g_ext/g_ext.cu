@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-// #define PRINT_LOG
+#define PRINT_LOG
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -635,30 +635,41 @@ void G_EXT::_reconstruct_graph(std::vector<double> cost_of_ecls,
   }
 
   // Construct inv adj
+  std::vector<std::unordered_set<uint32_t>> adj;
   std::vector<std::unordered_set<uint32_t>> inv_adj;
-  inv_adj.resize(_num_ecls, std::unordered_set<uint32_t>()); 
+  std::vector<std::vector<uint32_t>> tmp_inv_adj;
+  adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  tmp_inv_adj.resize(_num_ende, std::vector<uint32_t>());   
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     uint32_t start = _ende_child_ptr[ende]; 
     uint32_t end = _ende_child_ptr[ende+1];
     for (uint32_t jj = start; jj < end; jj++) {
       uint32_t chd_ecls = _ende_child[jj];
-      inv_adj[chd_ecls].insert(ende);
+      for (uint32_t ende2 = 0; ende2 < _ecls_its_ende[chd_ecls].size(); ende2++) {
+        uint32_t ende2ID = _ecls_its_ende[chd_ecls][ende2];
+        // update adj 
+        adj[ende].insert(ende2ID); 
+        // update inv_adjs
+        inv_adj[ende2ID].insert(ende);
+        if (picked_endes[ende] && picked_endes[ende2ID]) {
+          tmp_inv_adj[ende2ID].push_back(ende);
+        }
+      }
     }
   }
-  printf("_ende_child mapping (ende Id -> ecls Id):\n");
-  for (uint32_t ende = 0; ende + 1 < _num_ende; ende++) {
-    uint32_t start = _ende_child_ptr[ende];
-    uint32_t end = _ende_child_ptr[ende + 1];
-    printf("  enode %u:", ende);
-    for (uint32_t jj = start; jj < end; jj++) {
-      printf(" %u", _ende_child[jj]);
+  printf("adj mapping (ende Id -> ende Id):\n");
+  for (uint32_t ende = 0; ende < adj.size(); ende++) {
+    printf("  adj[%u]:", ende);
+    for (auto ende : adj[ende]) {
+      printf(" %u", ende);
     }
     printf("\n");
   }
-  printf("inv_adj mapping (ecls Id -> ende Id):\n");
-  for (uint32_t ecls = 0; ecls < inv_adj.size(); ecls++) {
-    printf("  inv_adj[%u]:", ecls);
-    for (auto ende : inv_adj[ecls]) {
+  printf("inv_adj mapping (ende Id -> ende Id):\n");
+  for (uint32_t ende = 0; ende < inv_adj.size(); ende++) {
+    printf("  inv_adj[%u]:", ende);
+    for (auto ende : inv_adj[ende]) {
       printf(" %u", ende);
     }
     printf("\n");
@@ -693,10 +704,11 @@ void G_EXT::_reconstruct_graph(std::vector<double> cost_of_ecls,
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if ((indegree[ende] == 0) && picked_endes[ende]) {
       q.push(ende);
-      printf("Queue init push in %u\n", ende);
+      // printf("Queue init push in %u\n", ende);
     }
   } printf("\n"); 
 
+  
   std::vector<int> level(_num_ende, -1);
   std::vector<std::vector<uint32_t>> ende_in_level;
   ende_in_level.push_back(std::vector<uint32_t>()); 
@@ -708,7 +720,7 @@ void G_EXT::_reconstruct_graph(std::vector<double> cost_of_ecls,
       uint32_t u = q.front(); q.pop();
       level[u] = cur_level;
       ende_in_level[cur_level].push_back(u); 
-      printf("Current enode %u, level[%u] = %u\n", u, u, level[u]);
+      // printf("Current enode %u, level[%u] = %u\n", u, u, level[u]);
 
       uint32_t start = _ende_child_ptr[u];
       uint32_t end   = _ende_child_ptr[u + 1];
@@ -729,8 +741,13 @@ void G_EXT::_reconstruct_graph(std::vector<double> cost_of_ecls,
     if (!q.empty())
       ende_in_level.push_back(std::vector<uint32_t>()); 
   }
-
-  // Step 5. Print 結果
+  std::vector<uint32_t> tmp_indegree(_num_ende, 0);
+  for (uint32_t chd_ende = 0; chd_ende < tmp_inv_adj.size(); chd_ende++) {
+    for (uint32_t p_ende = 0; p_ende < tmp_inv_adj[chd_ende].size(); p_ende++) {
+      uint32_t to_ende = tmp_inv_adj[chd_ende][p_ende]; 
+      tmp_indegree[to_ende]++;
+    }
+  }  
   printf("=== Levelization result ===\n");
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if (level[ende] >= 0)
@@ -742,45 +759,69 @@ void G_EXT::_reconstruct_graph(std::vector<double> cost_of_ecls,
       printf("%u, ", ende_in_level[lvl][ende]); 
     } printf("\n"); 
   }
-
-
-  // std::vector<bool> on_new_Gph; // the enode located on the new graph
-  std::vector<bool> has_parent_ende; // has at least one of parent enode located on the new graph 
-  std::vector<bool> has_chldrn_ecls; // has at least one of chldrn eclss located on the new graph 
-  has_parent_ende.resize(_num_ende, false);
-  has_chldrn_ecls.resize(_num_ende, false);
-  /*
-  概念：若 has_parent_ende && has_chldrn_ecls 則代表該 enode 存在在新的 graph 上
-  */
-  
-  // Init 
-  for (uint32_t i = 0; i < picked_endes.size(); i++) {
-    if (picked_endes[i]) {
-      // on_new_Gph[i] = true; 
-      has_parent_ende[i] = true; 
-      has_chldrn_ecls[i] = true; 
-    } 
+  printf("tmp_inv_adj mapping (ende Id -> ende Id):\n");
+  for (uint32_t ende = 0; ende < tmp_inv_adj.size(); ende++) {
+    printf("  tmp_inv_adj[%u]:", ende);
+    for (auto ende : tmp_inv_adj[ende]) {
+      printf(" %u", ende);
+    }
+    printf("\n");
+  }
+  for (uint32_t i = 0; i < tmp_indegree.size(); i++) {
+    printf("enode %u, tmp_indegree[%u] = %u\n", i, i, tmp_indegree[i]); 
   }
 
-  // relaxation new graph 
-  bool update = true; 
-  while (update){
-    update = false; 
-    
-    for (uint32_t ende = 0; ende < _num_ende; ende++) {
-      if (!has_parent_ende[ende]) {
-        // 檢查他所有的 parent enode 是否有任一 enode 存在在該 new graph 上，若有，則可拉成 true 
-      }
+  // reorder ende_in_level, make it as lower as possible
+  // std::vector<int> level(_num_ende, -1);
+  uint32_t LEVEL = ende_in_level.size(); 
+  level.clear(); 
+  std::vector<std::vector<uint32_t>> low_ende_in_level; 
+  low_ende_in_level.resize(LEVEL, std::vector<uint32_t>()); 
+  auto get_rev_level = [&](uint32_t LEVEL, uint32_t a) -> uint32_t {
+    return LEVEL - a;
+  };
+  // init queue
+  std::queue<uint32_t>().swap(q); // Clears the queue
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if ((tmp_indegree[ende] == 0) && picked_endes[ende]) {
+      q.push(ende);
+      printf("Queue init push in %u\n", ende);
+    }
+  } printf("\n"); 
 
-      if (!has_chldrn_ecls[ende]) {
-
+  cur_level = 0;
+  while (!q.empty()) {
+    size_t layer = q.size();
+    for (size_t t = 0; t < layer; ++t) {
+      uint32_t u = q.front(); q.pop();
+      int rev_lvl = get_rev_level(LEVEL-1, cur_level);
+      level[u] = rev_lvl;
+      low_ende_in_level[rev_lvl].push_back(u); 
+      for (uint32_t v : tmp_inv_adj[u]) {
+        if (tmp_indegree[v] > 0 && --tmp_indegree[v] == 0) {
+          q.push(v);
+        }
       }
     }
+    ++cur_level;  // 層切換
+  }
+  printf("=== Lower Levelization result ===\n");
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if (level[ende] >= 0)
+      printf("ENode %u -> Level %d\n", ende, level[ende]);
+  }
+  for (uint32_t lvl = 0; lvl < low_ende_in_level.size(); lvl++) {
+    printf("level %u: ", lvl); 
+    for (uint32_t ende = 0; ende < low_ende_in_level[lvl].size(); ende++) {
+      printf("%u, ", low_ende_in_level[lvl][ende]); 
+    } printf("\n"); 
   }
 
+  // Tracerse 
 
-
-
+  
+  
+  // Wrok bottom-up to prune those enodes can not connect to the leaf enodes
 
 
 }
