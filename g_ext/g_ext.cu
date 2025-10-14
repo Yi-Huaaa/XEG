@@ -620,6 +620,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
                                 std::vector<uint32_t>& best_ende_of_ecls,
                                 std::vector<bool>& picked_endes) 
 {
+#ifdef PRINT_LOG
   printf("Inside G_EXT::_reconstruct_graph()\n"); 
   // Reconstruct graph that can be levelization
   printf("picked_endes\n");
@@ -633,6 +634,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
       std::cout << "picked_endes[" << i << "]: FALSE\n"; 
     }
   }
+#endif
 
   // Construct _adj, _inv_adj
   _adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
@@ -651,6 +653,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
       }
     }
   }
+#ifdef PRINT_LOG
   printf("_adj mapping (ende Id -> ende Id):\n");
   for (uint32_t ende = 0; ende < _adj.size(); ende++) {
     printf("  _adj[%u]:", ende);
@@ -667,25 +670,32 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     }
     printf("\n");
   }
-
+#endif
 
   bool udpated = true; 
+  bool debug = false; 
+  std::vector<int> level;
+  level.resize(_num_ende, -1);
+  std::vector<std::vector<uint32_t>> ende_in_level;
+
   while(udpated) {
     udpated = false; 
-    // bottom-up levelization
-    _bottom_up_levelize(picked_endes); 
+    // bottom-up levelization && top-down insertion
+    level.clear(); ende_in_level.clear();
+    _bottom_up_levelize(picked_endes, level, ende_in_level); 
+    bool td = _top_down_insertion(picked_endes, level, ende_in_level); 
+    std::cout << "_top_down_insertion: updated? " << td <<"\n\n"; 
     
-    // // top-down insertion
-    // _top_down_insertion(picked_endes); 
+    // top-down levelization && bottom-up insertion
+    level.clear(); ende_in_level.clear();
+    _top_down_levelize(picked_endes, level, ende_in_level); 
+    bool bu = _bottom_up_insertion(picked_endes, level, ende_in_level); 
+    std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
     
-    // top-down levelization
-    _top_down_levelize(picked_endes); 
-    
-    // // bottom-up insertion
-    // _bottom_up_insertion(picked_endes); 
+    udpated = td || bu; // if one of them udpate, we need to update
+    udpated &= debug; // TODO remove this
+    std::cout << "Get into while loop again? " << udpated << "\n==========================================\n"; 
   }
-
-
 }
 
 
@@ -706,7 +716,6 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
   // printf("\n");
 
   // BFS: top-down levelization 
-  level.resize(_num_ende, -1);
   ende_in_level.push_back(std::vector<uint32_t>());
   int cur_level = 0;
   while (!q.empty()) {
@@ -727,7 +736,9 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
   }
 }
 
-void G_EXT::_top_down_levelize(std::vector<bool>& picked_endes) 
+void G_EXT::_top_down_levelize(const std::vector<bool>& picked_endes,
+                              std::vector<int>& level,
+                              std::vector<std::vector<uint32_t>>& ende_in_level) 
 {
 #ifdef PRINT_LOG
   printf("G_EXT::_top_down_levelize()\n");
@@ -749,19 +760,19 @@ void G_EXT::_top_down_levelize(std::vector<bool>& picked_endes)
 #ifdef PRINT_LOG
   _print_degree(true, picked_endes);
 #endif
+
   // Top-down BFS levelization
-  std::vector<int> level;
-  std::vector<std::vector<uint32_t>> ende_in_level;
   // Note: ende_in_level strats from roots nodes in level 0
   _BFS(true, _indegree, picked_endes, _adj, level, ende_in_level);
 
 #ifdef PRINT_LOG
   _print_levelization(true, level, ende_in_level);
 #endif 
-
 }
 
-void G_EXT::_bottom_up_levelize(std::vector<bool>& picked_endes) 
+void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
+                                std::vector<int>& level,
+                                std::vector<std::vector<uint32_t>>& ende_in_level) 
 {
 #ifdef PRINT_LOG
   printf("G_EXT::_bottom_up_levelize()\n");
@@ -779,34 +790,91 @@ void G_EXT::_bottom_up_levelize(std::vector<bool>& picked_endes)
       }
     }
   }
+
 #ifdef PRINT_LOG
   _print_degree(false, picked_endes);
 #endif
-  // Top-down BFS levelization
-  std::vector<int> level;
-  std::vector<std::vector<uint32_t>> ende_in_level;
+
+  // Bottom-up BFS levelization
   // Note: ende_in_level strats from leaves nodes in level 0
   _BFS(false, _inv_indegree, picked_endes, _inv_adj, level, ende_in_level);
 
 #ifdef PRINT_LOG
   _print_levelization(false, level, ende_in_level);
 #endif 
-
-
 }
 
-void G_EXT::_top_down_insertion(std::vector<bool>& picked_endes) 
+bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
+                                std::vector<int>& level,
+                                std::vector<std::vector<uint32_t>>& ende_in_level) 
 {
-// #ifdef PRINT_LOG
+#ifdef PRINT_LOG
   printf("G_EXT::_top_down_insertion()\n");
-// #endif
+#endif
+  auto get_rev_level = [&](const uint32_t LEVEL, uint32_t a) -> uint32_t {
+    return LEVEL - a;
+  };
+  bool update = false; 
+
+  const uint32_t LEVEL = ende_in_level.size();
+  // Try adll candidates
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if (picked_endes[ende]) continue;
+    // if not picked, check whether it can be added to this graph
+    // Conditions:
+    //   1. At least one parent enode exists (located @ MAX(parent_level))
+    //   2. At least one chldrn enode exists (located @ min(chldrn_level))
+    //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
+    int max_par_lvl = 0, min_chd_lvl = INT_MAX;
+    // Find max parent level 
+    for (uint32_t par_ende : _inv_adj[ende]) {
+      if (picked_endes[par_ende]) {
+        uint32_t par_lvl = get_rev_level(LEVEL, level[par_ende]);
+        max_par_lvl = (max_par_lvl < par_lvl) 
+                      ? (par_lvl) : (max_par_lvl);
+      }
+    }
+    // Find min child level
+    for (uint32_t chd_ende : _adj[ende]) {
+      if (picked_endes[chd_ende]) {
+        uint32_t chd_lvl = get_rev_level(LEVEL, level[chd_ende]);
+        min_chd_lvl = (min_chd_lvl > chd_lvl) 
+                      ? (chd_lvl) : (min_chd_lvl);
+      }
+    }
+    
+    // Check whether form a cycle
+    bool valid = (max_par_lvl <= min_chd_lvl); 
+    if (valid) {
+      int given_lvl = get_rev_level(LEVEL, max_par_lvl + 1); 
+      MY_CHECK(given_lvl > -1, "Incorrect logic of given_lvl = get_rev_level");
+      // TODO: comment this starts
+      if (given_lvl < 0) {
+        printf("Incorrect logic of given_lvl = get_rev_level\n"); 
+        exit(1);
+      }
+      // TODO: comment this ends
+      // Update 
+      picked_endes[ende] = true;
+      level[ende] = given_lvl;
+      ende_in_level[given_lvl].push_back(ende);
+      update = true; 
+    }
+  }
+
+  return update;
 }
 
-void G_EXT::_bottom_up_insertion(std::vector<bool>& picked_endes) 
+bool G_EXT::_bottom_up_insertion(std::vector<bool>& picked_endes,
+                                std::vector<int>& level,
+                                std::vector<std::vector<uint32_t>>& ende_in_level) 
 {
-// #ifdef PRINT_LOG
+#ifdef PRINT_LOG
   printf("G_EXT::_bottom_up_insertion()\n");
-// #endif
+#endif
+
+
+  return false;
 }
 
 
@@ -1189,7 +1257,6 @@ void G_EXT::_print_degree(const bool is_td, const std::vector<bool>& picked_ende
   }
   printf("\n");
 }
-
 
 void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
                                 const std::vector<std::vector<uint32_t>>& ende_in_level) const

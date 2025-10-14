@@ -119,16 +119,23 @@ private:
                           std::vector<double>& cost_of_ende,
                           std::vector<uint32_t>& best_ende_of_ecls,
                           std::vector<bool>& picked_endes);
-  void _top_down_levelize(std::vector<bool>& picked_endes); 
-  void _bottom_up_levelize(std::vector<bool>& picked_endes);
+  void _top_down_levelize(const std::vector<bool>& picked_endes,
+                          std::vector<int>& level,
+                          std::vector<std::vector<uint32_t>>& ende_in_level);    
+  void _bottom_up_levelize(const std::vector<bool>& picked_endes,
+                          std::vector<int>& level,
+                          std::vector<std::vector<uint32_t>>& ende_in_level);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
               const std::vector<bool>& picked_endes,
               const std::vector<std::unordered_set<uint32_t>>& adj,
               std::vector<int>& level,
               std::vector<std::vector<uint32_t>>& ende_in_level);
-  void _top_down_insertion(std::vector<bool>& picked_endes); 
-  void _bottom_up_insertion(std::vector<bool>& picked_endes);
-  
+  bool _top_down_insertion(std::vector<bool>& picked_endes,
+                          std::vector<int>& level,
+                          std::vector<std::vector<uint32_t>>& ende_in_level);
+  bool _bottom_up_insertion(std::vector<bool>& picked_endes,
+                          std::vector<int>& level,
+                          std::vector<std::vector<uint32_t>>& ende_in_level);  
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
                     const std::vector<double>& cost_of_ecls,
