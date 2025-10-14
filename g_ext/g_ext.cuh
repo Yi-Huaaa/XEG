@@ -67,7 +67,7 @@ public:
               best_tree_cost_cpu, dag_cost_cpu, cpu_dag_refine);
 
     _reconstruct_graph(cost_of_ecls, cost_of_ende, 
-                        best_ende_of_ecls, picked_endes); 
+                      best_ende_of_ecls, picked_endes); 
 
 
     // // GPU version
@@ -115,11 +115,19 @@ private:
                           std::vector<bool>& picked_endes);
   std::pair<double, double> _gpu_best_tree();
   /* DAG level relxation */
-  void _reconstruct_graph(std::vector<double> cost_of_ecls,
-                          std::vector<double> cost_of_ende,
-                          std::vector<uint32_t> best_ende_of_ecls,
-                          std::vector<bool> picked_endes);
-  
+  void _reconstruct_graph(std::vector<double>& cost_of_ecls,
+                          std::vector<double>& cost_of_ende,
+                          std::vector<uint32_t>& best_ende_of_ecls,
+                          std::vector<bool>& picked_endes);
+  void _top_down_levelize(std::vector<bool>& picked_endes); 
+  void _bottom_up_levelize(std::vector<bool>& picked_endes);
+    void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
+              const std::vector<bool>& picked_endes,
+              const std::vector<std::unordered_set<uint32_t>>& adj,
+              std::vector<int>& level,
+              std::vector<std::vector<uint32_t>>& ende_in_level);
+  void _top_down_insertion(std::vector<bool>& picked_endes); 
+  void _bottom_up_insertion(std::vector<bool>& picked_endes);
   
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
@@ -146,23 +154,28 @@ private:
   // For refinement 
   std::vector<uint32_t> _ecls_parnt; // eclass point to its parent enode
   std::vector<uint32_t> _ecls_parnt_ptr; // eclass point to its parent enode
-
+  std::vector<std::unordered_set<uint32_t>> _adj;
+  std::vector<std::unordered_set<uint32_t>> _inv_adj;
+  std::vector<uint32_t> _indegree;
+  std::vector<uint32_t> _inv_indegree;
 
   // Print function
   void _print_input() const;
   void _print_adj(const std::vector<std::unordered_set<uint32_t>>& adj) const;
-void _print_read_in_data(const bool init,
-                        const uint32_t tmp_num_ecls,
-                        const uint32_t tmp_num_ende,
-                        const std::vector<std::string>& tmp_ende_name, 
-                        const std::vector<std::string>& tmp_ende_op, 
-                        const std::vector<float>& tmp_ende_cost, 
-                        const std::unordered_map<std::string, uint32_t>& tmp_ecls_name_to_id,
-                        const std::vector<uint32_t>& tmp_ende_ecls,
-                        const std::vector<uint32_t>& tmp_ende_child, 
-                        const std::vector<uint32_t>& tmp_ende_child_ptr, 
-                        const std::vector<uint32_t>& tmp_root_eclass_id) const;
-
+  void _print_read_in_data(const bool init,
+                          const uint32_t tmp_num_ecls,
+                          const uint32_t tmp_num_ende,
+                          const std::vector<std::string>& tmp_ende_name, 
+                          const std::vector<std::string>& tmp_ende_op, 
+                          const std::vector<float>& tmp_ende_cost, 
+                          const std::unordered_map<std::string, uint32_t>& tmp_ecls_name_to_id,
+                          const std::vector<uint32_t>& tmp_ende_ecls,
+                          const std::vector<uint32_t>& tmp_ende_child, 
+                          const std::vector<uint32_t>& tmp_ende_child_ptr, 
+                          const std::vector<uint32_t>& tmp_root_eclass_id) const;
+  void _print_degree(const bool is_td, const std::vector<bool>& picked_endes) const;
+  void _print_levelization(const bool is_td, const std::vector<int>& level,
+                          const std::vector<std::vector<uint32_t>>& ende_in_level) const;
 }; // class G_EXT
 #endif
 
