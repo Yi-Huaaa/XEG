@@ -621,7 +621,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
                                 std::vector<bool>& picked_endes) 
 {
 #ifdef PRINT_LOG
-  printf("Inside G_EXT::_reconstruct_graph()\n"); 
+  printf("\nInside G_EXT::_reconstruct_graph()\n"); 
   // Reconstruct graph that can be levelization
   printf("picked_endes\n");
   for (uint32_t i = 0; i < picked_endes.size(); i++) {
@@ -706,7 +706,7 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
                 std::vector<std::vector<uint32_t>>& ende_in_level)
 {
 #ifdef PRINT_LOG
-  printf("Inside G_EXT::_BFS\n");
+  printf("\nInside G_EXT::_BFS\n");
 #endif 
 
   // init queue (roots || leaves)
@@ -717,7 +717,7 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
       printf("  Queue init push in enode %u\n", ende);
     }
   } 
-  // printf("\n");
+  printf("\n");
 
   // BFS: top-down levelization 
   ende_in_level.push_back(std::vector<uint32_t>());
@@ -731,7 +731,7 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
       printf("  Processing enode %u\n", u);
       for (uint32_t v : adj[u]) {
         if (!picked_endes[v]) continue;
-        printf("   child enode %u, with _indegree[%u] = %u\n", v, v, _indegree[v]); 
+        printf("   child enode %u, with deg[%u] = %u\n", v, v, deg[v]); 
         if (deg[v] > 0 && --deg[v] == 0) {
           q.push(v);
           printf("    Push enode %u (indegree->0)\n", v);
@@ -749,12 +749,13 @@ void G_EXT::_top_down_levelize(const std::vector<bool>& picked_endes,
                               std::vector<std::vector<uint32_t>>& ende_in_level) 
 {
 #ifdef PRINT_LOG
-  printf("G_EXT::_top_down_levelize()\n");
+  printf("\nG_EXT::_top_down_levelize()\n");
 #endif
 
   // Preparing _indegree; Note: this can be optimized
-  _indegree.clear();
-  _indegree.resize(_num_ende, 0);
+  這裏的 _indegree 是錯的，我們還需要知道他到底是誰指到誰
+  因為不是每個 egraph 上的 edge 我們都會用到  
+  _indegree.assign(_num_ende, 0);
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if (!picked_endes[ende]) continue;
     std::unordered_set<uint32_t>& vec = _adj[ende];
@@ -783,12 +784,13 @@ void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
                                 std::vector<std::vector<uint32_t>>& ende_in_level) 
 {
 #ifdef PRINT_LOG
-  printf("G_EXT::_bottom_up_levelize()\n");
+  printf("\nG_EXT::_bottom_up_levelize()\n");
 #endif
 
   // Preparing _inv_indegree; Note: this can be optimized
-  _inv_indegree.clear();
-  _inv_indegree.resize(_num_ende, 0);
+  這裏的 _inv_indegree 是錯的，我們還需要知道他到底是誰指到誰
+  因為不是每個 egraph 上的 edge 我們都會用到
+  _inv_indegree.assign(_num_ende, 0);
   for (uint32_t chd_ende = 0; chd_ende < _num_ende; chd_ende++) {
     if (!picked_endes[chd_ende]) continue;
     std::unordered_set<uint32_t>& vec = _inv_adj[chd_ende];
@@ -817,7 +819,7 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
                                 std::vector<std::vector<uint32_t>>& ende_in_level) 
 {
 #ifdef PRINT_LOG
-  printf("G_EXT::_top_down_insertion()\n");
+  printf("\nG_EXT::_top_down_insertion()\n");
 #endif
   auto get_rev_level = [&](const uint32_t LEVEL, uint32_t a) -> uint32_t {
     return LEVEL - a;
@@ -828,26 +830,31 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
   // Try adll candidates
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if (picked_endes[ende]) continue;
+    printf("Processing ende = %u\n", ende);
     // if not picked, check whether it can be added to this graph
     // Conditions:
-    //   1. At least one parent enode exists (located @ MAX(parent_level))
-    //   2. At least one chldrn enode exists (located @ min(chldrn_level))
+    //   1. At least 1 parent enode exists (located @ MAX(parent_level))
+    //   2. At least 0 chldrn enode exists (located @ min(chldrn_level))
     //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
     int max_par_lvl = 0, min_chd_lvl = INT_MAX;
     // Find max parent level 
+    // printf("Find max parent level\n"); 
     for (uint32_t par_ende : _inv_adj[ende]) {
       if (picked_endes[par_ende]) {
-        uint32_t par_lvl = get_rev_level(LEVEL, level[par_ende]);
+        int par_lvl = get_rev_level(LEVEL, level[par_ende]);
         max_par_lvl = (max_par_lvl < par_lvl) 
                       ? (par_lvl) : (max_par_lvl);
+        // printf("par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
       }
     }
     // Find min child level
+    // printf("Find min child level\n"); 
     for (uint32_t chd_ende : _adj[ende]) {
       if (picked_endes[chd_ende]) {
-        uint32_t chd_lvl = get_rev_level(LEVEL, level[chd_ende]);
+        int chd_lvl = get_rev_level(LEVEL, level[chd_ende]);
         min_chd_lvl = (min_chd_lvl > chd_lvl) 
                       ? (chd_lvl) : (min_chd_lvl);
+        // printf("chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
       }
     }
     
@@ -855,12 +862,16 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
     bool valid = (max_par_lvl <= min_chd_lvl); 
     if (valid) {
       int given_lvl = get_rev_level(LEVEL, max_par_lvl + 1); 
+        // printf("ende = %u, max_par_lvl = %d, min_chd_lvl = %d, given_lvl = %d\n", 
+                // ende, max_par_lvl, min_chd_lvl, given_lvl); 
+
       MY_CHECK(given_lvl > -1, "Incorrect logic of given_lvl = get_rev_level");
       // TODO: comment this starts
-      if (given_lvl < 0) {
-        printf("Incorrect logic of given_lvl = get_rev_level\n"); 
-        exit(1);
-      }
+      // if (given_lvl < -1) {
+      //   printf("Incorrect logic of given_lvl = get_rev_level, ende = %u, max_par_lvl = %d, min_chd_lvl = %d, given_lvl = %d\n", 
+      //           ende, max_par_lvl, min_chd_lvl, given_lvl); 
+      //   exit(1);
+      // }
       // TODO: comment this ends
       // Update 
       picked_endes[ende] = true;
@@ -878,7 +889,7 @@ bool G_EXT::_bottom_up_insertion(std::vector<bool>& picked_endes,
                                 std::vector<std::vector<uint32_t>>& ende_in_level) 
 {
 #ifdef PRINT_LOG
-  printf("G_EXT::_bottom_up_insertion()\n");
+  printf("\nG_EXT::_bottom_up_insertion()\n");
 #endif
 
 
