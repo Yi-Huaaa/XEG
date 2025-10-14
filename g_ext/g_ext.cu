@@ -681,13 +681,13 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   while(udpated) {
     udpated = false; 
     // bottom-up levelization && top-down insertion
-    level.clear(); ende_in_level.clear();
+    level.assign(_num_ende, -1); ende_in_level.clear();
     _bottom_up_levelize(picked_endes, level, ende_in_level); 
     bool td = _top_down_insertion(picked_endes, level, ende_in_level); 
     std::cout << "_top_down_insertion: updated? " << td <<"\n\n"; 
     
     // top-down levelization && bottom-up insertion
-    level.clear(); ende_in_level.clear();
+    level.assign(_num_ende, -1); ende_in_level.clear();
     _top_down_levelize(picked_endes, level, ende_in_level); 
     bool bu = _bottom_up_insertion(picked_endes, level, ende_in_level); 
     std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
@@ -705,12 +705,16 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
                 std::vector<int>& level,
                 std::vector<std::vector<uint32_t>>& ende_in_level)
 {
+#ifdef PRINT_LOG
+  printf("Inside G_EXT::_BFS\n");
+#endif 
+
   // init queue (roots || leaves)
   std::queue<uint32_t> q;
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if ((deg[ende] == 0) && picked_endes[ende]) {
       q.push(ende);
-      // printf("Queue init push in %u\n", ende);
+      printf("  Queue init push in enode %u\n", ende);
     }
   } 
   // printf("\n");
@@ -724,9 +728,13 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
       uint32_t u = q.front(); q.pop();
       level[u] = cur_level;
       ende_in_level[cur_level].push_back(u); 
+      printf("  Processing enode %u\n", u);
       for (uint32_t v : adj[u]) {
+        if (!picked_endes[v]) continue;
+        printf("   child enode %u, with _indegree[%u] = %u\n", v, v, _indegree[v]); 
         if (deg[v] > 0 && --deg[v] == 0) {
           q.push(v);
+          printf("    Push enode %u (indegree->0)\n", v);
         }
       }
     }
