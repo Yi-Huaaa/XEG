@@ -119,12 +119,15 @@ private:
                           std::vector<double>& cost_of_ende,
                           std::vector<uint32_t>& best_ende_of_ecls,
                           std::vector<bool>& picked_endes);
+  void _construct_deg(const std::vector<bool>& picked_endes,
+                      const std::vector<double>& cost_of_ende); 
   void _top_down_levelize(const std::vector<bool>& picked_endes,
                           std::vector<int>& level,
                           std::vector<std::vector<uint32_t>>& ende_in_level);    
   void _bottom_up_levelize(const std::vector<bool>& picked_endes,
                           std::vector<int>& level,
                           std::vector<std::vector<uint32_t>>& ende_in_level);
+    void _update_deg(const bool is_td, const std::vector<bool>& picked_endes);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
               const std::vector<bool>& picked_endes,
               const std::vector<std::unordered_set<uint32_t>>& adj,
@@ -165,6 +168,10 @@ private:
   std::vector<std::unordered_set<uint32_t>> _inv_adj;
   std::vector<uint32_t> _indegree;
   std::vector<uint32_t> _inv_indegree;
+  std::vector<std::vector<uint32_t>> _par_endes; // it may have multiple parent enodes 
+  std::vector<uint32_t> _tar_ende; // only one target enode
+  std::vector<std::vector<uint32_t>> _chd_ende; // it may have multiple children enode
+
 
   // Print function
   void _print_input() const;
