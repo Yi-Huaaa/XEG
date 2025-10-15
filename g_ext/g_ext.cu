@@ -678,8 +678,9 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
 
   bool udpated = true; 
   std::vector<int> level;
-  level.resize(_num_ende, -1); // needed
-  _is_tar_ende.resize(_num_ende, false); // needed 
+  level.resize(_num_ende, -1); // init, needed
+  _tar_ende.clear(); // init 
+  _is_tar_ende.resize(_num_ende, false); // init, needed 
 
   while(udpated) {
     udpated = false; 
@@ -739,7 +740,7 @@ void G_EXT::_update_deg(const bool is_td, const std::vector<bool>& picked_endes,
   printf("\nInside G_EXT::_update_deg()\n");
 #endif
   if (_tar_ende.size() == 0) return; 
-  
+
   std::unordered_set<uint64_t> seen; // used to de-duplicate
   // Lambda
   auto encode = [](uint32_t a, uint32_t b) -> uint64_t {
@@ -1009,7 +1010,7 @@ bool G_EXT::_bottom_up_insertion(std::vector<bool>& picked_endes,
 #ifdef PRINT_LOG
   printf("\nG_EXT::_bottom_up_insertion()\n");
 #endif
-
+  TODO........
 
   return false;
 }
