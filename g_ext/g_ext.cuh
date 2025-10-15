@@ -122,23 +122,18 @@ private:
   void _construct_deg(const std::vector<bool>& picked_endes,
                       const std::vector<double>& cost_of_ende); 
   void _top_down_levelize(const std::vector<bool>& picked_endes,
-                          std::vector<int>& level,
-                          std::vector<std::vector<uint32_t>>& ende_in_level);    
+                          std::vector<int>& level);
   void _bottom_up_levelize(const std::vector<bool>& picked_endes,
-                          std::vector<int>& level,
-                          std::vector<std::vector<uint32_t>>& ende_in_level);
+                          std::vector<int>& level);
     void _update_deg(const bool is_td, const std::vector<bool>& picked_endes);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
               const std::vector<bool>& picked_endes,
               const std::vector<std::unordered_set<uint32_t>>& adj,
-              std::vector<int>& level,
-              std::vector<std::vector<uint32_t>>& ende_in_level);
+              std::vector<int>& level);
   bool _top_down_insertion(std::vector<bool>& picked_endes,
-                          std::vector<int>& level,
-                          std::vector<std::vector<uint32_t>>& ende_in_level);
+                          std::vector<int>& level);
   bool _bottom_up_insertion(std::vector<bool>& picked_endes,
-                          std::vector<int>& level,
-                          std::vector<std::vector<uint32_t>>& ende_in_level);  
+                          std::vector<int>& level);  
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
                     const std::vector<double>& cost_of_ecls,
@@ -171,6 +166,7 @@ private:
   std::vector<std::vector<uint32_t>> _par_endes; // it may have multiple parent enodes 
   std::vector<uint32_t> _tar_ende; // only one target enode
   std::vector<std::vector<uint32_t>> _chd_ende; // it may have multiple children enode
+  int _max_level = -1;  // init as -1
 
 
   // Print function
@@ -189,7 +185,7 @@ private:
                           const std::vector<uint32_t>& tmp_root_eclass_id) const;
   void _print_degree(const bool is_td, const std::vector<bool>& picked_endes) const;
   void _print_levelization(const bool is_td, const std::vector<int>& level,
-                          const std::vector<std::vector<uint32_t>>& ende_in_level) const;
+                          const std::vector<bool>& picked_endes);
 }; // class G_EXT
 #endif
 
