@@ -712,18 +712,17 @@ void G_EXT::_construct_deg(const std::vector<bool>& picked_endes,
     if (!picked_endes[ende]) continue;
 
     for (uint32_t chd_ende : _adj[ende]) {
-      if (picked_endes[chd_ende]) {
-        // Note: the following check pass all benchmarks with positive cost; expect maxsat whose costs aere negative
-        // MY_CHECK(cost_of_ende[ende] >= cost_of_ende[chd_ende], "cost_of_ende[ende] >= cost_of_ende[chd_ende]");
-        _indegree[chd_ende]++; 
-      }
-    }
-    for (uint32_t par_ende : _inv_adj[ende]) {
-      if (picked_endes[par_ende]) {
-        // Note: the following check pass all benchmarks with positive cost; expect maxsat whose costs aere negative
-        // MY_CHECK(cost_of_ende[par_ende] >= cost_of_ende[ende], "cost_of_ende[par_ende] >= cost_of_ende[ende]");
-        _inv_indegree[par_ende]++; 
-      }
+      if (!picked_endes[chd_ende]) continue;
+      // Note: if cost_of_ende[ende] == cost_of_ende[chd_ende] means that:
+      // Both enodes are selected. However, there is no relationship between them (i.e., no edge can be added).
+      // TODO: 目前的做法可能會導致太多額外的 edges 被加入
+      // 實際上他們在 tree 中沒有 dependencies, 但我們在這裡把它加進去了這樣
+      // 因此這裡有一個假設是 tree dag structure 應該是長得很像的
+      bool a = cost_of_ende[chd_ende] < cost_of_ende[ende]; // from enode should have larger cost
+      uint32_t fm_ende = (a) ? (ende) : (chd_ende);
+      uint32_t to_ende = (a) ? (chd_ende) : (ende);
+      _indegree[to_ende]++;
+      _inv_indegree[fm_ende]++; 
     }
   }
 
@@ -913,7 +912,6 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
   };
 
   bool update = false;
-  const uint32_t LEVEL = _max_level;
   
   // Try all candidates
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
@@ -1010,7 +1008,7 @@ bool G_EXT::_bottom_up_insertion(std::vector<bool>& picked_endes,
 #ifdef PRINT_LOG
   printf("\nG_EXT::_bottom_up_insertion()\n");
 #endif
-  TODO........
+  // TODO........
 
   return false;
 }
