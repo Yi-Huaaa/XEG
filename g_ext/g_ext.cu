@@ -672,25 +672,25 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   }
 #endif
 
+  printf("\n\n============================== START TO DEBUG... ==============================\n");
   // Construct init _indegree and _inv_indegree
-  _construct_deg(picked_endes, cost_of_ende); 
+  _construct_deg(picked_endes, cost_of_ende);
 
   bool udpated = true; 
   bool debug = false; 
   std::vector<int> level;
   level.resize(_num_ende, -1); // needed
+  _is_tar_ende.resize(_num_ende, false); // needed 
 
   while(udpated) {
     udpated = false; 
     // bottom-up levelization && top-down insertion
-    level.assign(_num_ende, -1); 
     _bottom_up_levelize(picked_endes, level); 
     bool td = _top_down_insertion(picked_endes, level); 
     std::cout << "_top_down_insertion: updated? " << td <<"\n\n"; 
     
-    // // top-down levelization && bottom-up insertion
-    // level.assign(_num_ende, -1); 
-    // _top_down_levelize(picked_endes, level); 
+    // top-down levelization && bottom-up insertion
+    _top_down_levelize(picked_endes, level); 
     // bool bu = _bottom_up_insertion(picked_endes, level); 
     // std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
     
@@ -734,15 +734,60 @@ void G_EXT::_construct_deg(const std::vector<bool>& picked_endes,
 #endif  
 }
 
-void G_EXT::_update_deg(const bool is_td, const std::vector<bool>& picked_endes) 
+void G_EXT::_update_deg(const bool is_td, const std::vector<bool>& picked_endes, 
+                        const std::vector<int>& level) 
 {
 #ifdef PRINT_LOG 
   printf("\nInside G_EXT::_update_deg()\n");
 #endif
   if (_tar_ende.size() == 0) return; 
+  // TODO here
+  std::unordered_set<uint64_t> seen; // used to de-duplicate
+  // Lambda
+  auto encode = [](uint32_t a, uint32_t b) -> uint64_t {
+    return (static_cast<uint64_t>(a) << 32) | b;
+  };
+  // Note: the ende pair must follows this order: has_seen(fm_ende, to_ende)
+  auto has_seen = [&](uint32_t a, uint32_t b) -> bool {
+    uint64_t key = encode(a, b);
+    if (seen.find(key) != seen.end()) return true;
+    seen.insert(key);
+    return false;
+  };
+  
 
+  for (uint32_t ende : _tar_ende) {
+    printf("target enode %u\n", ende); 
+    MY_CHECK(picked_endes[ende] == true, "picked_endes[ende] == true");
+    for (uint32_t chd_ende : _adj[ende]) {
+      if (!picked_endes[chd_ende]) continue;
+      // Note: boundary condition: lp == lc, target enode still can be added
+      // and lt = lp+1
+      printf("  level[%u] = %d, level[%u] = %d\n", ende, level[ende], chd_ende, level[chd_ende]);
+      if ((level[ende] <= (level[chd_ende] + 1)) && !has_seen(ende, chd_ende)) { 
+        printf("   _indegree[%u]++; _inv_indegree[%u]++;\n", chd_ende, ende);
+        _indegree[chd_ende]++; 
+        _inv_indegree[ende]++; 
+      }
+    }
+    for (uint32_t par_ende : _inv_adj[ende]) {
+      if (!picked_endes[par_ende]) continue;
+      // Note: lt = lp+1
+      printf("  level[%u] = %d, level[%u] = %d\n", ende, level[ende], par_ende, level[par_ende]);
+      if ((level[ende] > level[par_ende]) && !has_seen(par_ende, ende)) {
+        _indegree[ende]++; 
+        _inv_indegree[par_ende]++; 
+        printf("   _indegree[%u]++; _inv_indegree[%u]++;\n", ende, par_ende);
+      }
+    }
+    printf("\n"); 
+  }
 
-
+  // Clear the vectors 
+  _tar_ende.clear();
+  _is_tar_ende.assign(_num_ende, false);
+  // _par_endes.clear();
+  // _chd_ende.clear(); 
 }
 
 void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg, 
@@ -751,8 +796,12 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
                 std::vector<int>& level)
 {
 #ifdef PRINT_LOG
-  printf("\nInside G_EXT::_BFS\n");
+  printf("\nInside G_EXT::_BFS()\n");
 #endif 
+  // lambda
+  auto get_rev_level = [&](const uint32_t LEVEL, uint32_t a) -> uint32_t {
+    return LEVEL - a - 1;
+  };
 
   // init queue (roots || leaves)
   std::queue<uint32_t> q;
@@ -787,8 +836,18 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
     // if (!q.empty())
     //   ende_in_level.push_back(std::vector<uint32_t>());  
   }
+  // update _max_level
   _max_level = cur_level; 
+
+  if (!is_td) {
+    for (uint32_t i = 0; i < level.size(); i++) {
+      level[i] = get_rev_level(_max_level, level[i]);
+    }
+  }
+
+#ifdef PRINT_LOG
   printf("_max_level = %d, cur_level = %d\n", _max_level, cur_level); 
+#endif
 }
 
 void G_EXT::_top_down_levelize(const std::vector<bool>& picked_endes,
@@ -798,19 +857,18 @@ void G_EXT::_top_down_levelize(const std::vector<bool>& picked_endes,
   printf("\nG_EXT::_top_down_levelize()\n");
 #endif
 
-  // Preparing _indegree; Note: this can be optimized
-  // 這裏的 _indegree 是錯的，我們還需要知道他到底是誰指到誰
-  // 因為不是每個 egraph 上的 edge 我們都會用到  
-  // TODO: update indegree here
-  _update_deg(true, picked_endes); 
+  _update_deg(true, picked_endes, level); 
+  std::vector<uint32_t> indegree = _indegree;
 
 #ifdef PRINT_LOG
   _print_degree(true, picked_endes);
+  _print_degree(false, picked_endes);
 #endif
 
   // Top-down BFS levelization
   // Note: ende_in_level strats from roots nodes in level 0
-  _BFS(true, _indegree, picked_endes, _adj, level);
+  level.assign(_num_ende, -1); 
+  _BFS(true, indegree, picked_endes, _adj, level);
 
 #ifdef PRINT_LOG
   _print_levelization(true, level, picked_endes);
@@ -824,11 +882,8 @@ void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
   printf("\nG_EXT::_bottom_up_levelize()\n");
 #endif
 
-  // Preparing _inv_indegree; Note: this can be optimized
-  // 這裏的 _inv_indegree 是錯的，我們還需要知道他到底是誰指到誰
-  // 因為不是每個 egraph 上的 edge 我們都會用到
-  // TODO: update _inv_indegree here
-  _update_deg(false, picked_endes); 
+  _update_deg(false, picked_endes, level); 
+  std::vector<uint32_t> inv_indegree = _inv_indegree;
 
 #ifdef PRINT_LOG
   _print_degree(false, picked_endes);
@@ -836,7 +891,8 @@ void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
 
   // Bottom-up BFS levelization
   // Note: ende_in_level strats from leaves nodes in level 0
-  _BFS(false, _inv_indegree, picked_endes, _inv_adj, level);
+  level.assign(_num_ende, -1); 
+  _BFS(false, inv_indegree, picked_endes, _inv_adj, level);
 
 #ifdef PRINT_LOG
   _print_levelization(false, level, picked_endes);
@@ -849,9 +905,6 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
 #ifdef PRINT_LOG
   printf("\nG_EXT::_top_down_insertion()\n");
 #endif
-  auto get_rev_level = [&](const uint32_t LEVEL, uint32_t a) -> uint32_t {
-    return LEVEL - a - 1;
-  };
   auto has_overlap = [&](const std::vector<uint32_t>& a,
                         const std::vector<uint32_t>& b) -> bool {
     for (uint32_t x : a)
@@ -886,7 +939,7 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
     #endif
     for (uint32_t par_ende : _inv_adj[ende]) {
       if (!picked_endes[par_ende]) continue;
-      int par_lvl = get_rev_level(LEVEL, level[par_ende]);
+      int par_lvl = level[par_ende];
       valid_pars.push_back(par_ende);
       if (max_par_lvl <= par_lvl) {
         #ifdef PRINT_LOG
@@ -906,7 +959,7 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
     #endif
     for (uint32_t chd_ende : _adj[ende]) {
       if (!picked_endes[chd_ende]) continue;
-      int chd_lvl = get_rev_level(LEVEL, level[chd_ende]);
+      int chd_lvl = level[chd_ende];
       valid_chds.push_back(chd_ende);
       if (min_chd_lvl >= chd_lvl) {
         #ifdef PRINT_LOG
@@ -927,21 +980,22 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
       // Note: max_par_ende != min_chd_lvl ==> will form a cycle
       // We can still add it into the new graph G; But! The cycle will be broken with removing one direction's edge
     if (valid) {
-      int given_lvl = get_rev_level(LEVEL, max_par_lvl + 1); 
+      int given_lvl = max_par_lvl + 1;
       #ifdef PRINT_LOG
-        printf("! valid ende = %u, max_par_lvl = %d (max_par_ende = %u), min_chd_lvl = %d (min_chd_ende = %u), (rev) given_lvl = %d (%u)\n", 
+        printf("! valid ende = %u, max_par_lvl = %d (max_par_ende = %u), min_chd_lvl = %d (min_chd_ende = %u), given_lvl = %d\n", 
                 ende, 
                 max_par_lvl, max_par_ende,
                 min_chd_lvl, min_chd_ende,
-                given_lvl, get_rev_level(LEVEL, given_lvl));
+                given_lvl);
       #endif
 
-      MY_CHECK(given_lvl > -1, "Incorrect logic of given_lvl = get_rev_level");
+      MY_CHECK(given_lvl > -1, "given_lvl > -1");
 
       // Update 
-      _par_endes.push_back(valid_pars);
       _tar_ende.push_back(ende); 
-      _chd_ende.push_back(valid_chds);
+      _is_tar_ende[ende] = true; 
+      // _par_endes.push_back(valid_pars);
+      // _chd_ende.push_back(valid_chds);
       picked_endes[ende] = true;
       level[ende] = given_lvl;
       update = true; 

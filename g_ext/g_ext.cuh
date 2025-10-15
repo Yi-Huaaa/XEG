@@ -125,7 +125,8 @@ private:
                           std::vector<int>& level);
   void _bottom_up_levelize(const std::vector<bool>& picked_endes,
                           std::vector<int>& level);
-    void _update_deg(const bool is_td, const std::vector<bool>& picked_endes);
+    void _update_deg(const bool is_td, const std::vector<bool>& picked_endes,
+                    const std::vector<int>& level);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
               const std::vector<bool>& picked_endes,
               const std::vector<std::unordered_set<uint32_t>>& adj,
@@ -163,9 +164,10 @@ private:
   std::vector<std::unordered_set<uint32_t>> _inv_adj;
   std::vector<uint32_t> _indegree;
   std::vector<uint32_t> _inv_indegree;
-  std::vector<std::vector<uint32_t>> _par_endes; // it may have multiple parent enodes 
   std::vector<uint32_t> _tar_ende; // only one target enode
-  std::vector<std::vector<uint32_t>> _chd_ende; // it may have multiple children enode
+  std::vector<bool> _is_tar_ende; // only one target enode
+  // std::vector<std::vector<uint32_t>> _par_endes; // it may have multiple parent enodes 
+  // std::vector<std::vector<uint32_t>> _chd_ende; // it may have multiple children enode
   int _max_level = -1;  // init as -1
 
 
