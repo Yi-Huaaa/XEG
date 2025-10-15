@@ -677,7 +677,6 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   _construct_deg(picked_endes, cost_of_ende);
 
   bool udpated = true; 
-  bool debug = false; 
   std::vector<int> level;
   level.resize(_num_ende, -1); // needed
   _is_tar_ende.resize(_num_ende, false); // needed 
@@ -691,12 +690,11 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     
     // top-down levelization && bottom-up insertion
     _top_down_levelize(picked_endes, level); 
-    // bool bu = _bottom_up_insertion(picked_endes, level); 
-    // std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
+    bool bu = _bottom_up_insertion(picked_endes, level); 
+    std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
     
-    // udpated = td || bu; // if one of them udpate, we need to update
-    // udpated &= debug; // TODO remove this
-    // std::cout << "Get into while loop again? " << udpated << "\n==========================================\n"; 
+    udpated = td || bu; // if one of them udpate, we need to update
+    std::cout << "Get into while loop again? " << udpated << "\n==========================================\n"; 
   }
 }
 
@@ -741,7 +739,7 @@ void G_EXT::_update_deg(const bool is_td, const std::vector<bool>& picked_endes,
   printf("\nInside G_EXT::_update_deg()\n");
 #endif
   if (_tar_ende.size() == 0) return; 
-  // TODO here
+  
   std::unordered_set<uint64_t> seen; // used to de-duplicate
   // Lambda
   auto encode = [](uint32_t a, uint32_t b) -> uint64_t {
@@ -755,7 +753,6 @@ void G_EXT::_update_deg(const bool is_td, const std::vector<bool>& picked_endes,
     return false;
   };
   
-
   for (uint32_t ende : _tar_ende) {
     printf("target enode %u\n", ende); 
     MY_CHECK(picked_endes[ende] == true, "picked_endes[ende] == true");
