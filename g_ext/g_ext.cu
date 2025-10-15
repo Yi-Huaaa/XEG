@@ -636,9 +636,9 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   }
 #endif
 
-  // Construct _adj, _inv_adj
-  _adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-  _inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  // Construct _global_adj, _global_inv_adj --> There maybe cycle inside _global_adj and _global_inv_adj
+  _global_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  _global_inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     uint32_t start = _ende_child_ptr[ende]; 
     uint32_t end = _ende_child_ptr[ende+1];
@@ -646,57 +646,66 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
       uint32_t chd_ecls = _ende_child[jj];
       for (uint32_t ende2 = 0; ende2 < _ecls_its_ende[chd_ecls].size(); ende2++) {
         uint32_t ende2ID = _ecls_its_ende[chd_ecls][ende2];
-        // update _adj 
-        _adj[ende].insert(ende2ID); 
+        // update _global_adj 
+        _global_adj[ende].insert(ende2ID); 
         // update inv_adjs
-        _inv_adj[ende2ID].insert(ende);
+        _global_inv_adj[ende2ID].insert(ende);
       }
     }
   }
 #ifdef PRINT_LOG
-  printf("_adj mapping (ende Id -> ende Id):\n");
-  for (uint32_t ende = 0; ende < _adj.size(); ende++) {
-    printf("  _adj[%u]:", ende);
-    for (auto ende : _adj[ende]) {
-      printf(" %u", ende);
-    }
-    printf("\n");
-  }
-  printf("_inv_adj mapping (ende Id -> ende Id):\n");
-  for (uint32_t ende = 0; ende < _inv_adj.size(); ende++) {
-    printf("  _inv_adj[%u]:", ende);
-    for (auto ende : _inv_adj[ende]) {
-      printf(" %u", ende);
-    }
-    printf("\n");
-  }
+  printf("_global_adj mapping (ende Id -> ende Id):\n");
+  _print_adj(_global_adj);
+  printf("_global_inv_adj mapping (ende Id -> ende Id):\n");
+  _print_adj(_global_inv_adj);
 #endif
 
-  printf("\n\n============================== START TO DEBUG... ==============================\n");
+  #ifdef PRINT_LOG
+     printf("\n\n============================== START TO _reconstruct_graph... ==============================\n");
+  #endif
   // Construct init _indegree and _inv_indegree
   _construct_deg(picked_endes, cost_of_ende);
 
   bool udpated = true; 
   std::vector<int> level;
   level.resize(_num_ende, -1); // init, needed
-  _tar_ende.clear(); // init 
-  _is_tar_ende.resize(_num_ende, false); // init, needed 
+  #ifdef PRINT_LOG
+    printf("0: _max_level = %d\n", _max_level); 
+    uint32_t acc_itr = 0;
+  #endif
 
   while(udpated) {
+    #ifdef PRINT_LOG
+      printf("acc_itr = %u, _max_level = %d\n", acc_itr, _max_level); 
+    #endif    
     udpated = false; 
     // bottom-up levelization && top-down insertion
-    _bottom_up_levelize(picked_endes, level); 
-    bool td = _top_down_insertion(picked_endes, level); 
-    std::cout << "_top_down_insertion: updated? " << td <<"\n\n"; 
+    _update_deg(udpated, picked_endes, level); 
+    _bottom_up_levelize(picked_endes, level);
+    udpated = _insertion(true, picked_endes, level);
+      #ifdef PRINT_LOG
+        std::cout << "_top_down_insertion: updated? " << udpated <<"\n\n"; 
+        printf("1: _max_level = %d\n", _max_level); 
+      #endif
+    
     
     // top-down levelization && bottom-up insertion
-    _top_down_levelize(picked_endes, level); 
-    bool bu = _bottom_up_insertion(picked_endes, level); 
-    std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
+    _update_deg(udpated, picked_endes, level); 
+    _top_down_levelize(picked_endes, level);
+    udpated = _insertion(false, picked_endes, level);
+      #ifdef PRINT_LOG
+        std::cout << "_bottom_up_insertion: updated? " << udpated <<"\n\n"; 
+        printf("2: _max_level = %d\n", _max_level); 
+      #endif
     
-    udpated = td || bu; // if one of them udpate, we need to update
-    std::cout << "Get into while loop again? " << udpated << "\n==========================================\n"; 
+      #ifdef PRINT_LOG
+        std::cout << "Get into while loop again? " << udpated << "\n==========================================\n"; 
+        acc_itr++;
+      #endif
   }
+  #ifdef PRINT_LOG
+    printf("3: _max_level = %d, acc_itr = %u\n", _max_level, acc_itr); 
+  #endif
 }
 
 void G_EXT::_construct_deg(const std::vector<bool>& picked_endes,
@@ -706,85 +715,66 @@ void G_EXT::_construct_deg(const std::vector<bool>& picked_endes,
   printf("\nInside G_EXT::_construct_deg()\nThis is the initial version of degs\n");
 #endif
 
-  _indegree.assign(_num_ende, 0);
-  _inv_indegree.assign(_num_ende, 0);
+  _indegree.resize(_num_ende, 0);
+  _inv_indegree.resize(_num_ende, 0);
+  _adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  _inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if (!picked_endes[ende]) continue;
 
-    for (uint32_t chd_ende : _adj[ende]) {
+    for (uint32_t chd_ende : _global_adj[ende]) {
       if (!picked_endes[chd_ende]) continue;
       // Note: if cost_of_ende[ende] == cost_of_ende[chd_ende] means that:
       // Both enodes are selected. However, there is no relationship between them (i.e., no edge can be added).
-      // TODO: 目前的做法可能會導致太多額外的 edges 被加入
-      // 實際上他們在 tree 中沒有 dependencies, 但我們在這裡把它加進去了這樣
-      // 因此這裡有一個假設是 tree dag structure 應該是長得很像的
       bool a = cost_of_ende[chd_ende] < cost_of_ende[ende]; // from enode should have larger cost
       uint32_t fm_ende = (a) ? (ende) : (chd_ende);
       uint32_t to_ende = (a) ? (chd_ende) : (ende);
       _indegree[to_ende]++;
-      _inv_indegree[fm_ende]++; 
+      _inv_indegree[fm_ende]++;
+      _adj[fm_ende].insert(to_ende);
+      _inv_adj[to_ende].insert(fm_ende);
     }
   }
 
 #ifdef PRINT_LOG
   _print_degree(true, picked_endes);
   _print_degree(false, picked_endes);
+
+  printf("_adj mapping (ende Id -> ende Id):\n");
+  _print_adj(_adj);
+  printf("_inv_adj mapping (ende Id -> ende Id):\n");
+  _print_adj(_inv_adj);  
 #endif  
 }
 
-void G_EXT::_update_deg(const bool is_td, const std::vector<bool>& picked_endes, 
+void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes, 
                         const std::vector<int>& level) 
 {
 #ifdef PRINT_LOG 
   printf("\nInside G_EXT::_update_deg()\n");
+  printf("Pre:\n"); 
+  _print_degree(true, picked_endes);
+  _print_degree(false, picked_endes);
 #endif
-  if (_tar_ende.size() == 0) return; 
+  if (!need_to_update) return; 
+  // init 
+  _indegree.assign(_num_ende, 0);
+  _inv_indegree.assign(_num_ende, 0);  
 
-  std::unordered_set<uint64_t> seen; // used to de-duplicate
-  // Lambda
-  auto encode = [](uint32_t a, uint32_t b) -> uint64_t {
-    return (static_cast<uint64_t>(a) << 32) | b;
-  };
-  // Note: the ende pair must follows this order: has_seen(fm_ende, to_ende)
-  auto has_seen = [&](uint32_t a, uint32_t b) -> bool {
-    uint64_t key = encode(a, b);
-    if (seen.find(key) != seen.end()) return true;
-    seen.insert(key);
-    return false;
-  };
-  
-  for (uint32_t ende : _tar_ende) {
-    printf("target enode %u\n", ende); 
-    MY_CHECK(picked_endes[ende] == true, "picked_endes[ende] == true");
-    for (uint32_t chd_ende : _adj[ende]) {
-      if (!picked_endes[chd_ende]) continue;
-      // Note: boundary condition: lp == lc, target enode still can be added
-      // and lt = lp+1
-      printf("  level[%u] = %d, level[%u] = %d\n", ende, level[ende], chd_ende, level[chd_ende]);
-      if ((level[ende] <= (level[chd_ende] + 1)) && !has_seen(ende, chd_ende)) { 
-        printf("   _indegree[%u]++; _inv_indegree[%u]++;\n", chd_ende, ende);
-        _indegree[chd_ende]++; 
-        _inv_indegree[ende]++; 
-      }
+  for (uint32_t fm_ende = 0; fm_ende < _num_ende; fm_ende++) {
+    if (!picked_endes[fm_ende]) continue;
+
+    for (uint32_t to_ende : _adj[fm_ende]) {
+      if (!picked_endes[to_ende]) continue;
+      _indegree[to_ende]++;
+      _inv_indegree[fm_ende]++;
     }
-    for (uint32_t par_ende : _inv_adj[ende]) {
-      if (!picked_endes[par_ende]) continue;
-      // Note: lt = lp+1
-      printf("  level[%u] = %d, level[%u] = %d\n", ende, level[ende], par_ende, level[par_ende]);
-      if ((level[ende] > level[par_ende]) && !has_seen(par_ende, ende)) {
-        _indegree[ende]++; 
-        _inv_indegree[par_ende]++; 
-        printf("   _indegree[%u]++; _inv_indegree[%u]++;\n", ende, par_ende);
-      }
-    }
-    printf("\n"); 
   }
-
-  // Clear the vectors 
-  _tar_ende.clear();
-  _is_tar_ende.assign(_num_ende, false);
-  // _par_endes.clear();
-  // _chd_ende.clear(); 
+  #ifdef PRINT_LOG
+    printf("Post:\n"); 
+    _print_degree(true, picked_endes);
+    _print_degree(false, picked_endes);
+  #endif  
 }
 
 void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg, 
@@ -805,10 +795,14 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if ((deg[ende] == 0) && picked_endes[ende]) {
       q.push(ende);
-      printf("  Queue init push in enode %u\n", ende);
+      #ifdef PRINT_LOG  
+        printf("  Queue init push in enode %u\n", ende);
+      #endif
     }
   } 
-  printf("\n");
+  #ifdef PRINT_LOG  
+    printf("\n");
+  #endif
 
   // BFS: top-down levelization 
   // ende_in_level.push_back(std::vector<uint32_t>());
@@ -819,13 +813,19 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
       uint32_t u = q.front(); q.pop();
       level[u] = cur_level;
       // ende_in_level[cur_level].push_back(u); 
-      printf("  Processing enode %u\n", u);
+      #ifdef PRINT_LOG
+        printf("  Processing enode %u\n", u);
+      #endif
       for (uint32_t v : adj[u]) {
         if (!picked_endes[v]) continue;
-        printf("   child enode %u, with deg[%u] = %u\n", v, v, deg[v]); 
+        #ifdef PRINT_LOG
+          printf("   child enode %u, with deg[%u] = %u\n", v, v, deg[v]); 
+        #endif
         if (deg[v] > 0 && --deg[v] == 0) {
           q.push(v);
-          printf("    Push enode %u (indegree->0)\n", v);
+          #ifdef PRINT_LOG
+            printf("    Push enode %u (indegree->0)\n", v);
+          #endif
         }
       }
     }
@@ -839,6 +839,7 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
   if (!is_td) {
     for (uint32_t i = 0; i < level.size(); i++) {
       level[i] = get_rev_level(_max_level, level[i]);
+      MY_CHECK(level[i] >= 0, "level[i] >= 0,");
     }
   }
 
@@ -854,18 +855,9 @@ void G_EXT::_top_down_levelize(const std::vector<bool>& picked_endes,
   printf("\nG_EXT::_top_down_levelize()\n");
 #endif
 
-  _update_deg(true, picked_endes, level); 
-  std::vector<uint32_t> indegree = _indegree;
-
-#ifdef PRINT_LOG
-  _print_degree(true, picked_endes);
-  _print_degree(false, picked_endes);
-#endif
-
   // Top-down BFS levelization
-  // Note: ende_in_level strats from roots nodes in level 0
   level.assign(_num_ende, -1); 
-  _BFS(true, indegree, picked_endes, _adj, level);
+  _BFS(true, _indegree, picked_endes, _adj, level);
 
 #ifdef PRINT_LOG
   _print_levelization(true, level, picked_endes);
@@ -879,29 +871,27 @@ void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
   printf("\nG_EXT::_bottom_up_levelize()\n");
 #endif
 
-  _update_deg(false, picked_endes, level); 
-  std::vector<uint32_t> inv_indegree = _inv_indegree;
-
-#ifdef PRINT_LOG
-  _print_degree(false, picked_endes);
-#endif
-
   // Bottom-up BFS levelization
-  // Note: ende_in_level strats from leaves nodes in level 0
   level.assign(_num_ende, -1); 
-  _BFS(false, inv_indegree, picked_endes, _inv_adj, level);
+  _BFS(false, _inv_indegree, picked_endes, _inv_adj, level);
 
 #ifdef PRINT_LOG
   _print_levelization(false, level, picked_endes);
 #endif 
 }
 
-bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
-                                std::vector<int>& level) 
+bool G_EXT::_insertion(const bool is_td, 
+                      std::vector<bool>& picked_endes,
+                      std::vector<int>& level) 
 {
 #ifdef PRINT_LOG
-  printf("\nG_EXT::_top_down_insertion()\n");
+  if (is_td) {
+    printf("\nG_EXT::_top_down_insertion()\n");
+  } else {
+    printf("\nG_EXT::_bottom_up_insertion()\n");
+  }
 #endif
+  // Lambda
   auto has_overlap = [&](const std::vector<uint32_t>& a,
                         const std::vector<uint32_t>& b) -> bool {
     for (uint32_t x : a)
@@ -912,7 +902,7 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
   };
 
   bool update = false;
-  
+
   // Try all candidates
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if (picked_endes[ende]) continue;
@@ -921,23 +911,30 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
     #endif
     std::vector<uint32_t> valid_pars;
     std::vector<uint32_t> valid_chds;
-    // if not picked, check whether it can be added to this graph
-    // Conditions:
-    //   1. At least 1 parent enode exists (located @ MAX(parent_level))
-    //   2. At least 0 chldrn enode exists (located @ min(chldrn_level))
-    //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
-    bool has_par = false;
+    // _top_down_insertion(): 
+      // If not picked, check whether it can be added to this graph
+      // Conditions:
+      //   1. At least 1 parent enode exists (located @ MAX(parent_level))
+      //   2. At least 0 chldrn enode exists (located @ min(chldrn_level))
+      //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
+    // _bottom_up_insertion(): 
+      // If not picked, check whether it can be added to this graph
+      // Conditions:
+      //   1. At least 0 parent enode exists (located @ MAX(parent_level))
+      //   2. At least 1 chldrn enode exists (located @ min(chldrn_level))
+      //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
+    bool has_par = false, has_chd = false;
     int max_par_lvl = -1, min_chd_lvl = INT_MAX;
     uint32_t max_par_ende = UINT32_MAX, min_chd_ende = UINT32_MAX; // Note: init values here are not important!
     // Find max parent level 
     #ifdef PRINT_LOG
       printf("Find max parent level\n"); 
     #endif
-    for (uint32_t par_ende : _inv_adj[ende]) {
+    for (uint32_t par_ende : _global_inv_adj[ende]) {
       if (!picked_endes[par_ende]) continue;
       int par_lvl = level[par_ende];
       valid_pars.push_back(par_ende);
-      if (max_par_lvl <= par_lvl) {
+      if (max_par_lvl < par_lvl) {
         #ifdef PRINT_LOG
           printf("  pre: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
         #endif
@@ -953,14 +950,21 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
     #ifdef PRINT_LOG
       printf("Find min child level\n"); 
     #endif
-    for (uint32_t chd_ende : _adj[ende]) {
+    for (uint32_t chd_ende : _global_adj[ende]) {
       if (!picked_endes[chd_ende]) continue;
+      // TODO: 這裏其實可能會造成搜索範圍變小，因為實際上，我們可以選擇不把該 parent and enode edge 加進來 QWQ
+      // 但我們現在就是很暴力的，把所有可以是 parents 的 enode 都和 target enode 連上線的概念
       int chd_lvl = level[chd_ende];
+      if (chd_lvl == -1) {
+        printf("WTF: \n");
+        std::cout << picked_endes[chd_ende] << "\n";
+      }      
       valid_chds.push_back(chd_ende);
-      if (min_chd_lvl >= chd_lvl) {
+      if (min_chd_lvl > chd_lvl) {
         #ifdef PRINT_LOG
           printf("  pre: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
         #endif 
+        has_chd = true; 
         min_chd_lvl = chd_lvl;
         min_chd_ende = chd_ende; 
         #ifdef PRINT_LOG
@@ -970,13 +974,10 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
     }
     
     // Check whether form a cycle
-    bool valid = (has_par) && (max_par_lvl <= min_chd_lvl) && (!has_overlap(valid_pars, valid_chds));
-    // std::cout << "bibi check 2: " << has_par << ", " << (max_par_lvl <= min_chd_lvl) << ", " <<  (max_par_ende != min_chd_ende) << "\n";
-    // TODO: we can remove "(max_par_ende != min_chd_ende)" to make more enodes in. 
-      // Note: max_par_ende != min_chd_lvl ==> will form a cycle
-      // We can still add it into the new graph G; But! The cycle will be broken with removing one direction's edge
+    bool cond = (is_td) ? (has_par) : (has_chd);
+    bool valid = (cond) && (max_par_lvl <= min_chd_lvl) && (!has_overlap(valid_pars, valid_chds));
     if (valid) {
-      int given_lvl = max_par_lvl + 1;
+      int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
       #ifdef PRINT_LOG
         printf("! valid ende = %u, max_par_lvl = %d (max_par_ende = %u), min_chd_lvl = %d (min_chd_ende = %u), given_lvl = %d\n", 
                 ende, 
@@ -985,32 +986,30 @@ bool G_EXT::_top_down_insertion(std::vector<bool>& picked_endes,
                 given_lvl);
       #endif
 
-      MY_CHECK(given_lvl > -1, "given_lvl > -1");
+      // MY_CHECK(given_lvl > -1, "given_lvl > -1");
+      if (given_lvl < -1) {
+        printf("given_lvl = %d, max_par_lvl = %d, min_chd_lvl = %d\n", given_lvl, max_par_lvl, min_chd_lvl);
+        std::cout << "is_td: " << is_td << ", has_par: " << has_par << ", has_chd: " << has_chd << "\n"; 
+        exit(1);
+      }
 
       // Update 
-      _tar_ende.push_back(ende); 
-      _is_tar_ende[ende] = true; 
-      // _par_endes.push_back(valid_pars);
-      // _chd_ende.push_back(valid_chds);
       picked_endes[ende] = true;
       level[ende] = given_lvl;
+      // update _adj and _inv_adj
+      for (uint32_t par_ende : valid_pars) {
+        _adj[par_ende].insert(ende);
+        _inv_adj[ende].insert(par_ende);
+      }
+      for (uint32_t chd_ende : valid_chds) {
+        _adj[ende].insert(chd_ende);
+        _inv_adj[chd_ende].insert(ende);
+      }
       update = true; 
     }
   }
 
-  // return update;
-  return false;
-}
-
-bool G_EXT::_bottom_up_insertion(std::vector<bool>& picked_endes,
-                                std::vector<int>& level) 
-{
-#ifdef PRINT_LOG
-  printf("\nG_EXT::_bottom_up_insertion()\n");
-#endif
-  // TODO........
-
-  return false;
+  return update;
 }
 
 

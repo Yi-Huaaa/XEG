@@ -125,16 +125,16 @@ private:
                           std::vector<int>& level);
   void _bottom_up_levelize(const std::vector<bool>& picked_endes,
                           std::vector<int>& level);
-    void _update_deg(const bool is_td, const std::vector<bool>& picked_endes,
+    void _update_deg(const bool need_to_update, 
+                    const std::vector<bool>& picked_endes,
                     const std::vector<int>& level);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
               const std::vector<bool>& picked_endes,
               const std::vector<std::unordered_set<uint32_t>>& adj,
               std::vector<int>& level);
-  bool _top_down_insertion(std::vector<bool>& picked_endes,
-                          std::vector<int>& level);
-  bool _bottom_up_insertion(std::vector<bool>& picked_endes,
-                          std::vector<int>& level);  
+  bool _insertion(const bool is_td, 
+                  std::vector<bool>& picked_endes,
+                  std::vector<int>& level);  
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
                     const std::vector<double>& cost_of_ecls,
@@ -160,14 +160,12 @@ private:
   // For refinement 
   std::vector<uint32_t> _ecls_parnt; // eclass point to its parent enode
   std::vector<uint32_t> _ecls_parnt_ptr; // eclass point to its parent enode
-  std::vector<std::unordered_set<uint32_t>> _adj;
-  std::vector<std::unordered_set<uint32_t>> _inv_adj;
+  std::vector<std::unordered_set<uint32_t>> _global_adj;
+  std::vector<std::unordered_set<uint32_t>> _global_inv_adj;
+  std::vector<std::unordered_set<uint32_t>> _adj; // store edges of enodes on new G
+  std::vector<std::unordered_set<uint32_t>> _inv_adj; // store edges of enodes on new G
   std::vector<uint32_t> _indegree;
   std::vector<uint32_t> _inv_indegree;
-  std::vector<uint32_t> _tar_ende; // only one target enode
-  std::vector<bool> _is_tar_ende; // only one target enode
-  // std::vector<std::vector<uint32_t>> _par_endes; // it may have multiple parent enodes 
-  // std::vector<std::vector<uint32_t>> _chd_ende; // it may have multiple children enode
   int _max_level = -1;  // init as -1
 
 
