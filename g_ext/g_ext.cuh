@@ -21,6 +21,7 @@
 #include <omp.h>
 #include <cstdint> // For UINT32_MAX
 
+
 /* ILP Solver */
 #include "ortools/sat/cp_model.h"
 #include "ortools/sat/cp_model.pb.h"
@@ -134,7 +135,26 @@ private:
               std::vector<int>& level);
   bool _insertion(const bool is_td, 
                   std::vector<bool>& picked_endes,
-                  std::vector<int>& level);  
+                  std::vector<int>& level);
+  void _clear_redundant_endes(std::vector<bool>& picked_endes,
+                              std::vector<int>& level);
+    void _BFS2(const bool is_td, std::vector<uint32_t>& deg, 
+              std::vector<bool>& picked_endes,
+              const std::vector<bool>& is_start_ende,
+              const std::vector<std::unordered_set<uint32_t>>& adj,
+              std::vector<int>& level,
+              std::vector<bool>& visited);
+    void mark_reachable(const std::vector<uint32_t>& starts,
+                      const std::vector<std::unordered_set<uint32_t>>& adj,
+                      std::vector<bool>& visited,
+                      const std::vector<bool>& picked_endes);
+    std::vector<bool> get_nodes_in_subgraph(
+                      const std::vector<uint32_t>& roots,
+                      const std::vector<uint32_t>& leaves,
+                      const std::vector<std::unordered_set<uint32_t>>& adj,
+                      const std::vector<std::unordered_set<uint32_t>>& inv_adj,
+                      const std::vector<bool>& picked_endes);
+
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
                     const std::vector<double>& cost_of_ecls,
