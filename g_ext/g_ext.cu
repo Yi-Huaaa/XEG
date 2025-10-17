@@ -318,11 +318,13 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
     {
       #pragma omp for
       for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
+        std::vector<uint32_t> picks;
         double acc_cost = tmp_ende_cost[t_idx];
         uint32_t start = _ende_child_ptr[t_idx];
         uint32_t end   = _ende_child_ptr[t_idx+1];
         for (uint32_t jj = start; jj < end; jj++) {
           acc_cost += cost_of_ecls[_ende_child[jj]];
+          picks.push_back(best_ende_of_ecls[_ende_child[jj]]);
         }
 
         cost_of_ende[t_idx] = (acc_cost < cost_of_ende[t_idx]) ? (acc_cost) : (cost_of_ende[t_idx]);
@@ -341,6 +343,20 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
     }
   }
 
+  // === Phase 2: reconstruct best picks ===
+  std::vector<std::vector<uint32_t>> ende_picked_by_ende(_num_ende);
+  for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
+    std::vector<uint32_t> picks;
+    uint32_t start = _ende_child_ptr[t_idx];
+    uint32_t end   = _ende_child_ptr[t_idx + 1];
+    picks.reserve(end - start);
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t chd_ecls = _ende_child[jj];
+      picks.push_back(best_ende_of_ecls[chd_ecls]);
+    }
+    ende_picked_by_ende[t_idx] = std::move(picks);
+  }
+
 #ifdef PRINT_LOG
   printf("\ncost_of_ecls:\n");
   for (size_t i = 0; i < cost_of_ecls.size(); i++) {
@@ -357,7 +373,17 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
   for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
     printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
   }
-  printf("\n");    
+  printf("\n");
+
+  printf("\n_ende_picked_by_ende:\n");
+  for (size_t i = 0; i < ende_picked_by_ende.size(); i++) {
+    printf("  [%zu]: ", i);
+    for (size_t j = 0; j < ende_picked_by_ende[i].size(); j++) {
+      printf("%u, ", ende_picked_by_ende[i][j]);
+    }
+    printf("\n");  
+  }
+  printf("\n");  
 #endif
 
   // Get best tree cost 
@@ -365,52 +391,60 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
     tree_ret += cost_of_ecls[_root_eclass_id[r]];
   }
-  double dag_ret = _compute_dag_cost(best_ende_of_ecls, picked_endes); 
+  double dag_ret = _compute_dag_cost(best_ende_of_ecls, picked_endes, ende_picked_by_ende); 
                     
   return std::make_pair(tree_ret, dag_ret);
 }
 
 double G_EXT::_compute_dag_cost(
   const std::vector<uint32_t>& best_ende_of_ecls,
-  std::vector<bool>& picked_endes) 
+  std::vector<bool>& picked_endes,
+  std::vector<std::vector<uint32_t>>& ende_picked_by_ende) 
 {
   // Get best dag cost 
   double dag_ret = 0.0; 
   picked_endes.resize(_num_ende, false); 
+  _indegree.resize(_num_ende, 0);
+  _inv_indegree.resize(_num_ende, 0);
+  _adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  _inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
 
-  std::vector<bool> visited_eclasses(_num_ecls, false);
   std::queue<uint32_t> q;
 
-  // enqueue all roots
+  // enqueue all root enodes
   for (uint32_t rid : _root_eclass_id) {
-    if (rid < _num_ecls) {
-      q.push(rid);
-      visited_eclasses[rid] = true;
-    }
+    MY_CHECK(rid < _num_ecls, "rid < _num_ecls");
+    uint32_t root_ende = best_ende_of_ecls[rid];
+    MY_CHECK(root_ende < _num_ende, "root_ende < _num_ende"); 
+    q.push(root_ende);
+    picked_endes[root_ende] = true;
   }
 
+  // BFS traversal over enodes
   while (!q.empty()) {
-    uint32_t cur_ecls = q.front();
+    uint32_t cur = q.front();
+    dag_ret += _ende_cost[cur];
     q.pop();
 
-    uint32_t ende_idx = best_ende_of_ecls[cur_ecls];
-    if (ende_idx >= _num_ende) continue;
+    for (uint32_t chd : ende_picked_by_ende[cur]) {
+      MY_CHECK(chd < _num_ende, "chd < _num_ende");
+      _adj[cur].insert(chd);
+      _inv_adj[chd].insert(cur);
 
-    if (!picked_endes[ende_idx]) {
-      picked_endes[ende_idx] = true;
-      dag_ret += _ende_cost[ende_idx];
-    }
-
-    uint32_t start = _ende_child_ptr[ende_idx];
-    uint32_t end   = _ende_child_ptr[ende_idx + 1];
-    for (uint32_t jj = start; jj < end; jj++) {
-      uint32_t child_ecls = _ende_child[jj];
-      if (!visited_eclasses[child_ecls]) {
-        visited_eclasses[child_ecls] = true;
-        q.push(child_ecls);
+      if (!picked_endes[chd]) {
+        picked_endes[chd] = true;
+        q.push(chd);
       }
     }
   }
+
+  for (uint32_t u = 0; u < _num_ende; ++u) {
+    for (uint32_t v : _adj[u]) {
+      _indegree[v]++;
+      _inv_indegree[u]++;
+    }
+  }  
+
 
 #ifdef PRINT_LOG
   printf("\nActivated enodes in DAG traversal:\n");
@@ -420,6 +454,14 @@ double G_EXT::_compute_dag_cost(
              i, _ende_ecls[i], _ende_cost[i]);
     }
   }
+  printf("_adj:\n");
+  _print_adj(_adj);
+
+  printf("\n_inv_adj:\n");
+  _print_adj(_inv_adj);
+  printf("\n");
+  _print_degree(true, picked_endes);  
+  _print_degree(false, picked_endes);  
 #endif
   return dag_ret;
 }
@@ -666,8 +708,6 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   #ifdef PRINT_LOG
      printf("\n\n============================== START TO _reconstruct_graph... ==============================\n");
   #endif
-  // Construct init _indegree and _inv_indegree
-  _construct_deg(picked_endes, cost_of_ende);
 
   bool updated = true; 
   std::vector<int> level;
@@ -677,6 +717,25 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     uint32_t acc_itr = 0;
   #endif
 
+  uint32_t bibi = 0;
+  for (uint32_t i = 0; i < picked_endes.size(); i++) {
+    if (picked_endes[i]) {
+      bibi++;
+    }
+  }
+  _top_down_levelize(picked_endes, level);
+  // _print_levelization(true, level, picked_endes);
+  uint32_t clr = _clear_redundant_endes(picked_endes, level);
+  if (bibi == clr) {
+    printf("Success, bibi = clr = %u\n", clr);
+  } else {
+    printf("Failo, bibi = %u, clr = %u\n", bibi, clr);
+  }
+  if (bibi != clr) {
+    exit(1);
+  }
+
+  
   while(updated) {
     #ifdef PRINT_LOG
       printf("acc_itr = %u, _max_level = %d\n", acc_itr, _max_level); 
@@ -724,46 +783,12 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   
   // Clear redundant enodes
   std::vector<bool> fin_picked_endes;
-  _clear_redundant_endes(picked_endes, level);
-}
-
-void G_EXT::_construct_deg(const std::vector<bool>& picked_endes,
-                          const std::vector<double>& cost_of_ende) 
-{
-#ifdef PRINT_LOG 
-  printf("\nInside G_EXT::_construct_deg()\nThis is the initial version of degs\n");
-#endif
-
-  _indegree.resize(_num_ende, 0);
-  _inv_indegree.resize(_num_ende, 0);
-  _adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-  _inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    if (!picked_endes[ende]) continue;
-
-    for (uint32_t chd_ende : _global_adj[ende]) {
-      if (!picked_endes[chd_ende]) continue;
-      // Note: if cost_of_ende[ende] == cost_of_ende[chd_ende] means that:
-      // Both enodes are selected. However, there is no relationship between them (i.e., no edge can be added).
-      bool a = cost_of_ende[chd_ende] < cost_of_ende[ende]; // from enode should have larger cost
-      uint32_t fm_ende = (a) ? (ende) : (chd_ende);
-      uint32_t to_ende = (a) ? (chd_ende) : (ende);
-      _indegree[to_ende]++;
-      _inv_indegree[fm_ende]++;
-      _adj[fm_ende].insert(to_ende);
-      _inv_adj[to_ende].insert(fm_ende);
-    }
+  uint32_t clr2 = _clear_redundant_endes(picked_endes, level);
+  printf("After removing redundant enodes: _max_level = %d, clr2 = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
+          _max_level, clr2, _num_ende, ((double)clr2/(double)_num_ende)*100);   
+  if (clr2 < bibi) {
+    exit(1);
   }
-
-#ifdef PRINT_LOG
-  _print_degree(true, picked_endes);
-  _print_degree(false, picked_endes);
-
-  printf("_adj mapping (ende Id -> ende Id):\n");
-  _print_adj(_adj);
-  printf("_inv_adj mapping (ende Id -> ende Id):\n");
-  _print_adj(_inv_adj);  
-#endif  
 }
 
 void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes, 
@@ -1036,66 +1061,7 @@ bool G_EXT::_insertion(const bool is_td,
   return update;
 }
 
-// void G_EXT::_BFS2(const bool is_td, std::vector<uint32_t>& deg, 
-//                 std::vector<bool>& picked_endes,
-//                 const std::vector<bool>& is_start_ende,
-//                 const std::vector<std::unordered_set<uint32_t>>& adj,
-//                 std::vector<int>& level,
-//                 std::vector<bool>& visited)
-// {
-// #ifdef PRINT_LOG
-//   printf("\nInside G_EXT::_BFS2()\n");
-// #endif 
-
-//   // init queue (roots || leaves)
-//   std::queue<uint32_t> q;
-//   for (uint32_t ende = 0; ende < _num_ende; ende++) {
-//     if ((deg[ende] == 0) && picked_endes[ende] && is_start_ende[ende]) {
-//       q.push(ende);
-//       #ifdef PRINT_LOG  
-//         printf("  Queue init push in enode %u\n", ende);
-//       #endif      
-//     }
-//   } 
-//   #ifdef PRINT_LOG  
-//     printf("\n");
-//   #endif  
-
-//   // BFS: top-down levelization 
-//   int cur_level = 0;
-//   while (!q.empty()) {
-//     size_t layer = q.size();
-//     for (size_t t = 0; t < layer; ++t) {
-//       uint32_t u = q.front(); q.pop();
-//       level[u] = cur_level;
-//       visited[u] = true;
-//       #ifdef PRINT_LOG
-//         printf("  Processing enode %u\n", u);
-//       #endif      
-//       for (uint32_t v : adj[u]) {
-//         if (!picked_endes[v]) continue;
-//         #ifdef PRINT_LOG
-//           printf("   child enode %u, with deg[%u] = %u\n", v, v, deg[v]); 
-//         #endif        
-//         if (deg[v] > 0 && --deg[v] == 0) {
-//           q.push(v);
-//           #ifdef PRINT_LOG
-//             printf("    Push enode %u (indegree->0)\n", v);
-//           #endif          
-//         }
-//       }
-//     }
-//     ++cur_level;
-//   }
-//   // update _max_level
-//   _max_level = cur_level; 
-
-// #ifdef PRINT_LOG
-//   printf("_max_level = %d, cur_level = %d\n", _max_level, cur_level); 
-// #endif
-// }
-
-void G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes,
+uint32_t G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes,
                                   std::vector<int>& level) 
 {
 #ifdef PRINT_LOG
@@ -1117,36 +1083,42 @@ void G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes,
 
 #ifdef PRINT_LOG
   printf("r_roots: ");
-  for (uint32_t r = 0; r < r_roots.size(); r++) {
-    if (r_roots[r] && picked_endes[r]) {
+  for (uint32_t r = 0; r < roots.size(); r++) {
+    if (picked_endes[r]) {
       printf("%u, ", r); 
     }
   } printf("\n"); 
 
   printf("r_leavs: ");
-  for (uint32_t r = 0; r < r_leavs.size(); r++) {
-    if (r_leavs[r] && picked_endes[r]) {
+  for (uint32_t r = 0; r < leaves.size(); r++) {
+    if (picked_endes[r]) {
       printf("%u, ", r); 
     }
   } printf("\n");   
 #endif 
 
+
+  // printf("in_subgraph: "); 
   std::vector<bool> in_subgraph = get_nodes_in_subgraph(roots, leaves, _adj, _inv_adj, picked_endes);
   uint32_t acc = 0; 
   for (uint32_t i = 0; i < in_subgraph.size(); i++) {
     if (in_subgraph[i]) {
       acc++; 
+      // printf("%u, ", i);
     }
   }
-  printf("After removing redundant enodes: _max_level = %d, acc = %lu, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
-          _max_level, acc, _num_ende, ((double)acc/(double)_num_ende)*100);   
-  // printf("enodes in subgraph:  ");
-  // for (uint32_t ende = 0; ende < in_subgraph.size(); ende++) {
-  //   if (in_subgraph[ende]) {
-  //     printf("%u, ", ende);
-  //   }
-  // } 
   // printf("\n"); 
+
+#ifdef PRINT_LOG
+  printf("enodes in subgraph:  ");
+  for (uint32_t ende = 0; ende < in_subgraph.size(); ende++) {
+    if (in_subgraph[ende]) {
+      printf("%u, ", ende);
+    }
+  } 
+  printf("\n"); 
+#endif
+  return acc;
 }
 
 void G_EXT::mark_reachable(const std::vector<uint32_t>& starts,

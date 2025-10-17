@@ -113,7 +113,8 @@ private:
                                             std::vector<uint32_t>& best_ende_of_ecls,
                                             std::vector<bool>& picked_endes); 
   double _compute_dag_cost(const std::vector<uint32_t>& best_ende_of_ecls,
-                          std::vector<bool>& picked_endes);
+                          std::vector<bool>& picked_endes,
+                          std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
   std::pair<double, double> _gpu_best_tree();
   /* DAG level relxation */
   void _reconstruct_graph(std::vector<double>& cost_of_ecls,
@@ -136,7 +137,7 @@ private:
   bool _insertion(const bool is_td, 
                   std::vector<bool>& picked_endes,
                   std::vector<int>& level);
-  void _clear_redundant_endes(std::vector<bool>& picked_endes,
+  uint32_t _clear_redundant_endes(std::vector<bool>& picked_endes,
                               std::vector<int>& level);
     void _BFS2(const bool is_td, std::vector<uint32_t>& deg, 
               std::vector<bool>& picked_endes,
