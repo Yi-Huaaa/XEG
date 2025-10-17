@@ -745,7 +745,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     _bottom_up_levelize(picked_endes, level);
     bool tp = _insertion(true, picked_endes, level);
       #ifdef PRINT_LOG
-        std::cout << "_top_down_insertion: updated? " << updated <<"\n\n"; 
+        std::cout << "_top_down_insertion: updated? " << tp <<"\n\n"; 
         printf("1: _max_level = %d\n", _max_level); 
       #endif
     // break;
@@ -755,15 +755,16 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     _top_down_levelize(picked_endes, level);
     bool bu = _insertion(false, picked_endes, level);
       #ifdef PRINT_LOG
-        std::cout << "_bottom_up_insertion: updated? " << updated <<"\n\n"; 
+        std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
         printf("2: _max_level = %d\n", _max_level); 
       #endif
+   
+    updated = tp || bu; 
     
       #ifdef PRINT_LOG
         std::cout << "Get into while loop again? " << updated << "\n==========================================\n"; 
         acc_itr++;
       #endif
-    updated = tp || bu; 
   }
   #ifdef PRINT_LOG
     printf("3: _max_level = %d, acc_itr = %u\n", _max_level, acc_itr); 
@@ -1084,15 +1085,15 @@ uint32_t G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes,
 #ifdef PRINT_LOG
   printf("r_roots: ");
   for (uint32_t r = 0; r < roots.size(); r++) {
-    if (picked_endes[r]) {
-      printf("%u, ", r); 
+    if (picked_endes[roots[r]]) {
+      printf("%u, ", roots[r]); 
     }
   } printf("\n"); 
 
   printf("r_leavs: ");
   for (uint32_t r = 0; r < leaves.size(); r++) {
-    if (picked_endes[r]) {
-      printf("%u, ", r); 
+    if (picked_endes[leaves[r]]) {
+      printf("%u, ", leaves[r]); 
     }
   } printf("\n");   
 #endif 
