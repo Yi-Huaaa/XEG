@@ -55,7 +55,7 @@ public:
     std::vector<double> cost_of_ende; // Final cost of each enode
     std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
     std::vector<bool> picked_endes;
-    std::chrono::duration<double> duration, duration1;
+    std::chrono::duration<double> duration, duration1, duration2;
     auto start = std::chrono::steady_clock::now();
       auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
 
@@ -72,8 +72,9 @@ public:
     duration1 = end - start;
     std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration1.count()) * 1000, 0.01) << " (ms)\n";
     
-    // double cpu_dag_refine = _cpu_dag_refinement(cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
-
+    double cpu_dag_refine = _cpu_dag_refinement();
+    printf("CPU RESULTS: cpu_dag_refine = %.2lf\n", cpu_dag_refine);
+    std::cout << "CPU DAG Refinement Runtime: " << round_to((duration2.count()) * 1000, 0.01) << " (ms)\n";
 
     // // GPU version
     // float gpuTime = 0.;
@@ -142,12 +143,6 @@ private:
                   std::vector<bool>& picked_endes,
                   std::vector<int>& level);
   void _clear_redundant_endes(std::vector<bool>& picked_endes);
-    void _BFS2(const bool is_td, std::vector<uint32_t>& deg, 
-              std::vector<bool>& picked_endes,
-              const std::vector<bool>& is_start_ende,
-              const std::vector<std::unordered_set<uint32_t>>& adj,
-              std::vector<int>& level,
-              std::vector<bool>& visited);
     void mark_reachable(const std::vector<uint32_t>& starts,
                       const std::vector<std::unordered_set<uint32_t>>& adj,
                       std::vector<bool>& visited,
@@ -158,6 +153,7 @@ private:
                 const std::vector<std::unordered_set<uint32_t>>& adj,
                 const std::vector<std::unordered_set<uint32_t>>& inv_adj,
                 const std::vector<bool>& picked_endes);
+  double _cpu_dag_refinement();
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,

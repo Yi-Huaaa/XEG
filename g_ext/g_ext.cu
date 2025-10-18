@@ -1,6 +1,7 @@
 #include "g_ext.cuh"
 
-#define PRINT_LOG
+// #define PRINT_LOG
+#define BIBI_CHECK
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -678,6 +679,16 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   printf("\nConstruct _global_adj, _global_inv_adj :\n"); 
 #endif
 
+#ifdef BIBI_CHECK
+  std::vector<bool> bibi_picked_endes_0 = picked_endes;
+  uint32_t bibi_acc_0 = 0;
+  for (uint32_t i = 0; i < picked_endes.size(); i++) {
+    if (picked_endes[i]) {
+      bibi_acc_0++;
+    }
+  }
+#endif
+
   // Construct _global_adj, _global_inv_adj --> There maybe cycle inside _global_adj and _global_inv_adj
   _global_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
   _global_inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
@@ -733,17 +744,16 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     #endif
   }
 
-  // debug starts
-  uint32_t extend_acc = 0;
+#ifdef BIBI_CHECK
+  uint32_t bibi_acc_1 = 0;
   for (uint32_t i = 0; i < picked_endes.size(); i++) {
-    if (picked_endes[i]) extend_acc++; 
+    if (picked_endes[i]) {
+      bibi_acc_1++;
+    }
   }
-  
-#ifdef PRINT_LOG
   printf("Successfully ends, _max_level = %d, acc = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
-          _max_level, extend_acc, _num_ende, ((double)extend_acc/(double)_num_ende)*100); 
-#endif
-  // debug ends
+          _max_level, bibi_acc_1, _num_ende, ((double)bibi_acc_1/(double)_num_ende)*100); 
+#endif  
 
   // Clear redundant enodes
   _clear_redundant_endes(picked_endes);
@@ -775,6 +785,24 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   }
   printf("\n"); 
 #endif
+#ifdef BIBI_CHECK
+  uint32_t bibi_acc_2 = 0;
+  for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
+    if (_in_subgraph[i]) {
+      bibi_acc_2++;
+    }
+  }
+  printf("After removing redundant enodes: _max_level = %d, acc = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
+          _max_level, bibi_acc_2, _num_ende, ((double)bibi_acc_2/(double)_num_ende)*100); 
+  MY_CHECK(bibi_acc_0 <= bibi_acc_1, "bibi_acc_0 <= bibi_acc_1");
+  MY_CHECK(bibi_acc_2 <= bibi_acc_1, "bibi_acc_2 <= bibi_acc_1");
+  MY_CHECK(bibi_acc_0 <= bibi_acc_2, "bibi_acc_0 <= bibi_acc_2");
+  for (uint32_t i = 0; i < bibi_picked_endes_0.size(); i++) {
+    if (bibi_picked_endes_0[i]) {
+      MY_CHECK(_in_subgraph[i] == bibi_picked_endes_0[i], "_in_subgraph[i] == bibi_picked_endes_0[i]");
+    }
+  }
+#endif  
 }
 
 void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes, 
@@ -1091,15 +1119,7 @@ void G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes)
       printf("%u, ", ende);
     }
   } 
-  printf("\n"); 
-  uint32_t acc = 0; 
-  for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
-    if (_in_subgraph[i]) {
-      acc++; 
-    }
-  }  
-  printf("After removing redundant enodes: _max_level = %d, acc = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
-          _max_level, acc, _num_ende, ((double)acc/(double)_num_ende)*100);   
+  printf("\n");  
 #endif
 }
 
@@ -1150,10 +1170,21 @@ void G_EXT::get_nodes_in_subgraph(
   }
 }
 
-// double G_EXT::_cpu_dag_refinement() 
-// {
-  
-// }
+double G_EXT::_cpu_dag_refinement() 
+{
+#ifdef PRINT_LOG
+  printf("\nInside G_EXT::_cpu_dag_refinement()\n"); 
+#endif
+  // lambda
+  auto get_idx = [&](uint32_t a, uint32_t b) -> uint32_t { return a * _num_ecls + b;};
+
+  std::vector<uint32_t> path_record_table; 
+  path_record_table.resize(_num_ende*_num_ecls, 0);
+
+
+
+  return 0.0; 
+}
 
 
 
