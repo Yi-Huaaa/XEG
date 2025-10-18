@@ -55,20 +55,24 @@ public:
     std::vector<double> cost_of_ende; // Final cost of each enode
     std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
     std::vector<bool> picked_endes;
-    std::chrono::duration<double> duration;
+    std::chrono::duration<double> duration, duration1;
     auto start = std::chrono::steady_clock::now();
       auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
-      // double cpu_dag_refine = _cpu_dag_refinement(cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
 
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    double cpu_dag_refine = 0.;
-    printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf, cpu_dag_refine = %.2lf\n", 
-              best_tree_cost_cpu, dag_cost_cpu, cpu_dag_refine);
+    printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
+              best_tree_cost_cpu, dag_cost_cpu);
 
+    start = std::chrono::steady_clock::now();
     _reconstruct_graph(cost_of_ecls, cost_of_ende, 
                       best_ende_of_ecls, picked_endes); 
+    end = std::chrono::steady_clock::now();
+    duration1 = end - start;
+    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration1.count()) * 1000, 0.01) << " (ms)\n";
+    
+    // double cpu_dag_refine = _cpu_dag_refinement(cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
 
 
     // // GPU version
@@ -137,8 +141,7 @@ private:
   bool _insertion(const bool is_td, 
                   std::vector<bool>& picked_endes,
                   std::vector<int>& level);
-  uint32_t _clear_redundant_endes(std::vector<bool>& picked_endes,
-                              std::vector<int>& level);
+  void _clear_redundant_endes(std::vector<bool>& picked_endes);
     void _BFS2(const bool is_td, std::vector<uint32_t>& deg, 
               std::vector<bool>& picked_endes,
               const std::vector<bool>& is_start_ende,
@@ -149,12 +152,12 @@ private:
                       const std::vector<std::unordered_set<uint32_t>>& adj,
                       std::vector<bool>& visited,
                       const std::vector<bool>& picked_endes);
-    std::vector<bool> get_nodes_in_subgraph(
-                      const std::vector<uint32_t>& roots,
-                      const std::vector<uint32_t>& leaves,
-                      const std::vector<std::unordered_set<uint32_t>>& adj,
-                      const std::vector<std::unordered_set<uint32_t>>& inv_adj,
-                      const std::vector<bool>& picked_endes);
+    void get_nodes_in_subgraph(
+                const std::vector<uint32_t>& roots,
+                const std::vector<uint32_t>& leaves,
+                const std::vector<std::unordered_set<uint32_t>>& adj,
+                const std::vector<std::unordered_set<uint32_t>>& inv_adj,
+                const std::vector<bool>& picked_endes);
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
@@ -183,11 +186,15 @@ private:
   std::vector<uint32_t> _ecls_parnt_ptr; // eclass point to its parent enode
   std::vector<std::unordered_set<uint32_t>> _global_adj;
   std::vector<std::unordered_set<uint32_t>> _global_inv_adj;
+  // For new graph G
   std::vector<std::unordered_set<uint32_t>> _adj; // store edges of enodes on new G
   std::vector<std::unordered_set<uint32_t>> _inv_adj; // store edges of enodes on new G
   std::vector<uint32_t> _indegree;
   std::vector<uint32_t> _inv_indegree;
   int _max_level = -1;  // init as -1
+  std::vector<bool> _in_subgraph;
+  std::vector<int> _level;
+  std::vector<std::vector<uint32_t>> _ende_in_level; 
 
 
   // Print function

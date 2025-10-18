@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-// #define PRINT_LOG
+#define PRINT_LOG
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -656,7 +656,6 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   return std::make_pair(tree_ret, dag_ret);
 }
 
-
 void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
                                 std::vector<double>& cost_of_ende,
                                 std::vector<uint32_t>& best_ende_of_ecls,
@@ -703,93 +702,79 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   _print_adj(_global_adj);
   printf("_global_inv_adj mapping (ende Id -> ende Id):\n");
   _print_adj(_global_inv_adj);
+  printf("\n\n============================== START TO _reconstruct_graph... ==============================\n");
 #endif
-
-  #ifdef PRINT_LOG
-     printf("\n\n============================== START TO _reconstruct_graph... ==============================\n");
-  #endif
 
   bool updated = true; 
   std::vector<int> level;
   level.resize(_num_ende, -1); // init, needed
-  #ifdef PRINT_LOG
-    printf("0: _max_level = %d\n", _max_level); 
-    uint32_t acc_itr = 0;
-  #endif
 
-  uint32_t bibi = 0;
-  for (uint32_t i = 0; i < picked_endes.size(); i++) {
-    if (picked_endes[i]) {
-      bibi++;
-    }
-  }
-  _top_down_levelize(picked_endes, level);
-  // _print_levelization(true, level, picked_endes);
-  uint32_t clr = _clear_redundant_endes(picked_endes, level);
-  if (bibi == clr) {
-    printf("Success, bibi = clr = %u\n", clr);
-  } else {
-    printf("Failo, bibi = %u, clr = %u\n", bibi, clr);
-  }
-  if (bibi != clr) {
-    exit(1);
-  }
-
-  
   while(updated) {
-    #ifdef PRINT_LOG
-      printf("acc_itr = %u, _max_level = %d\n", acc_itr, _max_level); 
-    #endif    
     // bottom-up levelization && top-down insertion
     _update_deg(updated, picked_endes, level); 
     _bottom_up_levelize(picked_endes, level);
     bool tp = _insertion(true, picked_endes, level);
-      #ifdef PRINT_LOG
-        std::cout << "_top_down_insertion: updated? " << tp <<"\n\n"; 
-        printf("1: _max_level = %d\n", _max_level); 
-      #endif
-    // break;
+    #ifdef PRINT_LOG
+      std::cout << "_top_down_insertion: updated? " << tp <<"\n\n"; 
+    #endif
     
     // top-down levelization && bottom-up insertion
     _update_deg(tp, picked_endes, level); 
     _top_down_levelize(picked_endes, level);
     bool bu = _insertion(false, picked_endes, level);
-      #ifdef PRINT_LOG
-        std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
-        printf("2: _max_level = %d\n", _max_level); 
-      #endif
+    #ifdef PRINT_LOG
+      std::cout << "_bottom_up_insertion: updated? " << bu <<"\n\n"; 
+    #endif
    
     updated = tp || bu; 
     
-      #ifdef PRINT_LOG
-        std::cout << "Get into while loop again? " << updated << "\n==========================================\n"; 
-        acc_itr++;
-      #endif
+    #ifdef PRINT_LOG
+      std::cout << "Get into while loop again? " << updated << "\n==========================================\n"; 
+    #endif
   }
-  #ifdef PRINT_LOG
-    printf("3: _max_level = %d, acc_itr = %u\n", _max_level, acc_itr); 
-  #endif
-
 
   // debug starts
-  uint32_t acc = 0;
+  uint32_t extend_acc = 0;
   for (uint32_t i = 0; i < picked_endes.size(); i++) {
-    if (picked_endes[i]) acc++; 
+    if (picked_endes[i]) extend_acc++; 
   }
-  printf("Successfully ends, _max_level = %d, acc = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
-          _max_level, acc, _num_ende, ((double)acc/(double)_num_ende)*100); 
-  // _print_levelization(true, level, picked_endes);
-  // _print_adj(_adj);
-  // // debug ends
   
+#ifdef PRINT_LOG
+  printf("Successfully ends, _max_level = %d, acc = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
+          _max_level, extend_acc, _num_ende, ((double)extend_acc/(double)_num_ende)*100); 
+#endif
+  // debug ends
+
   // Clear redundant enodes
-  std::vector<bool> fin_picked_endes;
-  uint32_t clr2 = _clear_redundant_endes(picked_endes, level);
-  printf("After removing redundant enodes: _max_level = %d, clr2 = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
-          _max_level, clr2, _num_ende, ((double)clr2/(double)_num_ende)*100);   
-  if (clr2 < bibi) {
-    exit(1);
+  _clear_redundant_endes(picked_endes);
+
+  // Levelization the final graph
+  _update_deg(true, _in_subgraph, level); 
+  _top_down_levelize(_in_subgraph, level);
+  _ende_in_level.resize(_max_level, std::vector<uint32_t>());
+  for (uint32_t i = 0; i < level.size(); i++) {
+    if (!_in_subgraph[i]) continue;
+    int lvl = level[i]; 
+    _ende_in_level[lvl].push_back(i); 
   }
+
+  _level = level;
+
+#ifdef PRINT_LOG
+  std::cout << "BIBIBI CHECK: \n";
+  printf("=== Levelization result ===\n");
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if (_level[ende] >= 0)
+      printf("ENode %u -> _level %d\n", ende, _level[ende]);
+  }  
+  for (uint32_t lvl = 0; lvl < _ende_in_level.size(); lvl++) {
+    printf("level %u: ", lvl); 
+    for (uint32_t ende = 0; ende < _ende_in_level[lvl].size(); ende++) {
+      printf("%u, ", _ende_in_level[lvl][ende]); 
+    } printf("\n"); 
+  }
+  printf("\n"); 
+#endif
 }
 
 void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes, 
@@ -1062,8 +1047,7 @@ bool G_EXT::_insertion(const bool is_td,
   return update;
 }
 
-uint32_t G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes,
-                                  std::vector<int>& level) 
+void G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes) 
 {
 #ifdef PRINT_LOG
   printf("Insides G_EXT::_clear_redundant_endes() \n");
@@ -1098,28 +1082,25 @@ uint32_t G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes,
   } printf("\n");   
 #endif 
 
-
-  // printf("in_subgraph: "); 
-  std::vector<bool> in_subgraph = get_nodes_in_subgraph(roots, leaves, _adj, _inv_adj, picked_endes);
-  uint32_t acc = 0; 
-  for (uint32_t i = 0; i < in_subgraph.size(); i++) {
-    if (in_subgraph[i]) {
-      acc++; 
-      // printf("%u, ", i);
-    }
-  }
-  // printf("\n"); 
+  get_nodes_in_subgraph(roots, leaves, _adj, _inv_adj, picked_endes);
 
 #ifdef PRINT_LOG
   printf("enodes in subgraph:  ");
-  for (uint32_t ende = 0; ende < in_subgraph.size(); ende++) {
-    if (in_subgraph[ende]) {
+  for (uint32_t ende = 0; ende < _in_subgraph.size(); ende++) {
+    if (_in_subgraph[ende]) {
       printf("%u, ", ende);
     }
   } 
   printf("\n"); 
+  uint32_t acc = 0; 
+  for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
+    if (_in_subgraph[i]) {
+      acc++; 
+    }
+  }  
+  printf("After removing redundant enodes: _max_level = %d, acc = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
+          _max_level, acc, _num_ende, ((double)acc/(double)_num_ende)*100);   
 #endif
-  return acc;
 }
 
 void G_EXT::mark_reachable(const std::vector<uint32_t>& starts,
@@ -1145,7 +1126,7 @@ void G_EXT::mark_reachable(const std::vector<uint32_t>& starts,
   }
 }
 
-std::vector<bool> G_EXT::get_nodes_in_subgraph(
+void G_EXT::get_nodes_in_subgraph(
     const std::vector<uint32_t>& roots,
     const std::vector<uint32_t>& leaves,
     const std::vector<std::unordered_set<uint32_t>>& adj,
@@ -1155,7 +1136,7 @@ std::vector<bool> G_EXT::get_nodes_in_subgraph(
   size_t N = adj.size();
   std::vector<bool> from_roots(N, false);
   std::vector<bool> to_leaves(N, false);
-  std::vector<bool> in_subgraph(N, false);
+  _in_subgraph.resize(N, false);
 
   // 1. reachable from roots
   mark_reachable(roots, adj, from_roots, picked_endes);
@@ -1164,13 +1145,15 @@ std::vector<bool> G_EXT::get_nodes_in_subgraph(
   mark_reachable(leaves, inv_adj, to_leaves, picked_endes);
 
   // 3. intersection
-  for (size_t i = 0; i < N; ++i)
-    in_subgraph[i] = from_roots[i] && to_leaves[i];
-
-  return in_subgraph;
+  for (size_t i = 0; i < N; ++i) {
+    _in_subgraph[i] = from_roots[i] && to_leaves[i];
+  }
 }
 
-
+// double G_EXT::_cpu_dag_refinement() 
+// {
+  
+// }
 
 
 
