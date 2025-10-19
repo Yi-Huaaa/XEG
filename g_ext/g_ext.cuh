@@ -190,7 +190,7 @@ private:
   int _max_level = -1;  // init as -1
   std::vector<bool> _in_subgraph;
   std::vector<int> _level;
-  std::vector<std::vector<uint32_t>> _ende_in_level; 
+  std::vector<std::vector<uint32_t>> _ende_in_level;
 
 
   // Print function

@@ -1176,10 +1176,48 @@ double G_EXT::_cpu_dag_refinement()
   printf("\nInside G_EXT::_cpu_dag_refinement()\n"); 
 #endif
   // lambda
-  auto get_idx = [&](uint32_t a, uint32_t b) -> uint32_t { return a * _num_ecls + b;};
+  auto get_idx = [&](uint32_t a, uint32_t b) -> uint32_t { return a * _num_ecls + b; };
 
-  std::vector<uint32_t> path_record_table; 
-  path_record_table.resize(_num_ende*_num_ecls, 0);
+  std::vector<bool> can_use = _in_subgraph;
+  std::vector<uint32_t> path_record_table;
+  std::vector<uint32_t> cost_of_ecls;
+  std::vector<uint32_t> cost_of_ende;
+  path_record_table.resize(_num_ende*_num_ecls, UINT32_MAX);
+  cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
+  cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
+  for (uint32_t lvl = 0; lvl < _ende_in_level.size(); lvl++) {
+    for (uint32_t e = 0; e < _ende_in_level[lvl].size(); e++) {
+      uint32_t ende = _ende_in_level[lvl][e];
+      const uint32_t which_ecls = _ende_ecls[ende];
+      // Check if the enode is valid (valid: all children are there)
+      bool valid = true;
+      for (uint32_t jj = _ende_child_ptr[ende]; jj < _ende_child_ptr[ende]; jj++) {
+        const uint32_t ende_ecls = _ende_child[jj];
+        bool inner_valid = false; 
+        for (uint32_t jj_ende : _ecls_its_ende[ende_ecls]) {
+          if (_in_subgraph[jj_ende]) {
+            inner_valid = true;
+            break;
+          }
+        }
+        valid &= inner_valid;
+        if (!valid) break;
+      }
+      // Get cost of enode
+      double aaaa = 0.0;
+      for () {
+        TODO here
+      }      
+      // Update _in_subgraph
+      _in_subgraph[ende] = valid;
+      // Update cost_of_ende
+      cost_of_ende = (valid) ? (aaaa) : (std::numeric_limits<double>::infinity());
+      // Update cost_of_ecls
+      cost_of_ecls[which_ecls] = (valid && (cost_of_ecls[which_ecls] < aaaa)) 
+                                ? (aaaa) 
+                                : (cost_of_ecls[which_ecls]);
+    }
+  }
 
 
 
