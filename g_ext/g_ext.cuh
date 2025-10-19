@@ -65,6 +65,13 @@ public:
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
               best_tree_cost_cpu, dag_cost_cpu);
 
+
+    // if (ILP_solver) {
+    //   _cpsat_solver(ILP_time_limit, 
+    //                 cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
+    // }
+
+
     start = std::chrono::steady_clock::now();
     _reconstruct_graph(cost_of_ecls, cost_of_ende, 
                       best_ende_of_ecls, picked_endes); 
@@ -89,11 +96,6 @@ public:
     // printf("GPU Runtime: %.2f (ms)\n", gpuTime);
     // printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
     //           best_tree_cost_gpu, dag_cost_gpu);
-
-    // if (ILP_solver) {
-    //   _cpsat_solver(ILP_time_limit, 
-    //                 cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
-    // }
 
   }
 

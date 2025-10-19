@@ -716,6 +716,10 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   printf("\n\n============================== START TO _reconstruct_graph... ==============================\n");
 #endif
 
+// TODO: 
+  // // Add more roots and leaves enodes
+
+
   bool updated = true; 
   std::vector<int> level;
   level.resize(_num_ende, -1); // init, needed
@@ -1170,59 +1174,156 @@ void G_EXT::get_nodes_in_subgraph(
   }
 }
 
+
+
+// void G_EXT::_union_vector(std::vector<uint32_t>& input_a, std::vector<uint32_t>& input_b
+//                           std::vector<uint32_t>& output) 
+// {
+//   TODO: 
+//   union input_a and input_b
+//   write the answer to output
+// }
+
+void G_EXT::_dfs_combine_enodes(
+    uint32_t ende,
+    size_t idx,
+    const std::vector<std::vector<uint32_t>>& cand_by_eclass,
+    const std::vector<std::vector<uint32_t>>& path_record_table,
+    std::unordered_set<uint32_t> cur_set,
+    double cur_cost,
+    double& best_cost,
+    std::vector<uint32_t>& best_union)
+{
+  // 終止條件：已選完所有 child eclass
+  if (idx == cand_by_eclass.size()) {
+    if (cur_cost < best_cost) {
+      best_cost = cur_cost;
+      best_union.assign(cur_set.begin(), cur_set.end());
+    }
+    return;
+  }
+
+  // 對當前 eclass 嘗試所有候選 enode
+  for (uint32_t child_ende : cand_by_eclass[idx]) {
+    auto next_set = cur_set;
+    for (uint32_t v : path_record_table[child_ende])
+      next_set.insert(v);
+    next_set.insert(child_ende);
+
+    double next_cost = cur_cost + _ende_cost[child_ende];
+    _dfs_combine_enodes(
+      ende, idx + 1, cand_by_eclass, path_record_table,
+      _ende_cost, std::move(next_set), next_cost,
+      best_cost, best_union);
+  }
+}
+
 double G_EXT::_cpu_dag_refinement() 
 {
 #ifdef PRINT_LOG
   printf("\nInside G_EXT::_cpu_dag_refinement()\n"); 
 #endif
-  // lambda
-  auto get_idx = [&](uint32_t a, uint32_t b) -> uint32_t { return a * _num_ecls + b; };
 
-  std::vector<bool> can_use = _in_subgraph;
-  std::vector<uint32_t> path_record_table;
-  std::vector<uint32_t> cost_of_ecls;
-  std::vector<uint32_t> cost_of_ende;
-  path_record_table.resize(_num_ende*_num_ecls, UINT32_MAX);
-  cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
-  cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
-  for (uint32_t lvl = 0; lvl < _ende_in_level.size(); lvl++) {
+  auto get_idx = [&](uint32_t a, uint32_t b) -> uint32_t {
+    return a * _num_ecls + b;
+  };
+
+  std::vector<std::vector<uint32_t>> path_record_table(_num_ende); 
+  std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
+  std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
+
+  // === bottom-up traversal ===
+  for (int lvl = (int)_ende_in_level.size() - 1; lvl >= 0; --lvl) {
     for (uint32_t e = 0; e < _ende_in_level[lvl].size(); e++) {
       uint32_t ende = _ende_in_level[lvl][e];
-      const uint32_t which_ecls = _ende_ecls[ende];
-      // Check if the enode is valid (valid: all children are there)
-      bool valid = true;
-      for (uint32_t jj = _ende_child_ptr[ende]; jj < _ende_child_ptr[ende]; jj++) {
-        const uint32_t ende_ecls = _ende_child[jj];
-        bool inner_valid = false; 
-        for (uint32_t jj_ende : _ecls_its_ende[ende_ecls]) {
-          if (_in_subgraph[jj_ende]) {
-            inner_valid = true;
-            break;
+      uint32_t which_ecls = _ende_ecls[ende];
+
+      // Step 1. 找出所有 children eclass
+      std::vector<uint32_t> child_ecls;
+      for (uint32_t jj = _ende_child_ptr[ende]; jj < _ende_child_ptr[ende + 1]; ++jj) {
+        child_ecls.push_back(_ende_child[jj]);
+      }
+
+      // === leaf node ===
+      if (child_ecls.empty()) {
+        path_record_table[ende] = {ende};
+        cost_of_ende[ende] = _ende_cost[ende];
+        cost_of_ecls[which_ecls] = std::min(cost_of_ecls[which_ecls], cost_of_ende[ende]);
+        continue;
+      }
+
+      // Step 2. 收集每個 eclass 的候選 enode，並且檢查是否全部 valid
+      std::vector<std::vector<uint32_t>> cand_by_eclass;
+      bool all_have_valid = true;
+      for (uint32_t ce : child_ecls) {
+        std::vector<uint32_t> cands;
+        for (uint32_t cand : _ecls_its_ende[ce]) {
+          if (_in_subgraph[cand]) {  // 只考慮目前仍存在圖上的 enode
+            cands.push_back(cand);
           }
         }
-        valid &= inner_valid;
-        if (!valid) break;
+        if (cands.empty()) {
+          all_have_valid = false;
+          break;  // 提早中止，這個 eclass 沒任何 candidate
+        }
+        cand_by_eclass.push_back(std::move(cands));
       }
-      // Get cost of enode
-      double aaaa = 0.0;
-      for () {
-        TODO here
-      }      
-      // Update _in_subgraph
-      _in_subgraph[ende] = valid;
-      // Update cost_of_ende
-      cost_of_ende = (valid) ? (aaaa) : (std::numeric_limits<double>::infinity());
-      // Update cost_of_ecls
-      cost_of_ecls[which_ecls] = (valid && (cost_of_ecls[which_ecls] < aaaa)) 
-                                ? (aaaa) 
-                                : (cost_of_ecls[which_ecls]);
+
+      // 若有任何 child eclass 無合法 enode → 直接視為 invalid
+      if (!all_have_valid) {
+        #ifdef PRINT_LOG
+          printf("ende %u invalid (some child eclass empty)\n", ende);
+        #endif
+        _in_subgraph[ende] = false;
+        cost_of_ende[ende] = std::numeric_limits<double>::infinity();
+        continue;
+      }
+
+      // Step 3. 暴力搜尋最佳組合
+      double best_cost = std::numeric_limits<double>::infinity();
+      std::vector<uint32_t> best_union;
+
+      std::unordered_set<uint32_t> init;
+      init.insert(ende);
+
+      // 執行 DFS
+      _dfs_combine_enodes(
+        ende, 0, cand_by_eclass, path_record_table,
+        init, _ende_cost[ende],
+        best_cost, best_union);
+
+      // Step 4. 更新結果
+      path_record_table[ende] = best_union;
+      cost_of_ende[ende] = best_cost;
+      cost_of_ecls[which_ecls] = std::min(cost_of_ecls[which_ecls], best_cost);
+
+      #ifdef PRINT_LOG
+        printf("ende=%u (ecls=%u): best_cost=%.2f, path={", ende, which_ecls, best_cost);
+        for (uint32_t v : path_record_table[ende]) printf("%u,", v);
+        printf("}\n");
+      #endif
     }
   }
 
+  // === 最後組合 root eclass ===
+  std::unordered_set<uint32_t> global_union;
+  for (uint32_t rid : _root_eclass_id) {
+    for (uint32_t r_ende : _ecls_its_ende[rid]) {
+      if (!_in_subgraph[r_ende]) continue;
+      for (uint32_t v : path_record_table[r_ende]) global_union.insert(v);
+    }
+  }
 
+  double dag_cost = 0.0;
+  for (uint32_t v : global_union) dag_cost += _ende_cost[v];
 
-  return 0.0; 
+#ifdef PRINT_LOG
+  printf("\nTotal DAG cost = %.2f, total %zu enodes involved\n", dag_cost, global_union.size());
+#endif
+
+  return dag_cost;
 }
+
 
 
 
