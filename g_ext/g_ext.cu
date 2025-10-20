@@ -585,7 +585,7 @@ double G_EXT::_cpu_best_dag()
       uint32_t idx = ende*_num_ecls + ecls;
       printf("%u, ", PRT[idx]); 
     }
-    printf("\n"); 
+    printf("\n");
   }
 
   printf("\ncost_of_ecls:\n");
@@ -625,6 +625,30 @@ double G_EXT::_cpu_best_dag()
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
     dag_ret += cost_of_ecls[_root_eclass_id[r]];
   }
+
+
+  // bibibi test starts
+  std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
+  tmp[0] = 0;
+  uint32_t* prv = get_prv_vec(0);
+  uint32_t* prv2 = get_prv_vec(2);
+  uint32_t* prv6 = get_prv_vec(6);
+  bool succ = _union_vector(_num_ecls, tmp, prv2);
+  succ = _union_vector(_num_ecls, tmp, prv6);
+        
+  // Get dag cost and update prv
+  double acc_dag_cost = _get_dag_cost(tmp, prv);
+  cost_of_ende[0] = acc_dag_cost;
+  vec_updated[0] = true; 
+
+  printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
+  printf("\tprv: "); 
+  for (uint32_t i = 0; i < _num_ecls; i++) {
+    printf("%u, ", prv[i]);
+  } printf("\n");   
+  // bibibi test ends
+
+
                     
   return dag_ret;
 }
