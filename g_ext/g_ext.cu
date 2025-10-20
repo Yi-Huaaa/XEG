@@ -506,7 +506,7 @@ double G_EXT::_cpu_best_dag()
   std::vector<bool> picked_endes;
   std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
   std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
-  std::vector<uint32_t> best_ende_of_ecls(_num_ecls, 0);
+  std::vector<uint32_t> best_ende_of_ecls(_num_ecls, UINT32_MAX);
   std::vector<uint32_t> PRT(_num_ende*_num_ecls, UINT32_MAX); // path record table
   auto get_prv_vec = [&](uint32_t x) { return PRT.data() + x * _num_ecls; };
   std::vector<bool> vec_updated(_num_ende, false);
@@ -520,6 +520,7 @@ double G_EXT::_cpu_best_dag()
     h_update = false;
 
     for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
+      bool l_updated = false;
       printf("Handing enode = %u\n", t_idx);
       const uint32_t which_ecls = _ende_ecls[t_idx];
 
@@ -531,9 +532,16 @@ double G_EXT::_cpu_best_dag()
       uint32_t end   = _ende_child_ptr[t_idx+1];
       bool succ = true; 
       for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t* chd_prv = get_prv_vec(jj);
+        uint32_t chd_ecls = _ende_child[jj];
+        uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
+        printf("\tchildren eclass = %u (with chd_ende = %u)\n", chd_ecls, chd_ende);
+        if (chd_ende == UINT32_MAX) { 
+          succ = false;
+          break;
+        }
+        uint32_t* chd_prv = get_prv_vec(chd_ende);
         succ = _union_vector(_num_ecls, tmp, chd_prv);
-        succ &= vec_updated[jj]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
+        succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
         if (!succ) break;
       }
 
@@ -559,10 +567,16 @@ double G_EXT::_cpu_best_dag()
           h_update = true;
         }
       }
+      h_update |= l_updated;
     }
 
-    itr++; printf("itr = %u\n", itr);
-  }
+    itr++; 
+    printf("\ncost_of_ecls:\n");
+    for (size_t i = 0; i < cost_of_ecls.size(); i++) {
+      printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
+    }    
+    printf("itr = %u\n=================================\n", itr);
+  } // while
 
   printf("PRT:\n");
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
