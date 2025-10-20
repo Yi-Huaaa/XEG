@@ -319,13 +319,11 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
     {
       #pragma omp for
       for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
-        std::vector<uint32_t> picks;
         double acc_cost = tmp_ende_cost[t_idx];
         uint32_t start = _ende_child_ptr[t_idx];
         uint32_t end   = _ende_child_ptr[t_idx+1];
         for (uint32_t jj = start; jj < end; jj++) {
           acc_cost += cost_of_ecls[_ende_child[jj]];
-          picks.push_back(best_ende_of_ecls[_ende_child[jj]]);
         }
 
         cost_of_ende[t_idx] = (acc_cost < cost_of_ende[t_idx]) ? (acc_cost) : (cost_of_ende[t_idx]);
@@ -466,6 +464,166 @@ double G_EXT::_compute_dag_cost(
 #endif
   return dag_ret;
 }
+
+// BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY 
+
+bool G_EXT::_union_vector(const uint32_t len, std::vector<uint32_t>& va, const uint32_t* vb)
+{
+  for (uint32_t i = 0; i < len; ++i) {
+    if (va[i] == vb[i]) { // 他們可以是兩個都是同一個 enode || 兩個都是 UINT32_MAX (aka uninitialized) -> 可以合併
+      va[i] = va[i];
+    } else if (va[i] == UINT32_MAX && vb[i] != UINT32_MAX) { // va[i] uninitialized; vb[i] 有指定 value -> 可以合併
+      va[i] = vb[i]; 
+    } else if (va[i] != UINT32_MAX && vb[i] == UINT32_MAX) { // va[i] 有指定 value; vb[i] uninitialized -> 可以合併
+      va[i] = va[i];
+    } else { // va[i] 有指定 value; vb[i] 有指定 value; -> 不可以合併，合併失敗
+      return false; 
+    }
+  }
+  return true;
+}
+
+double G_EXT::_get_dag_cost(const std::vector<uint32_t>& vec, uint32_t* prv)
+{
+  double ret = 0.; 
+  for (uint32_t i = 0; i < vec.size(); i++) {
+    uint32_t ende = vec[i];
+    if (ende != UINT32_MAX) {
+      ret += _ende_cost[ende];
+    }
+    prv[i] = ende; 
+  }
+  return ret;
+}
+
+
+double G_EXT::_cpu_best_dag()
+{
+#ifdef PRINT_LOG
+  printf("Inside G_EXT::_cpu_best_dag()\n"); 
+#endif
+
+  std::vector<bool> picked_endes;
+  std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
+  std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
+  std::vector<uint32_t> best_ende_of_ecls(_num_ecls, 0);
+  std::vector<uint32_t> PRT(_num_ende*_num_ecls, UINT32_MAX); // path record table
+  auto get_prv_vec = [&](uint32_t x) { return PRT.data() + x * _num_ecls; };
+  std::vector<bool> vec_updated(_num_ende, false);
+
+  // CPU relaxation
+  bool h_update = true;
+ 
+  // 先用 single thread
+  uint32_t itr = 0; 
+  while (h_update) {
+    h_update = false;
+
+    for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
+      printf("Handing enode = %u\n", t_idx);
+      const uint32_t which_ecls = _ende_ecls[t_idx];
+
+      uint32_t* prv = get_prv_vec(t_idx);
+      std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
+      tmp[which_ecls] = t_idx;
+
+      uint32_t start = _ende_child_ptr[t_idx];
+      uint32_t end   = _ende_child_ptr[t_idx+1];
+      bool succ = true; 
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t* chd_prv = get_prv_vec(jj);
+        succ = _union_vector(_num_ecls, tmp, chd_prv);
+        succ &= vec_updated[jj]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
+        if (!succ) break;
+      }
+
+      if (succ) {
+        printf("\tende %u succ\n", t_idx);
+        
+        // Get dag cost and update prv
+        double acc_dag_cost = _get_dag_cost(tmp, prv);
+        cost_of_ende[t_idx] = acc_dag_cost;
+        vec_updated[t_idx] = true; 
+
+        printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
+        printf("\tprv: "); 
+        for (uint32_t i = 0; i < _num_ecls; i++) {
+          printf("%u, ", prv[i]);
+        } printf("\n"); 
+
+        // critical part
+        if (acc_dag_cost < cost_of_ecls[which_ecls]) {
+          
+          cost_of_ecls[which_ecls] = acc_dag_cost;
+          best_ende_of_ecls[which_ecls] = t_idx;
+          h_update = true;
+        }
+      }
+    }
+
+    itr++; printf("itr = %u\n", itr);
+  }
+
+  printf("PRT:\n");
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    printf("ende = %u: ", ende); 
+    for (uint32_t ecls = 0; ecls < _num_ecls; ecls++) {
+      uint32_t idx = ende*_num_ecls + ecls;
+      printf("%u, ", PRT[idx]); 
+    }
+    printf("\n"); 
+  }
+
+  printf("\ncost_of_ecls:\n");
+  for (size_t i = 0; i < cost_of_ecls.size(); i++) {
+    printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
+  }
+
+  printf("\ncost_of_ende:\n");
+  for (size_t i = 0; i < cost_of_ende.size(); i++) {
+    printf("  [%zu] = %.1f\n", i, cost_of_ende[i]);
+  }
+  printf("\n");  
+
+  printf("\nbest_ende_of_ecls:\n");
+  for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
+    printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
+  }
+  printf("\n");
+
+
+  // === Phase 2: reconstruct best picks ===
+  std::vector<std::vector<uint32_t>> ende_picked_by_ende(_num_ende);
+  for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
+    std::vector<uint32_t> picks;
+    uint32_t start = _ende_child_ptr[t_idx];
+    uint32_t end   = _ende_child_ptr[t_idx + 1];
+    picks.reserve(end - start);
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t chd_ecls = _ende_child[jj];
+      picks.push_back(best_ende_of_ecls[chd_ecls]);
+    }
+    ende_picked_by_ende[t_idx] = std::move(picks);
+  }
+
+  // Get best tree cost 
+  double dag_ret = 0.0; 
+  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
+    dag_ret += cost_of_ecls[_root_eclass_id[r]];
+  }
+                    
+  return dag_ret;
+}
+
+
+
+
+
+
+
+// BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY 
+
+
 
 
 __device__ float atomicMinFloat(float* addr, float val) {
@@ -1175,15 +1333,6 @@ void G_EXT::get_nodes_in_subgraph(
 }
 
 
-
-// void G_EXT::_union_vector(std::vector<uint32_t>& input_a, std::vector<uint32_t>& input_b
-//                           std::vector<uint32_t>& output) 
-// {
-//   TODO: 
-//   union input_a and input_b
-//   write the answer to output
-// }
-
 void G_EXT::_dfs_combine_enodes(
     uint32_t ende,
     size_t idx,
@@ -1213,7 +1362,7 @@ void G_EXT::_dfs_combine_enodes(
     double next_cost = cur_cost + _ende_cost[child_ende];
     _dfs_combine_enodes(
       ende, idx + 1, cand_by_eclass, path_record_table,
-      _ende_cost, std::move(next_set), next_cost,
+      std::move(next_set), next_cost,
       best_cost, best_union);
   }
 }
@@ -1231,6 +1380,8 @@ double G_EXT::_cpu_dag_refinement()
   std::vector<std::vector<uint32_t>> path_record_table(_num_ende); 
   std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
   std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
+  std::vector<uint32_t> best_ende_of_ecls(_num_ecls, 0);
+  
 
   // === bottom-up traversal ===
   for (int lvl = (int)_ende_in_level.size() - 1; lvl >= 0; --lvl) {
@@ -1295,6 +1446,9 @@ double G_EXT::_cpu_dag_refinement()
       // Step 4. 更新結果
       path_record_table[ende] = best_union;
       cost_of_ende[ende] = best_cost;
+      best_ende_of_ecls[which_ecls] = (cost_of_ecls[which_ecls] > best_cost) 
+                                      ? (ende) 
+                                      : (best_ende_of_ecls[which_ecls]);
       cost_of_ecls[which_ecls] = std::min(cost_of_ecls[which_ecls], best_cost);
 
       #ifdef PRINT_LOG
@@ -1307,19 +1461,26 @@ double G_EXT::_cpu_dag_refinement()
 
   // === 最後組合 root eclass ===
   std::unordered_set<uint32_t> global_union;
-  for (uint32_t rid : _root_eclass_id) {
-    for (uint32_t r_ende : _ecls_its_ende[rid]) {
-      if (!_in_subgraph[r_ende]) continue;
-      for (uint32_t v : path_record_table[r_ende]) global_union.insert(v);
-    }
+  std::vector<uint32_t> rr; 
+  rr.resize(_root_eclass_id.size());
+
+  for (uint32_t r : _root_eclass_id) {
+    const uint32_t r_ende = best_ende_of_ecls[r];
+    for (uint32_t v : path_record_table[r_ende])  {
+      global_union.insert(v);
+    }    
   }
 
   double dag_cost = 0.0;
   for (uint32_t v : global_union) dag_cost += _ende_cost[v];
 
-#ifdef PRINT_LOG
+// #ifdef PRINT_LOG
+  // printf("Final picked enodes:\n");
+  // for (uint32_t i : global_union) {
+  //   printf("%u, ", i);
+  // } printf("\n");
   printf("\nTotal DAG cost = %.2f, total %zu enodes involved\n", dag_cost, global_union.size());
-#endif
+// #endif
 
   return dag_cost;
 }

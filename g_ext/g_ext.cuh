@@ -55,7 +55,7 @@ public:
     std::vector<double> cost_of_ende; // Final cost of each enode
     std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
     std::vector<bool> picked_endes;
-    std::chrono::duration<double> duration, duration1, duration2;
+    std::chrono::duration<double> duration;
     auto start = std::chrono::steady_clock::now();
       auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
 
@@ -63,7 +63,17 @@ public:
     duration = end - start;
     std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
-              best_tree_cost_cpu, dag_cost_cpu);
+      best_tree_cost_cpu, dag_cost_cpu);
+
+    start = std::chrono::steady_clock::now();
+      double bibi = _cpu_best_dag();
+    end = std::chrono::steady_clock::now();
+    duration = end - start;
+    std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    printf("CPU RESULTS: best_tree_dag_cpu = %.2lf\n", bibi);
+
+
+
 
 
     // if (ILP_solver) {
@@ -71,17 +81,16 @@ public:
     //                 cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
     // }
 
-
-    start = std::chrono::steady_clock::now();
-    _reconstruct_graph(cost_of_ecls, cost_of_ende, 
-                      best_ende_of_ecls, picked_endes); 
-    end = std::chrono::steady_clock::now();
-    duration1 = end - start;
-    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration1.count()) * 1000, 0.01) << " (ms)\n";
+    // start = std::chrono::steady_clock::now();
+    // _reconstruct_graph(cost_of_ecls, cost_of_ende, 
+    //                   best_ende_of_ecls, picked_endes); 
+    // end = std::chrono::steady_clock::now();
+    // duration1 = end - start;
+    // std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration1.count()) * 1000, 0.01) << " (ms)\n";
     
-    double cpu_dag_refine = _cpu_dag_refinement();
-    printf("CPU RESULTS: cpu_dag_refine = %.2lf\n", cpu_dag_refine);
-    std::cout << "CPU DAG Refinement Runtime: " << round_to((duration2.count()) * 1000, 0.01) << " (ms)\n";
+    // double cpu_dag_refine = _cpu_dag_refinement();
+    // printf("CPU RESULTS: cpu_dag_refine = %.2lf\n", cpu_dag_refine);
+    // std::cout << "CPU DAG Refinement Runtime: " << round_to((duration2.count()) * 1000, 0.01) << " (ms)\n";
 
     // // GPU version
     // float gpuTime = 0.;
@@ -103,66 +112,89 @@ private:
   /* Read */
   void _read_input(const std::string input_path);
   void _prune_dead_nodes(const uint32_t tmp_num_ecls,
-                        const uint32_t tmp_num_ende,
-                        const std::vector<std::string>& tmp_ende_name, 
-                        const std::vector<std::string>& tmp_ende_op, 
-                        const std::vector<float>& tmp_ende_cost, 
-                        const std::vector<uint32_t>& tmp_ende_ecls,
-                        const std::vector<uint32_t>& tmp_ende_child, 
-                        const std::vector<uint32_t>& tmp_ende_child_ptr, 
-                        const std::vector<uint32_t>& tmp_root_eclass_id);
+    const uint32_t tmp_num_ende,
+    const std::vector<std::string>& tmp_ende_name, 
+    const std::vector<std::string>& tmp_ende_op, 
+    const std::vector<float>& tmp_ende_cost, 
+    const std::vector<uint32_t>& tmp_ende_ecls,
+    const std::vector<uint32_t>& tmp_ende_child, 
+    const std::vector<uint32_t>& tmp_ende_child_ptr, 
+    const std::vector<uint32_t>& tmp_root_eclass_id);
   
   /* Run */
   /* Tree Level Relaxation */
   std::pair<double, double> _cpu_best_tree(const std::vector<float>& tmp_ende_cost,
-                                            std::vector<double>& cost_of_ecls,
-                                            std::vector<double>& cost_of_ende,
-                                            std::vector<uint32_t>& best_ende_of_ecls,
-                                            std::vector<bool>& picked_endes); 
+    std::vector<double>& cost_of_ecls,
+    std::vector<double>& cost_of_ende,
+    std::vector<uint32_t>& best_ende_of_ecls,
+    std::vector<bool>& picked_endes); 
   double _compute_dag_cost(const std::vector<uint32_t>& best_ende_of_ecls,
-                          std::vector<bool>& picked_endes,
-                          std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
+    std::vector<bool>& picked_endes,
+    std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
   std::pair<double, double> _gpu_best_tree();
   /* DAG level relxation */
+  /* bibi try */
+  double _cpu_best_dag();   
+  double _get_dag_cost(const std::vector<uint32_t>& vec, uint32_t* prv);
+  bool _union_vector(const uint32_t len, std::vector<uint32_t>& va, const uint32_t* vb);
+  /* bibi try */
+
+
+
   void _reconstruct_graph(std::vector<double>& cost_of_ecls,
-                          std::vector<double>& cost_of_ende,
-                          std::vector<uint32_t>& best_ende_of_ecls,
-                          std::vector<bool>& picked_endes);
+    std::vector<double>& cost_of_ende,
+    std::vector<uint32_t>& best_ende_of_ecls,
+    std::vector<bool>& picked_endes);
   void _construct_deg(const std::vector<bool>& picked_endes,
-                      const std::vector<double>& cost_of_ende); 
+    const std::vector<double>& cost_of_ende); 
   void _top_down_levelize(const std::vector<bool>& picked_endes,
-                          std::vector<int>& level);
+    std::vector<int>& level);
   void _bottom_up_levelize(const std::vector<bool>& picked_endes,
-                          std::vector<int>& level);
+    std::vector<int>& level);
     void _update_deg(const bool need_to_update, 
-                    const std::vector<bool>& picked_endes,
-                    const std::vector<int>& level);
+      const std::vector<bool>& picked_endes,
+      const std::vector<int>& level);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
-              const std::vector<bool>& picked_endes,
-              const std::vector<std::unordered_set<uint32_t>>& adj,
-              std::vector<int>& level);
+      const std::vector<bool>& picked_endes,
+      const std::vector<std::unordered_set<uint32_t>>& adj,
+      std::vector<int>& level);
   bool _insertion(const bool is_td, 
-                  std::vector<bool>& picked_endes,
-                  std::vector<int>& level);
+    std::vector<bool>& picked_endes,
+    std::vector<int>& level);
   void _clear_redundant_endes(std::vector<bool>& picked_endes);
     void mark_reachable(const std::vector<uint32_t>& starts,
-                      const std::vector<std::unordered_set<uint32_t>>& adj,
-                      std::vector<bool>& visited,
-                      const std::vector<bool>& picked_endes);
+      const std::vector<std::unordered_set<uint32_t>>& adj,
+      std::vector<bool>& visited,
+      const std::vector<bool>& picked_endes);
     void get_nodes_in_subgraph(
-                const std::vector<uint32_t>& roots,
-                const std::vector<uint32_t>& leaves,
-                const std::vector<std::unordered_set<uint32_t>>& adj,
-                const std::vector<std::unordered_set<uint32_t>>& inv_adj,
-                const std::vector<bool>& picked_endes);
+      const std::vector<uint32_t>& roots,
+      const std::vector<uint32_t>& leaves,
+      const std::vector<std::unordered_set<uint32_t>>& adj,
+      const std::vector<std::unordered_set<uint32_t>>& inv_adj,
+      const std::vector<bool>& picked_endes);
   double _cpu_dag_refinement();
+    void _dfs_combine_enodes(uint32_t ende, size_t idx,
+      const std::vector<std::vector<uint32_t>>& cand_by_eclass,
+      const std::vector<std::vector<uint32_t>>& path_record_table,
+      std::unordered_set<uint32_t> cur_set,
+      double cur_cost,
+      double& best_cost,
+      std::vector<uint32_t>& best_union);
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
-                    const std::vector<double>& cost_of_ecls,
-                    const std::vector<double>& cost_of_ende,
-                    const std::vector<uint32_t>& best_ende_of_ecls,
-                    const std::vector<bool>& picked_endes);
+    const std::vector<double>& cost_of_ecls,
+    const std::vector<double>& cost_of_ende,
+    const std::vector<uint32_t>& best_ende_of_ecls,
+    const std::vector<bool>& picked_endes);
+
+
+
+
+
+
+
+
 
 
   /* Private members */
