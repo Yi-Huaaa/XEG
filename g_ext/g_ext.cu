@@ -1406,9 +1406,9 @@ double G_EXT::_cpu_dag_refinement()
   std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
   std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
   
-  // const uint32_t TOPK = 2;
-  // auto get_best_ende_of_ecls_vec = [&](uint32_t x) { return best_ende_of_ecls.data() + x * TOPK; };
-  std::vector<uint32_t> best_ende_of_ecls(_num_ecls, UINT32_MAX);
+  const uint32_t TOPK = 2;
+  std::vector<uint32_t> best_ende_of_ecls(_num_ecls * TOPK, UINT32_MAX);
+  auto get_best_endes_of_ecls = [&](uint32_t x) { return best_ende_of_ecls.data() + x * TOPK; };
   std::vector<uint32_t> PRT(_num_ende*_num_ecls, UINT32_MAX); // path record table
   auto get_prv_vec = [&](uint32_t x) { return PRT.data() + x * _num_ecls; };
   std::vector<bool> vec_updated(_num_ende, false);
@@ -1434,6 +1434,46 @@ double G_EXT::_cpu_dag_refinement()
 
         uint32_t start = _ende_child_ptr[ende];
         uint32_t end   = _ende_child_ptr[ende+1];
+        uint32_t num_chd = end-start; 
+        
+        // 這裡要搜集所有的可能性
+        std::vector<uint32_t*> chd_ptrs;
+        std::vector<uint32_t> chd_num; chd_num.resize(num_chd, 0); 
+        for (uint32_t jj = start; jj < end; jj++) {
+          uint32_t chd_ecls = _ende_child[jj];
+          uint32_t* chd_ende_vec = get_best_ende_of_ecls_vec(chd_ecls);
+          chd_ptrs.push_back(chd_ende_vec);
+          for (uint32_t k = 0; k < TOPK; k++) {
+            if (chd_ende_vec[k] != UINT32_MAX) {
+              chd_num[jj-start]++;
+            }
+          }
+        }
+        uint32_t num_paths = (num_chd != 0) ? (1) : (0);
+        for (uint32_t i = 0; i < num_chd; i++) {
+          num_paths *= chd_num[i];
+        }
+
+        // 這裡要建立：combo_paths
+        std::vector<std::vector<uint32_t>> combo_paths;
+        if (num_paths == 0) {
+          combo_paths.push_back({}); // leaf
+        } else {
+          combo_paths.resize(num_paths, std::vector<uint32_t>(num_chd, UINT32_MAX));
+          for (uint32_t path_idx = 0; path_idx < num_paths; path_idx++) {
+            uint32_t tmp = path_idx;
+            for (uint32_t c = 0; c < num_chd; c++) {
+              uint32_t choice_idx = tmp % chd_num[c];   // 選擇哪個候選
+              tmp /= chd_num[c];
+              uint32_t* chd_best = chd_ptrs[c];         // 該 child eclass 的 top-k 指標
+              combo_paths[path_idx][c] = chd_best[choice_idx];
+            }
+          }
+        }
+
+        接著這裡需要把 TOPK 條 paths 全部都試試看，然後找到最好的
+
+
         bool succ = true;
         for (uint32_t jj = start; jj < end; jj++) {
           uint32_t chd_ecls = _ende_child[jj];
@@ -1470,6 +1510,8 @@ double G_EXT::_cpu_dag_refinement()
           // #endif
 
           // critical part
+          這裡可能要修改：不能是小於才加進去，應該是一個一個比，連比四個，看可以差在哪裡，這四個人的順序不重要
+          重要的是要把 cost 最大的那個蓋掉！
           if (acc_dag_cost < cost_of_ecls[which_ecls]) {
             cost_of_ecls[which_ecls] = acc_dag_cost;
             best_ende_of_ecls[which_ecls] = ende;
@@ -1483,12 +1525,12 @@ double G_EXT::_cpu_dag_refinement()
         printf("\ncost_of_ecls:\n");
         for (size_t i = 0; i < cost_of_ecls.size(); i++) {
           printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
-        }    
-        printf("\n=================================\n");
+        }
+        printf("\n------------------------------------\n");
       // #endif
     } // for lvl
     // #ifdef PRINT_LOG
-      printf("FINISHED itr = %u\n=================================\n", itr);
+      printf("FINISHED itr = %u\n===========================================================\n\n", itr);
     // #endif
   } // for iter 
 
