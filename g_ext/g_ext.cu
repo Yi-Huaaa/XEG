@@ -1414,92 +1414,112 @@ double G_EXT::_cpu_dag_refinement()
   std::vector<bool> vec_updated(_num_ende, false);
 
   // === bottom-up traversal ===
-  for (int lvl = (int)_ende_in_level.size() - 1; lvl >= 0; --lvl) {
-    // printf("level = %d\n", lvl);
+  const uint32_t ITER = 5;
+  for (uint32_t itr = 0; itr < ITER; itr++) {
+    for (int lvl = (int)_ende_in_level.size() - 1; lvl >= 0; --lvl) {
+      // #ifdef PRINT_LOG
+        printf("level = %d\n", lvl);
+      // #endif
 
-    for (uint32_t e = 0; e < _ende_in_level[lvl].size(); e++) {
-      uint32_t ende = _ende_in_level[lvl][e];
-      // printf("Handing enode = %u\n", ende);
-      const uint32_t which_ecls = _ende_ecls[ende];
+      for (uint32_t e = 0; e < _ende_in_level[lvl].size(); e++) {
+        uint32_t ende = _ende_in_level[lvl][e];
+        const uint32_t which_ecls = _ende_ecls[ende];
+        // #ifdef PRINT_LOG
+          printf("Handing enode = %u\n", ende);
+        // #endif
 
-      uint32_t* prv = get_prv_vec(ende);
-      std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
-      tmp[which_ecls] = ende;
+        uint32_t* prv = get_prv_vec(ende);
+        std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
+        tmp[which_ecls] = ende;
 
-      uint32_t start = _ende_child_ptr[ende];
-      uint32_t end   = _ende_child_ptr[ende+1];
-      bool succ = true;
-      for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t chd_ecls = _ende_child[jj];
-        uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
-        // printf("\tchildren eclass = %u (with chd_ende = %u)\n", chd_ecls, chd_ende);
-        if (chd_ende == UINT32_MAX) {
-          succ = false;
-          break;
+        uint32_t start = _ende_child_ptr[ende];
+        uint32_t end   = _ende_child_ptr[ende+1];
+        bool succ = true;
+        for (uint32_t jj = start; jj < end; jj++) {
+          uint32_t chd_ecls = _ende_child[jj];
+          uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
+          // #ifdef PRINT_LOG
+            printf("\tchildren eclass = %u (with chd_ende = %u)\n", chd_ecls, chd_ende);
+          // #endif
+          if (chd_ende == UINT32_MAX) {
+            succ = false;
+            break;
+          }
+          uint32_t* chd_prv = get_prv_vec(chd_ende);
+          succ = _union_vector(_num_ecls, tmp, chd_prv);
+          succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
+          if (!succ) break;
         }
-        uint32_t* chd_prv = get_prv_vec(chd_ende);
-        succ = _union_vector(_num_ecls, tmp, chd_prv);
-        succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
-        if (!succ) break;
-      }
 
-      if (succ) {
-        // printf("\tende %u succ\n", ende);
-        
-        // Get dag cost and update prv
-        double acc_dag_cost = _get_dag_cost(tmp, prv);
-        cost_of_ende[ende] = acc_dag_cost;
-        vec_updated[ende] = true; 
+        if (succ) {
+          // #ifdef PRINT_LOG
+            printf("\tende %u succ\n", ende);
+          // #endif
+          
+          // Get dag cost and update prv
+          double acc_dag_cost = _get_dag_cost(tmp, prv);
+          cost_of_ende[ende] = acc_dag_cost;
+          vec_updated[ende] = true; 
 
-        // printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
-        // printf("\tprv: "); 
-        // for (uint32_t i = 0; i < _num_ecls; i++) {
-        //   printf("%u, ", prv[i]);
-        // } printf("\n"); 
+          // #ifdef PRINT_LOG
+            printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
+            printf("\tprv: "); 
+            for (uint32_t i = 0; i < _num_ecls; i++) {
+              printf("%u, ", prv[i]);
+            } printf("\n"); 
+          // #endif
 
-        // critical part
-        if (acc_dag_cost < cost_of_ecls[which_ecls]) {
-          cost_of_ecls[which_ecls] = acc_dag_cost;
-          best_ende_of_ecls[which_ecls] = ende;
+          // critical part
+          if (acc_dag_cost < cost_of_ecls[which_ecls]) {
+            cost_of_ecls[which_ecls] = acc_dag_cost;
+            best_ende_of_ecls[which_ecls] = ende;
+          }
         }
-      }
 
-    } // for ende 
+      } // for ende 
 
-    // printf("Finished level %d (%d)\n", lvl, _max_level); 
-    // printf("\ncost_of_ecls:\n");
-    // for (size_t i = 0; i < cost_of_ecls.size(); i++) {
-    //   printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
-    // }    
-    // printf("\n=================================\n");    
+      // #ifdef PRINT_LOG
+        printf("Finished level %d (%d)\n", lvl, _max_level); 
+        printf("\ncost_of_ecls:\n");
+        for (size_t i = 0; i < cost_of_ecls.size(); i++) {
+          printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
+        }    
+        printf("\n=================================\n");
+      // #endif
+    } // for lvl
+    // #ifdef PRINT_LOG
+      printf("FINISHED itr = %u\n=================================\n", itr);
+    // #endif
+  } // for iter 
+
+// #ifdef PRINT_LOG
+  printf("PRT:\n");
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    printf("ende = %u: ", ende); 
+    for (uint32_t ecls = 0; ecls < _num_ecls; ecls++) {
+      uint32_t idx = ende*_num_ecls + ecls;
+      printf("%u, ", PRT[idx]); 
+    }
+    printf("\n");
   }
 
-  // printf("PRT:\n");
-  // for (uint32_t ende = 0; ende < _num_ende; ende++) {
-  //   printf("ende = %u: ", ende); 
-  //   for (uint32_t ecls = 0; ecls < _num_ecls; ecls++) {
-  //     uint32_t idx = ende*_num_ecls + ecls;
-  //     printf("%u, ", PRT[idx]); 
-  //   }
-  //   printf("\n");
-  // }
+  printf("\ncost_of_ecls:\n");
+  for (size_t i = 0; i < cost_of_ecls.size(); i++) {
+    printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
+  }
 
-  // printf("\ncost_of_ecls:\n");
-  // for (size_t i = 0; i < cost_of_ecls.size(); i++) {
-  //   printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
-  // }
+  printf("\ncost_of_ende:\n");
+  for (size_t i = 0; i < cost_of_ende.size(); i++) {
+    printf("  [%zu] = %.1f\n", i, cost_of_ende[i]);
+  }
+  printf("\n");  
 
-  // printf("\ncost_of_ende:\n");
-  // for (size_t i = 0; i < cost_of_ende.size(); i++) {
-  //   printf("  [%zu] = %.1f\n", i, cost_of_ende[i]);
-  // }
-  // printf("\n");  
-
-  // printf("\nbest_ende_of_ecls:\n");
-  // for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
-  //   printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
-  // }
-  // printf("\n");
+  printf("\nbest_ende_of_ecls:\n");
+  for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
+    printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
+  }
+  printf("\n");
+// #endif 
 
   // Get best tree cost 
   double dag_ret = 0.0; 
@@ -1507,27 +1527,6 @@ double G_EXT::_cpu_dag_refinement()
     dag_ret += cost_of_ecls[_root_eclass_id[r]];
   }
 
-  // // bibibi test starts
-  // std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
-  // tmp[0] = 0;
-  // uint32_t* prv = get_prv_vec(0);
-  // uint32_t* prv2 = get_prv_vec(2);
-  // uint32_t* prv6 = get_prv_vec(6);
-  // bool succ = _union_vector(_num_ecls, tmp, prv2);
-  // succ = _union_vector(_num_ecls, tmp, prv6);
-  
-  // // Get dag cost and update prv
-  // double acc_dag_cost = _get_dag_cost(tmp, prv);
-  // cost_of_ende[0] = acc_dag_cost;
-  // vec_updated[0] = true; 
-
-  // printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
-  // printf("\tprv: "); 
-  // for (uint32_t i = 0; i < _num_ecls; i++) {
-  //   printf("%u, ", prv[i]);
-  // } printf("\n");   
-  // // bibibi test ends
-                    
   return dag_ret;
 }
 
