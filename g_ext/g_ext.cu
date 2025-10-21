@@ -506,7 +506,12 @@ double G_EXT::_cpu_best_dag()
   std::vector<bool> picked_endes;
   std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
   std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
-  std::vector<uint32_t> best_ende_of_ecls(_num_ecls, UINT32_MAX);
+  
+  // 原本 eclass 只存一個 enode. 現在我想要多存幾個，例如存下兩個該 eclass有最低 cost 的 enode
+  // std::vector<uint32_t> best_ende_of_ecls(_num_ecls, UINT32_MAX);
+  const uint32_t TOPK = 2;
+  std::vector<uint32_t> best_ende_of_ecls(_num_ecls*TOPK, UINT32_MAX);
+  auto get_best_ende_of_ecls_vec = [&](uint32_t x) { return best_ende_of_ecls.data() + x * TOPK; };
   std::vector<uint32_t> PRT(_num_ende*_num_ecls, UINT32_MAX); // path record table
   auto get_prv_vec = [&](uint32_t x) { return PRT.data() + x * _num_ecls; };
   std::vector<bool> vec_updated(_num_ende, false);
@@ -530,12 +535,48 @@ double G_EXT::_cpu_best_dag()
 
       uint32_t start = _ende_child_ptr[t_idx];
       uint32_t end   = _ende_child_ptr[t_idx+1];
-      bool succ = true; 
+      uint32_t num_children = end - start;
+
+      // // try top-k possible paths
+      // std::vector<std::vector<uint32_t>> all_combos;
+      // std::vector<uint32_t> limits(num_children, 0);
+
+      // for (uint32_t i = 0; i < num_children; i++) {
+      //   uint32_t chd_ecls = _ende_child[start + i];
+      //   uint32_t* chd_best = get_best_ende_of_ecls_vec(chd_ecls);
+      //   uint32_t valid = 0;
+      //   for (uint32_t k = 0; k < TOPK; k++)
+      //     if (chd_best[k] != UINT32_MAX) valid++;
+      //   limits[i] = valid;
+      // }
+
+      // uint32_t possible_paths = (num_children > 0) ? 1 : 0;
+      // for (uint32_t i = 0; i < num_children; i++) {
+      //   possible_paths *= limits[i];
+      // }
+
+      // // 展開所有組合
+      // all_combos.resize(possible_paths);
+      // for (uint32_t i = 0; i < possible_paths; i++) {
+      //   all_combos[i].resize(num_children);
+
+      //   uint32_t tmp = i;
+      //   for (uint32_t j = 0; j < num_children; j++) {
+      //     uint32_t chd_ecls = _ende_child[start + j];
+      //     uint32_t* chd_best = get_best_ende_of_ecls_vec(chd_ecls);
+      //     uint32_t choice_idx = tmp % limits[j];
+      //     tmp /= limits[j];
+      //     all_combos[i][j] = chd_best[choice_idx];
+      //   }
+      // }
+
+      // 這下面的 for loop 原本一個 eclass 只選一個 enode. 我現在因為會存兩個，因此所有可能都要暴力嘗試一遍，然後再從中選出最好的留下來
+      bool succ = true;
       for (uint32_t jj = start; jj < end; jj++) {
         uint32_t chd_ecls = _ende_child[jj];
         uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
         printf("\tchildren eclass = %u (with chd_ende = %u)\n", chd_ecls, chd_ende);
-        if (chd_ende == UINT32_MAX) { 
+        if (chd_ende == UINT32_MAX) {
           succ = false;
           break;
         }
@@ -561,10 +602,9 @@ double G_EXT::_cpu_best_dag()
 
         // critical part
         if (acc_dag_cost < cost_of_ecls[which_ecls]) {
-          
           cost_of_ecls[which_ecls] = acc_dag_cost;
           best_ende_of_ecls[which_ecls] = t_idx;
-          h_update = true;
+          l_updated = true;
         }
       }
       h_update |= l_updated;
@@ -605,27 +645,11 @@ double G_EXT::_cpu_best_dag()
   }
   printf("\n");
 
-
-  // === Phase 2: reconstruct best picks ===
-  std::vector<std::vector<uint32_t>> ende_picked_by_ende(_num_ende);
-  for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
-    std::vector<uint32_t> picks;
-    uint32_t start = _ende_child_ptr[t_idx];
-    uint32_t end   = _ende_child_ptr[t_idx + 1];
-    picks.reserve(end - start);
-    for (uint32_t jj = start; jj < end; jj++) {
-      uint32_t chd_ecls = _ende_child[jj];
-      picks.push_back(best_ende_of_ecls[chd_ecls]);
-    }
-    ende_picked_by_ende[t_idx] = std::move(picks);
-  }
-
   // Get best tree cost 
   double dag_ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
     dag_ret += cost_of_ecls[_root_eclass_id[r]];
   }
-
 
   // bibibi test starts
   std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
@@ -635,7 +659,7 @@ double G_EXT::_cpu_best_dag()
   uint32_t* prv6 = get_prv_vec(6);
   bool succ = _union_vector(_num_ecls, tmp, prv2);
   succ = _union_vector(_num_ecls, tmp, prv6);
-        
+  
   // Get dag cost and update prv
   double acc_dag_cost = _get_dag_cost(tmp, prv);
   cost_of_ende[0] = acc_dag_cost;
@@ -647,8 +671,6 @@ double G_EXT::_cpu_best_dag()
     printf("%u, ", prv[i]);
   } printf("\n");   
   // bibibi test ends
-
-
                     
   return dag_ret;
 }
@@ -1370,41 +1392,6 @@ void G_EXT::get_nodes_in_subgraph(
   }
 }
 
-
-void G_EXT::_dfs_combine_enodes(
-    uint32_t ende,
-    size_t idx,
-    const std::vector<std::vector<uint32_t>>& cand_by_eclass,
-    const std::vector<std::vector<uint32_t>>& path_record_table,
-    std::unordered_set<uint32_t> cur_set,
-    double cur_cost,
-    double& best_cost,
-    std::vector<uint32_t>& best_union)
-{
-  // 終止條件：已選完所有 child eclass
-  if (idx == cand_by_eclass.size()) {
-    if (cur_cost < best_cost) {
-      best_cost = cur_cost;
-      best_union.assign(cur_set.begin(), cur_set.end());
-    }
-    return;
-  }
-
-  // 對當前 eclass 嘗試所有候選 enode
-  for (uint32_t child_ende : cand_by_eclass[idx]) {
-    auto next_set = cur_set;
-    for (uint32_t v : path_record_table[child_ende])
-      next_set.insert(v);
-    next_set.insert(child_ende);
-
-    double next_cost = cur_cost + _ende_cost[child_ende];
-    _dfs_combine_enodes(
-      ende, idx + 1, cand_by_eclass, path_record_table,
-      std::move(next_set), next_cost,
-      best_cost, best_union);
-  }
-}
-
 double G_EXT::_cpu_dag_refinement() 
 {
 #ifdef PRINT_LOG
@@ -1415,112 +1402,133 @@ double G_EXT::_cpu_dag_refinement()
     return a * _num_ecls + b;
   };
 
-  std::vector<std::vector<uint32_t>> path_record_table(_num_ende); 
-  std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
+  std::vector<bool> picked_endes;
   std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
-  std::vector<uint32_t> best_ende_of_ecls(_num_ecls, 0);
+  std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
   
+  // const uint32_t TOPK = 2;
+  // auto get_best_ende_of_ecls_vec = [&](uint32_t x) { return best_ende_of_ecls.data() + x * TOPK; };
+  std::vector<uint32_t> best_ende_of_ecls(_num_ecls, UINT32_MAX);
+  std::vector<uint32_t> PRT(_num_ende*_num_ecls, UINT32_MAX); // path record table
+  auto get_prv_vec = [&](uint32_t x) { return PRT.data() + x * _num_ecls; };
+  std::vector<bool> vec_updated(_num_ende, false);
 
   // === bottom-up traversal ===
   for (int lvl = (int)_ende_in_level.size() - 1; lvl >= 0; --lvl) {
+    // printf("level = %d\n", lvl);
+
     for (uint32_t e = 0; e < _ende_in_level[lvl].size(); e++) {
       uint32_t ende = _ende_in_level[lvl][e];
-      uint32_t which_ecls = _ende_ecls[ende];
+      // printf("Handing enode = %u\n", ende);
+      const uint32_t which_ecls = _ende_ecls[ende];
 
-      // Step 1. 找出所有 children eclass
-      std::vector<uint32_t> child_ecls;
-      for (uint32_t jj = _ende_child_ptr[ende]; jj < _ende_child_ptr[ende + 1]; ++jj) {
-        child_ecls.push_back(_ende_child[jj]);
-      }
+      uint32_t* prv = get_prv_vec(ende);
+      std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
+      tmp[which_ecls] = ende;
 
-      // === leaf node ===
-      if (child_ecls.empty()) {
-        path_record_table[ende] = {ende};
-        cost_of_ende[ende] = _ende_cost[ende];
-        cost_of_ecls[which_ecls] = std::min(cost_of_ecls[which_ecls], cost_of_ende[ende]);
-        continue;
-      }
-
-      // Step 2. 收集每個 eclass 的候選 enode，並且檢查是否全部 valid
-      std::vector<std::vector<uint32_t>> cand_by_eclass;
-      bool all_have_valid = true;
-      for (uint32_t ce : child_ecls) {
-        std::vector<uint32_t> cands;
-        for (uint32_t cand : _ecls_its_ende[ce]) {
-          if (_in_subgraph[cand]) {  // 只考慮目前仍存在圖上的 enode
-            cands.push_back(cand);
-          }
+      uint32_t start = _ende_child_ptr[ende];
+      uint32_t end   = _ende_child_ptr[ende+1];
+      bool succ = true;
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t chd_ecls = _ende_child[jj];
+        uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
+        // printf("\tchildren eclass = %u (with chd_ende = %u)\n", chd_ecls, chd_ende);
+        if (chd_ende == UINT32_MAX) {
+          succ = false;
+          break;
         }
-        if (cands.empty()) {
-          all_have_valid = false;
-          break;  // 提早中止，這個 eclass 沒任何 candidate
+        uint32_t* chd_prv = get_prv_vec(chd_ende);
+        succ = _union_vector(_num_ecls, tmp, chd_prv);
+        succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
+        if (!succ) break;
+      }
+
+      if (succ) {
+        // printf("\tende %u succ\n", ende);
+        
+        // Get dag cost and update prv
+        double acc_dag_cost = _get_dag_cost(tmp, prv);
+        cost_of_ende[ende] = acc_dag_cost;
+        vec_updated[ende] = true; 
+
+        // printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
+        // printf("\tprv: "); 
+        // for (uint32_t i = 0; i < _num_ecls; i++) {
+        //   printf("%u, ", prv[i]);
+        // } printf("\n"); 
+
+        // critical part
+        if (acc_dag_cost < cost_of_ecls[which_ecls]) {
+          cost_of_ecls[which_ecls] = acc_dag_cost;
+          best_ende_of_ecls[which_ecls] = ende;
         }
-        cand_by_eclass.push_back(std::move(cands));
       }
 
-      // 若有任何 child eclass 無合法 enode → 直接視為 invalid
-      if (!all_have_valid) {
-        #ifdef PRINT_LOG
-          printf("ende %u invalid (some child eclass empty)\n", ende);
-        #endif
-        _in_subgraph[ende] = false;
-        cost_of_ende[ende] = std::numeric_limits<double>::infinity();
-        continue;
-      }
+    } // for ende 
 
-      // Step 3. 暴力搜尋最佳組合
-      double best_cost = std::numeric_limits<double>::infinity();
-      std::vector<uint32_t> best_union;
-
-      std::unordered_set<uint32_t> init;
-      init.insert(ende);
-
-      // 執行 DFS
-      _dfs_combine_enodes(
-        ende, 0, cand_by_eclass, path_record_table,
-        init, _ende_cost[ende],
-        best_cost, best_union);
-
-      // Step 4. 更新結果
-      path_record_table[ende] = best_union;
-      cost_of_ende[ende] = best_cost;
-      best_ende_of_ecls[which_ecls] = (cost_of_ecls[which_ecls] > best_cost) 
-                                      ? (ende) 
-                                      : (best_ende_of_ecls[which_ecls]);
-      cost_of_ecls[which_ecls] = std::min(cost_of_ecls[which_ecls], best_cost);
-
-      #ifdef PRINT_LOG
-        printf("ende=%u (ecls=%u): best_cost=%.2f, path={", ende, which_ecls, best_cost);
-        for (uint32_t v : path_record_table[ende]) printf("%u,", v);
-        printf("}\n");
-      #endif
-    }
+    // printf("Finished level %d (%d)\n", lvl, _max_level); 
+    // printf("\ncost_of_ecls:\n");
+    // for (size_t i = 0; i < cost_of_ecls.size(); i++) {
+    //   printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
+    // }    
+    // printf("\n=================================\n");    
   }
 
-  // === 最後組合 root eclass ===
-  std::unordered_set<uint32_t> global_union;
-  std::vector<uint32_t> rr; 
-  rr.resize(_root_eclass_id.size());
+  // printf("PRT:\n");
+  // for (uint32_t ende = 0; ende < _num_ende; ende++) {
+  //   printf("ende = %u: ", ende); 
+  //   for (uint32_t ecls = 0; ecls < _num_ecls; ecls++) {
+  //     uint32_t idx = ende*_num_ecls + ecls;
+  //     printf("%u, ", PRT[idx]); 
+  //   }
+  //   printf("\n");
+  // }
 
-  for (uint32_t r : _root_eclass_id) {
-    const uint32_t r_ende = best_ende_of_ecls[r];
-    for (uint32_t v : path_record_table[r_ende])  {
-      global_union.insert(v);
-    }    
+  // printf("\ncost_of_ecls:\n");
+  // for (size_t i = 0; i < cost_of_ecls.size(); i++) {
+  //   printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
+  // }
+
+  // printf("\ncost_of_ende:\n");
+  // for (size_t i = 0; i < cost_of_ende.size(); i++) {
+  //   printf("  [%zu] = %.1f\n", i, cost_of_ende[i]);
+  // }
+  // printf("\n");  
+
+  // printf("\nbest_ende_of_ecls:\n");
+  // for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
+  //   printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
+  // }
+  // printf("\n");
+
+  // Get best tree cost 
+  double dag_ret = 0.0; 
+  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
+    dag_ret += cost_of_ecls[_root_eclass_id[r]];
   }
 
-  double dag_cost = 0.0;
-  for (uint32_t v : global_union) dag_cost += _ende_cost[v];
+  // // bibibi test starts
+  // std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
+  // tmp[0] = 0;
+  // uint32_t* prv = get_prv_vec(0);
+  // uint32_t* prv2 = get_prv_vec(2);
+  // uint32_t* prv6 = get_prv_vec(6);
+  // bool succ = _union_vector(_num_ecls, tmp, prv2);
+  // succ = _union_vector(_num_ecls, tmp, prv6);
+  
+  // // Get dag cost and update prv
+  // double acc_dag_cost = _get_dag_cost(tmp, prv);
+  // cost_of_ende[0] = acc_dag_cost;
+  // vec_updated[0] = true; 
 
-// #ifdef PRINT_LOG
-  // printf("Final picked enodes:\n");
-  // for (uint32_t i : global_union) {
-  //   printf("%u, ", i);
-  // } printf("\n");
-  printf("\nTotal DAG cost = %.2f, total %zu enodes involved\n", dag_cost, global_union.size());
-// #endif
-
-  return dag_cost;
+  // printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
+  // printf("\tprv: "); 
+  // for (uint32_t i = 0; i < _num_ecls; i++) {
+  //   printf("%u, ", prv[i]);
+  // } printf("\n");   
+  // // bibibi test ends
+                    
+  return dag_ret;
 }
 
 
