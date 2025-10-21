@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-// #define PRINT_LOG
+#define PRINT_LOG
 #define BIBI_CHECK
 
 #define ENABLE_CHECK
@@ -150,6 +150,7 @@ void G_EXT::_read_input(const std::string input_path)
                       tmp_ende_child,
                       tmp_ende_child_ptr,
                       tmp_root_eclass_id); 
+  printf("\n"); 
 #endif   
   _prune_dead_nodes(tmp_num_ecls,
                     tmp_num_ende,
@@ -189,7 +190,6 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   for (uint32_t r : tmp_root_eclass_id) {
     alive_ecls[r] = true;
   }
-
 
   // Reconstruct all things 
   std::vector<uint32_t> new_ecls_idx_mapping; 
@@ -374,7 +374,7 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
   }
   printf("\n");
 
-  printf("\n_ende_picked_by_ende:\n");
+  printf("\nende_picked_by_ende:\n");
   for (size_t i = 0; i < ende_picked_by_ende.size(); i++) {
     printf("  [%zu]: ", i);
     for (size_t j = 0; j < ende_picked_by_ende[i].size(); j++) {
@@ -1860,33 +1860,33 @@ void G_EXT::_cpsat_solver(
 #endif
 
 
-  // Part 8. 添加 warm start hint：依據 picked_endes
-  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
-    const auto& enodes = _ecls_its_ende[cid];
-    if (enodes.empty()) continue;
-    const auto& vars = nodes_vars[cid];
+  // // Part 8. 添加 warm start hint：依據 picked_endes
+  // for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
+  //   const auto& enodes = _ecls_its_ende[cid];
+  //   if (enodes.empty()) continue;
+  //   const auto& vars = nodes_vars[cid];
 
-    uint32_t best_idx = best_ende_of_ecls[cid];
-    if (vars.find(best_idx) == vars.end()) continue;
+  //   uint32_t best_idx = best_ende_of_ecls[cid];
+  //   if (vars.find(best_idx) == vars.end()) continue;
 
-    // 為該 eclass 的所有 enode 設 hint (picked = 1, 其他 = 0)
-    for (uint32_t ende_idx : enodes) {
-      if (vars.find(ende_idx) == vars.end()) continue;
+  //   // 為該 eclass 的所有 enode 設 hint (picked = 1, 其他 = 0)
+  //   for (uint32_t ende_idx : enodes) {
+  //     if (vars.find(ende_idx) == vars.end()) continue;
 
-      int hint_val = (ende_idx == best_idx && picked_endes[best_idx]) ? 1 : 0;
-      cp_model.AddHint(vars.at(ende_idx), hint_val);
+  //     int hint_val = (ende_idx == best_idx && picked_endes[best_idx]) ? 1 : 0;
+  //     cp_model.AddHint(vars.at(ende_idx), hint_val);
 
-      #ifdef PRINT_LOG
-        if (hint_val == 1) {
-          hint_count_1++;
-          printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 1, "<= picked best enode");
-        } else {
-          hint_count_0++;
-          printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 0, "");
-        }
-      #endif
-    }
-  }
+  //     #ifdef PRINT_LOG
+  //       if (hint_val == 1) {
+  //         hint_count_1++;
+  //         printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 1, "<= picked best enode");
+  //       } else {
+  //         hint_count_0++;
+  //         printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 0, "");
+  //       }
+  //     #endif
+  //   }
+  // }
 
 #ifdef PRINT_LOG
   printf("---------------------------------------------------------\n");
@@ -1933,19 +1933,19 @@ void G_EXT::_cpsat_solver(
     std::cout << "Runtime = " << response.wall_time() << " (s)\n";
     std::cout << "Feasible solutions found = " << num_solutions << "\n";
 
-    // // Optional: 印出所有 active 節點
-    // std::cout << "==== Active enodes (solution) ====\n";
-    // for (const auto& [cid, node_map] : nodes_vars) {
-    //   for (const auto& [node_id, var] : node_map) {
-    //     bool value = SolutionBooleanValue(response, var);
-    //     if (value) {
-    //       std::cout << "EClass " << cid
-    //                 << " -> enode " << node_id
-    //                 << " (cost " << _ende_cost[node_id] << ")\n";
-    //     }
-    //   }
-    // }
-    // std::cout << "=========================================\n";
+    // Optional: 印出所有 active 節點
+    std::cout << "==== Active enodes (solution) ====\n";
+    for (const auto& [cid, node_map] : nodes_vars) {
+      for (const auto& [node_id, var] : node_map) {
+        bool value = SolutionBooleanValue(response, var);
+        if (value) {
+          std::cout << "EClass " << cid
+                    << " -> enode " << node_id
+                    << " (cost " << _ende_cost[node_id] << ")\n";
+        }
+      }
+    }
+    std::cout << "=========================================\n";
   } else {
     std::cout << "No feasible solution found.\n";
   }
