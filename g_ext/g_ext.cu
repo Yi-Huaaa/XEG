@@ -476,8 +476,11 @@ bool G_EXT::_union_vector(const uint32_t len, std::vector<uint32_t>& va, const u
       va[i] = vb[i]; 
     } else if (va[i] != UINT32_MAX && vb[i] == UINT32_MAX) { // va[i] 有指定 value; vb[i] uninitialized -> 可以合併
       va[i] = va[i];
-    } else { // va[i] 有指定 value; vb[i] 有指定 value; -> 不可以合併，合併失敗
+    } else if (va[i] != UINT32_MAX && vb[i] != UINT32_MAX) { // va[i] 有指定 value; vb[i] 有指定 value; -> 不可以合併，合併失敗
       return false; 
+    } else {
+      printf("?? need to debug...\n");
+      exit(1); 
     }
   }
   return true;
@@ -496,6 +499,17 @@ double G_EXT::_get_dag_cost(const std::vector<uint32_t>& vec, uint32_t* prv)
   return ret;
 }
 
+double G_EXT::_get_dag_cost2(const std::vector<uint32_t>& vec)
+{
+  double ret = 0.; 
+  for (uint32_t i = 0; i < vec.size(); i++) {
+    uint32_t ende = vec[i];
+    if (ende != UINT32_MAX) {
+      ret += _ende_cost[ende];
+    }
+  }
+  return ret;
+}
 
 double G_EXT::_cpu_best_dag()
 {
@@ -1408,29 +1422,25 @@ double G_EXT::_cpu_dag_refinement()
   
   const uint32_t TOPK = 2;
   std::vector<uint32_t> best_ende_of_ecls(_num_ecls * TOPK, UINT32_MAX);
-  auto get_best_endes_of_ecls = [&](uint32_t x) { return best_ende_of_ecls.data() + x * TOPK; };
+  auto get_best_ende_of_ecls_vec = [&](uint32_t x) { return best_ende_of_ecls.data() + x * TOPK; };
   std::vector<uint32_t> PRT(_num_ende*_num_ecls, UINT32_MAX); // path record table
   auto get_prv_vec = [&](uint32_t x) { return PRT.data() + x * _num_ecls; };
   std::vector<bool> vec_updated(_num_ende, false);
 
   // === bottom-up traversal ===
-  const uint32_t ITER = 5;
+  const uint32_t ITER = 1;
   for (uint32_t itr = 0; itr < ITER; itr++) {
     for (int lvl = (int)_ende_in_level.size() - 1; lvl >= 0; --lvl) {
-      // #ifdef PRINT_LOG
+      #ifdef PRINT_LOG
         printf("level = %d\n", lvl);
-      // #endif
+      #endif
 
       for (uint32_t e = 0; e < _ende_in_level[lvl].size(); e++) {
         uint32_t ende = _ende_in_level[lvl][e];
         const uint32_t which_ecls = _ende_ecls[ende];
-        // #ifdef PRINT_LOG
+        #ifdef PRINT_LOG
           printf("Handing enode = %u\n", ende);
-        // #endif
-
-        uint32_t* prv = get_prv_vec(ende);
-        std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
-        tmp[which_ecls] = ende;
+        #endif
 
         uint32_t start = _ende_child_ptr[ende];
         uint32_t end   = _ende_child_ptr[ende+1];
@@ -1471,70 +1481,140 @@ double G_EXT::_cpu_dag_refinement()
           }
         }
 
-        接著這裡需要把 TOPK 條 paths 全部都試試看，然後找到最好的
-
-
-        bool succ = true;
-        for (uint32_t jj = start; jj < end; jj++) {
-          uint32_t chd_ecls = _ende_child[jj];
-          uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
-          // #ifdef PRINT_LOG
-            printf("\tchildren eclass = %u (with chd_ende = %u)\n", chd_ecls, chd_ende);
-          // #endif
-          if (chd_ende == UINT32_MAX) {
-            succ = false;
-            break;
+        // 接著這裡需要把 TOPK 條 paths 全部都試試看，然後找到最好的
+        double best_acc_dag_cost = std::numeric_limits<double>::infinity();
+        std::vector<uint32_t> best_tmp;
+        uint32_t best_p;
+        
+        for (uint32_t p = 0; p < combo_paths.size(); p++) {
+          std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
+          tmp[which_ecls] = ende;
+          bool succ = true;
+          for (uint32_t chd_ende : combo_paths[p]) {
+            #ifdef PRINT_LOG
+              printf("\tchd_ende = %u\n", chd_ende);
+            #endif
+            MY_CHECK(chd_ende != UINT32_MAX, "chd_ende != UINT32_MAX");
+            uint32_t* chd_prv = get_prv_vec(chd_ende);
+            succ = _union_vector(_num_ecls, tmp, chd_prv);
+            succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
+            if (!succ) break;
           }
-          uint32_t* chd_prv = get_prv_vec(chd_ende);
-          succ = _union_vector(_num_ecls, tmp, chd_prv);
-          succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
-          if (!succ) break;
+          if (succ) {
+            double acc_dag_cost = _get_dag_cost2(tmp);
+            if (acc_dag_cost < best_acc_dag_cost) {
+              best_acc_dag_cost = acc_dag_cost;
+              best_tmp = std::move(tmp);
+              best_p = p;
+            }
+          }
         }
-
-        if (succ) {
-          // #ifdef PRINT_LOG
+        
+        if (best_acc_dag_cost != std::numeric_limits<double>::infinity()) { // 代表有成功更新
+          #ifdef PRINT_LOG
             printf("\tende %u succ\n", ende);
-          // #endif
-          
-          // Get dag cost and update prv
-          double acc_dag_cost = _get_dag_cost(tmp, prv);
-          cost_of_ende[ende] = acc_dag_cost;
+          #endif
+
+          // Copy best_tmp to prv
+          uint32_t* prv = get_prv_vec(ende);
+          // update prv
+          for (uint32_t i = 0; i < _num_ecls; i++) prv[i] = best_tmp[i];
+          cost_of_ende[ende] = best_acc_dag_cost;
           vec_updated[ende] = true; 
 
-          // #ifdef PRINT_LOG
-            printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
+          #ifdef PRINT_LOG
+            printf("\twith best_acc_dag_cost = %.2lf\n", best_acc_dag_cost);
             printf("\tprv: "); 
             for (uint32_t i = 0; i < _num_ecls; i++) {
               printf("%u, ", prv[i]);
             } printf("\n"); 
-          // #endif
+          #endif
 
-          // critical part
-          這裡可能要修改：不能是小於才加進去，應該是一個一個比，連比四個，看可以差在哪裡，這四個人的順序不重要
-          重要的是要把 cost 最大的那個蓋掉！
-          if (acc_dag_cost < cost_of_ecls[which_ecls]) {
-            cost_of_ecls[which_ecls] = acc_dag_cost;
-            best_ende_of_ecls[which_ecls] = ende;
+          uint32_t* ende_vec = get_best_ende_of_ecls_vec(which_ecls);
+          uint32_t pos = 0;
+          double MAX_cost = 0.;
+          
+          // 找到自己要放的位置
+          for (uint32_t k = 0; k < TOPK; k++) {
+            if (ende_vec[k] == ende || ende_vec[k] == UINT32_MAX) { // 找到自己 || 仍有空位
+              pos = k;
+              break;
+            }
+            // 若全滿了，那麼要找到 cost 最大那個人取代
+            if (MAX_cost < cost_of_ende[ende_vec[k]]) {
+              MAX_cost = cost_of_ende[ende_vec[k]];
+              pos = k;
+            }
           }
+          ende_vec[pos] = ende;
+          
+          // 全域變數
+          if (best_acc_dag_cost < cost_of_ecls[which_ecls]) {
+            cost_of_ecls[which_ecls] = best_acc_dag_cost;
+          }          
         }
+
+        // bool succ = true;
+        // for (uint32_t jj = start; jj < end; jj++) {
+        //   uint32_t chd_ecls = _ende_child[jj];
+        //   uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
+        //   // #ifdef PRINT_LOG
+        //     printf("\tchildren eclass = %u (with chd_ende = %u)\n", chd_ecls, chd_ende);
+        //   // #endif
+        //   if (chd_ende == UINT32_MAX) {
+        //     succ = false;
+        //     break;
+        //   }
+        //   uint32_t* chd_prv = get_prv_vec(chd_ende);
+        //   succ = _union_vector(_num_ecls, tmp, chd_prv);
+        //   succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
+        //   if (!succ) break;
+        // }
+
+        // if (succ) {
+        //   // #ifdef PRINT_LOG
+        //     printf("\tende %u succ\n", ende);
+        //   // #endif
+          
+        //   // Get dag cost and update prv
+        //   double acc_dag_cost = _get_dag_cost(tmp, prv);
+        //   cost_of_ende[ende] = acc_dag_cost;
+        //   vec_updated[ende] = true; 
+
+        //   // #ifdef PRINT_LOG
+        //     printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
+        //     printf("\tprv: "); 
+        //     for (uint32_t i = 0; i < _num_ecls; i++) {
+        //       printf("%u, ", prv[i]);
+        //     } printf("\n"); 
+        //   // #endif
+
+        //   // critical part
+        //   這裡可能要修改：不能是小於才加進去，應該是一個一個比，連比四個，看可以差在哪裡，這四個人的順序不重要
+        //   重要的是要把 cost 最大的那個蓋掉！
+        //   if (acc_dag_cost < cost_of_ecls[which_ecls]) {
+        //     cost_of_ecls[which_ecls] = acc_dag_cost;
+        //     best_ende_of_ecls[which_ecls] = ende;
+        //   }
+        // }
 
       } // for ende 
 
-      // #ifdef PRINT_LOG
+      #ifdef PRINT_LOG
         printf("Finished level %d (%d)\n", lvl, _max_level); 
         printf("\ncost_of_ecls:\n");
         for (size_t i = 0; i < cost_of_ecls.size(); i++) {
           printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
         }
         printf("\n------------------------------------\n");
-      // #endif
+      #endif
     } // for lvl
-    // #ifdef PRINT_LOG
+    #ifdef PRINT_LOG
       printf("FINISHED itr = %u\n===========================================================\n\n", itr);
-    // #endif
+    #endif
   } // for iter 
 
-// #ifdef PRINT_LOG
+#ifdef PRINT_LOG
   printf("PRT:\n");
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     printf("ende = %u: ", ende); 
@@ -1561,7 +1641,7 @@ double G_EXT::_cpu_dag_refinement()
     printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
   }
   printf("\n");
-// #endif 
+#endif 
 
   // Get best tree cost 
   double dag_ret = 0.0; 

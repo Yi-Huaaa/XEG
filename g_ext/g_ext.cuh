@@ -132,6 +132,7 @@ private:
   /* bibi try */
   double _cpu_best_dag();   
   double _get_dag_cost(const std::vector<uint32_t>& vec, uint32_t* prv);
+  double _get_dag_cost2(const std::vector<uint32_t>& vec);
   bool _union_vector(const uint32_t len, std::vector<uint32_t>& va, const uint32_t* vb);
   /* bibi try */
 
