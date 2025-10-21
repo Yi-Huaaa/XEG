@@ -995,7 +995,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   _clear_redundant_endes(picked_endes);
 
   // Levelization the final graph
-  _update_deg(true, _in_subgraph, level); 
+  _update_deg_and_adjs(_in_subgraph);
   _top_down_levelize(_in_subgraph, level);
   _ende_in_level.resize(_max_level, std::vector<uint32_t>());
   for (uint32_t i = 0; i < level.size(); i++) {
@@ -1020,6 +1020,12 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     } printf("\n"); 
   }
   printf("\n"); 
+  printf("_adj\n");
+  _print_adj(_adj);
+  printf("\n");
+  printf("_inv_adj\n");
+  _print_adj(_inv_adj);
+  printf("\n");
 #endif
 #ifdef BIBI_CHECK
   uint32_t bibi_acc_2 = 0;
@@ -1071,6 +1077,73 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
   #endif  
 }
 
+
+void G_EXT::_update_deg_and_adjs(const std::vector<bool>& picked) 
+{
+  #ifdef PRINT_LOG 
+    printf("\nInside G_EXT::_update_deg_and_adjs()\n");
+    printf("Pre:\n"); 
+    _print_degree(true, picked);
+    _print_degree(false, picked);
+    printf("\n"); 
+    printf("_adj\n");
+    _print_adj(_adj);
+    printf("\n");
+    printf("_inv_adj\n");
+    _print_adj(_inv_adj);
+    printf("\n");  
+  #endif
+
+  // init 
+  _indegree.assign(_num_ende, 0);
+  _inv_indegree.assign(_num_ende, 0);  
+
+  for (uint32_t u = 0; u < _adj.size(); u++) {
+    if (!picked[u]) {
+      _adj[u].clear();   // 該 node 不在子圖內，移除所有邊
+      continue;
+    }
+
+    for (auto it = _adj[u].begin(); it != _adj[u].end(); ) {
+      if (!picked[*it]) it = _adj[u].erase(it);
+      else ++it;
+    }
+  }
+
+  for (uint32_t v = 0; v < _inv_adj.size(); v++) {
+    if (!picked[v]) {
+      _inv_adj[v].clear();
+      continue;
+    }
+
+    for (auto it = _inv_adj[v].begin(); it != _inv_adj[v].end(); ) {
+      if (!picked[*it]) it = _inv_adj[v].erase(it);
+      else ++it;
+    }
+  }
+
+  for (uint32_t u = 0; u < _adj.size(); u++) {
+    if (!picked[u]) continue;
+    for (uint32_t v : _adj[u]) {
+      _indegree[v]++;
+      _inv_indegree[u]++;
+    }
+  }
+
+  #ifdef PRINT_LOG
+    printf("Post:\n"); 
+    _print_degree(true, picked);
+    _print_degree(false, picked);
+    printf("\n"); 
+    printf("_adj\n");
+    _print_adj(_adj);
+    printf("\n");
+    printf("_inv_adj\n");
+    _print_adj(_inv_adj);
+    printf("\n");    
+  #endif  
+}
+
 void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg, 
                 const std::vector<bool>& picked_endes,
                 const std::vector<std::unordered_set<uint32_t>>& adj,
@@ -1099,14 +1172,12 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
   #endif
 
   // BFS: top-down levelization 
-  // ende_in_level.push_back(std::vector<uint32_t>());
   int cur_level = 0;
   while (!q.empty()) {
     size_t layer = q.size();
     for (size_t t = 0; t < layer; ++t) {
       uint32_t u = q.front(); q.pop();
       level[u] = cur_level;
-      // ende_in_level[cur_level].push_back(u); 
       #ifdef PRINT_LOG
         printf("  Processing enode %u\n", u);
       #endif
@@ -1124,8 +1195,6 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
       }
     }
     ++cur_level;
-    // if (!q.empty())
-    //   ende_in_level.push_back(std::vector<uint32_t>());  
   }
   // update _max_level
   _max_level = cur_level; 
@@ -1344,6 +1413,12 @@ void G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes)
       printf("%u, ", leaves[r]); 
     }
   } printf("\n");   
+  printf("picked_endes now:  ");
+  for (uint32_t i = 0; i < picked_endes.size(); i++) {
+    if (picked_endes[i]) {
+      printf("%u, ", i);
+    } 
+  } printf("\n");
 #endif 
 
   get_nodes_in_subgraph(roots, leaves, _adj, _inv_adj, picked_endes);
@@ -1860,33 +1935,33 @@ void G_EXT::_cpsat_solver(
 #endif
 
 
-  // // Part 8. 添加 warm start hint：依據 picked_endes
-  // for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
-  //   const auto& enodes = _ecls_its_ende[cid];
-  //   if (enodes.empty()) continue;
-  //   const auto& vars = nodes_vars[cid];
+  // Part 8. 添加 warm start hint：依據 picked_endes
+  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
+    const auto& enodes = _ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+    const auto& vars = nodes_vars[cid];
 
-  //   uint32_t best_idx = best_ende_of_ecls[cid];
-  //   if (vars.find(best_idx) == vars.end()) continue;
+    uint32_t best_idx = best_ende_of_ecls[cid];
+    if (vars.find(best_idx) == vars.end()) continue;
 
-  //   // 為該 eclass 的所有 enode 設 hint (picked = 1, 其他 = 0)
-  //   for (uint32_t ende_idx : enodes) {
-  //     if (vars.find(ende_idx) == vars.end()) continue;
+    // 為該 eclass 的所有 enode 設 hint (picked = 1, 其他 = 0)
+    for (uint32_t ende_idx : enodes) {
+      if (vars.find(ende_idx) == vars.end()) continue;
 
-  //     int hint_val = (ende_idx == best_idx && picked_endes[best_idx]) ? 1 : 0;
-  //     cp_model.AddHint(vars.at(ende_idx), hint_val);
+      int hint_val = (ende_idx == best_idx && picked_endes[best_idx]) ? 1 : 0;
+      cp_model.AddHint(vars.at(ende_idx), hint_val);
 
-  //     #ifdef PRINT_LOG
-  //       if (hint_val == 1) {
-  //         hint_count_1++;
-  //         printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 1, "<= picked best enode");
-  //       } else {
-  //         hint_count_0++;
-  //         printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 0, "");
-  //       }
-  //     #endif
-  //   }
-  // }
+      #ifdef PRINT_LOG
+        if (hint_val == 1) {
+          hint_count_1++;
+          printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 1, "<= picked best enode");
+        } else {
+          hint_count_0++;
+          printf("%-10u %-10u %-10d %-10s\n", cid, ende_idx, 0, "");
+        }
+      #endif
+    }
+  }
 
 #ifdef PRINT_LOG
   printf("---------------------------------------------------------\n");
@@ -2035,10 +2110,10 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
   
   std::cout << "G_EXT::_print_levelization(): " << a ;
   printf("=== Levelization result ===\n");
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    if (level[ende] >= 0)
-      printf("ENode %u -> Level %d\n", ende, level[ende]);
-  }
+  // for (uint32_t ende = 0; ende < _num_ende; ende++) {
+  //   if (level[ende] >= 0)
+  //     printf("ENode %u -> Level %d\n", ende, level[ende]);
+  // }
  
    // Construct ende_in_level
   std::vector<std::vector<uint32_t>> ende_in_level;

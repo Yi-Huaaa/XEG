@@ -151,6 +151,7 @@ private:
     void _update_deg(const bool need_to_update, 
       const std::vector<bool>& picked_endes,
       const std::vector<int>& level);
+    void _update_deg_and_adjs(const std::vector<bool>& picked);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
       const std::vector<bool>& picked_endes,
       const std::vector<std::unordered_set<uint32_t>>& adj,
