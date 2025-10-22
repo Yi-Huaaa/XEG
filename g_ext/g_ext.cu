@@ -1102,17 +1102,27 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   // Clear redundant enodes
   _clear_redundant_endes(picked_endes);
 
-  // Levelization the final graph
-  _update_deg_and_adjs(_in_subgraph);
-  _top_down_levelize(_in_subgraph, level);
-  _ende_in_level.resize(_max_level, std::vector<uint32_t>());
-  for (uint32_t i = 0; i < level.size(); i++) {
-    if (!_in_subgraph[i]) continue;
-    int lvl = level[i]; 
-    _ende_in_level[lvl].push_back(i); 
+  // Re-constructing data for second times ILP solver
+  _ecls_its_ende_newG.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
+  for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
+    for (uint32_t ende : _ecls_its_ende[ecls]) {
+      if (!_in_subgraph[ende]) continue;
+      _ecls_its_ende_newG[ecls].push_back(ende);
+    }
   }
 
-  _level = level;
+
+  // // Levelization the final graph
+  // _update_deg_and_adjs(_in_subgraph);
+  // _top_down_levelize(_in_subgraph, level);
+  // _ende_in_level.resize(_max_level, std::vector<uint32_t>());
+  // for (uint32_t i = 0; i < level.size(); i++) {
+  //   if (!_in_subgraph[i]) continue;
+  //   int lvl = level[i]; 
+  //   _ende_in_level[lvl].push_back(i); 
+  // }
+
+  // _level = level;
 
 #ifdef PRINT_LOG
   std::cout << "BIBIBI CHECK: \n";
@@ -1891,27 +1901,29 @@ double G_EXT::_cpu_dag_refinement()
 // =========================== ILP Solver functions =========================== // 
 using namespace operations_research;
 using namespace sat;
-
 void G_EXT::_cpsat_solver(
   const double time_limit,
-  const std::vector<double>& cost_of_ecls,
-  const std::vector<double>& cost_of_ende,
+  const std::vector<std::vector<uint32_t>>& ecls_its_ende, 
+  const std::vector<uint32_t>& ende_child,
+  const std::vector<uint32_t>& ende_child_ptr,
+  const std::vector<uint32_t>& root_eclass_id,
+  const std::vector<float>& ende_cost,
   const std::vector<uint32_t>& best_ende_of_ecls,
   const std::vector<bool>& picked_endes
 ) {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_cpsat_solver() Time_limit = %.2lf (sec)\n", time_limit);
 
-  printf("_ecls_its_ende\n");
-  for (uint32_t i = 0; i < _ecls_its_ende.size(); i++) {
-    bool alive = (_ecls_its_ende[i].size() == 0) ? (false) : (true); 
+  printf("ecls_its_ende\n");
+  for (uint32_t i = 0; i < ecls_its_ende.size(); i++) {
+    bool alive = (ecls_its_ende[i].size() == 0) ? (false) : (true); 
     if (alive) {
       printf("eclass %u, activate; with enodes: ", i); 
     } else {
       printf("eclass %u, deactivate;", i); 
     }
-    for (uint32_t j = 0; j < _ecls_its_ende[i].size(); j++) {
-      printf("%u, ", _ecls_its_ende[i][j]); 
+    for (uint32_t j = 0; j < ecls_its_ende[i].size(); j++) {
+      printf("%u, ", ecls_its_ende[i][j]); 
     }
     printf("\n");  
   }
@@ -1924,8 +1936,8 @@ void G_EXT::_cpsat_solver(
   std::unordered_map<uint32_t, std::unordered_map<uint32_t, BoolVar>> nodes_vars; // ClassId / NodeId
 
   CpModelBuilder cp_model;
-  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
-    const auto& enodes = _ecls_its_ende[cid];
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;  // skip dead eclasses
     
     active[cid] = cp_model.NewBoolVar();
@@ -1941,24 +1953,29 @@ void G_EXT::_cpsat_solver(
   }
 
 #ifdef PRINT_LOG
-  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
-    const auto& enodes = _ecls_its_ende[cid];
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;
     printf("EClass %u: %zu enodes\n", cid, enodes.size());
   }
 #endif
   
   // 对于每个节点，如果其被选中，则要求所有其子 e-class 也必须被激活
-  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
-    const auto& enodes = _ecls_its_ende[cid];
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;
 
     const auto& vars = nodes_vars[cid];
     for (uint32_t ende_idx : enodes) {
-      uint32_t start = _ende_child_ptr[ende_idx];
-      uint32_t end   = _ende_child_ptr[ende_idx+1];
+      uint32_t start = ende_child_ptr[ende_idx];
+      uint32_t end   = ende_child_ptr[ende_idx+1];
       for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t chd_ecls_idx = _ende_child[jj];
+        uint32_t chd_ecls_idx = ende_child[jj];
+        if (active.find(chd_ecls_idx) == active.end()) { // 這個 if branch 是搭配我們先建立的 graph 用的
+          // 該 child eclass 沒 enode，代表這個 enode 不可用
+          cp_model.AddEquality(vars.at(ende_idx), 0);
+          continue;
+        }
         cp_model.AddLessOrEqual(vars.at(ende_idx), active[chd_ecls_idx]);
         #ifdef PRINT_LOG
           // log (parent enode → child_ecls)
@@ -1978,14 +1995,14 @@ void G_EXT::_cpsat_solver(
 
   // Part 3. 目标函数：最小化所有选中节点的成本
   LinearExpr objective;
-  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
-    const auto& enodes = _ecls_its_ende[cid];
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;
 
     const auto& vars = nodes_vars[cid];
     for (uint32_t ende_idx : enodes) {
       // const Node &node = egraph[ende_idx];
-      const double cost = _ende_cost[ende_idx];
+      const double cost = ende_cost[ende_idx];
       int int_cost = static_cast<int>(cost);
       if (int_cost != 0) {
         if (int_cost == 1) {
@@ -2002,8 +2019,8 @@ void G_EXT::_cpsat_solver(
   cp_model.Minimize(objective);
 
   // Part 4. 强制根 e-class 激活
-  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
-    uint32_t root_idx = _root_eclass_id[r];
+  for (uint32_t r = 0; r < root_eclass_id.size(); r++) {
+    uint32_t root_idx = root_eclass_id[r];
     cp_model.AddEquality(active[root_idx], 1);
     #ifdef PRINT_LOG
       root_log.push_back(root_idx);
@@ -2027,23 +2044,23 @@ void G_EXT::_cpsat_solver(
 #endif
 
   // Part 5. 为每个 e-class 创建层次变量，用于防止环路（范围 [0, num_classes]）
-  int num_classes = _ecls_its_ende.size();
+  int num_classes = ecls_its_ende.size();
   std::unordered_map<uint32_t, IntVar, std::hash<uint32_t>> level;
-  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
     level[cid] = cp_model.NewIntVar(Domain(0, num_classes));
   }
 
   // Part 6. 添加约束：如果一个节点被选中，则其所有子 e-class 的层次至少比当前 e-class 高 1
-  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
-    const auto& enodes = _ecls_its_ende[cid];
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;
 
     const auto& vars = nodes_vars[cid];
     for (uint32_t ende_idx : enodes) {
-      uint32_t start = _ende_child_ptr[ende_idx];
-      uint32_t end   = _ende_child_ptr[ende_idx+1];
+      uint32_t start = ende_child_ptr[ende_idx];
+      uint32_t end   = ende_child_ptr[ende_idx+1];
       for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t child_cid = _ende_child[jj];
+        uint32_t child_cid = ende_child[jj];
         cp_model.AddGreaterOrEqual(LinearExpr(level[child_cid]) - level[cid], 1)
             .OnlyEnforceIf(vars.at(ende_idx));
       }
@@ -2053,8 +2070,6 @@ void G_EXT::_cpsat_solver(
 
   // Part 7. 读取 zero_node.mst 文件，将对应节点变量固定为 0
   // Skip it now, this is the pruning part from e-boost, e-boost prunes more enodes with setting larger alpha
-
-
 
 // #ifdef PRINT_LOG
 //   printf("==== Level Variable Allocation (防环层级变量建立) ====\n");
@@ -2086,8 +2101,8 @@ void G_EXT::_cpsat_solver(
 
 
   // Part 8. 添加 warm start hint：依據 picked_endes
-  for (uint32_t cid = 0; cid < _ecls_its_ende.size(); ++cid) {
-    const auto& enodes = _ecls_its_ende[cid];
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;
     const auto& vars = nodes_vars[cid];
 
@@ -2158,18 +2173,18 @@ void G_EXT::_cpsat_solver(
     std::cout << "Runtime = " << response.wall_time() << " (s)\n";
     std::cout << "Feasible solutions found = " << num_solutions << "\n";
 
-    // Optional: 印出所有 active 節點
-    std::cout << "==== Active enodes (solution) ====\n";
-    for (const auto& [cid, node_map] : nodes_vars) {
-      for (const auto& [node_id, var] : node_map) {
-        bool value = SolutionBooleanValue(response, var);
-        if (value) {
-          std::cout << "EClass " << cid
-                    << " -> enode " << node_id
-                    << " (cost " << _ende_cost[node_id] << ")\n";
-        }
-      }
-    }
+    // // Optional: 印出所有 active 節點
+    // std::cout << "==== Active enodes (solution) ====\n";
+    // for (const auto& [cid, node_map] : nodes_vars) {
+    //   for (const auto& [node_id, var] : node_map) {
+    //     bool value = SolutionBooleanValue(response, var);
+    //     if (value) {
+    //       std::cout << "EClass " << cid
+    //                 << " -> enode " << node_id
+    //                 << " (cost " << ende_cost[node_id] << ")\n";
+    //     }
+    //   }
+    // }
     std::cout << "=========================================\n";
   } else {
     std::cout << "No feasible solution found.\n";

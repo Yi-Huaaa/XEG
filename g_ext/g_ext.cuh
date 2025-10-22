@@ -74,16 +74,37 @@ public:
 
     // if (ILP_solver) {
     //   _cpsat_solver(ILP_time_limit, 
-    //                 cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
+    //                 _ecls_its_ende, 
+    //                 _ende_child, 
+    //                 _ende_child_ptr, 
+    //                 _root_eclass_id, 
+    //                 _ende_cost,
+    //                 best_ende_of_ecls, 
+    //                 picked_endes);
     // }
-
-    // start = std::chrono::steady_clock::now();
-    //   _reconstruct_graph(cost_of_ecls, cost_of_ende, 
-    //                     best_ende_of_ecls, picked_endes); 
-    // end = std::chrono::steady_clock::now();
-    // duration = end - start;
-    // std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     
+    std::vector<bool> picked_endes_tmp = picked_endes;
+
+    start = std::chrono::steady_clock::now();
+      _reconstruct_graph(cost_of_ecls, cost_of_ende, 
+                        best_ende_of_ecls, picked_endes); 
+    end = std::chrono::steady_clock::now();
+    duration = end - start;
+    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    
+
+    if (ILP_solver) {
+      _cpsat_solver(ILP_time_limit, 
+                    _ecls_its_ende_newG, 
+                    _ende_child, 
+                    _ende_child_ptr, 
+                    _root_eclass_id, 
+                    _ende_cost,
+                    best_ende_of_ecls, 
+                    picked_endes_tmp);
+    }
+
+
     // start = std::chrono::steady_clock::now();
     //   double cpu_dag_refine = _cpu_dag_refinement();
     // end = std::chrono::steady_clock::now();
@@ -184,8 +205,11 @@ private:
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
-    const std::vector<double>& cost_of_ecls,
-    const std::vector<double>& cost_of_ende,
+    const std::vector<std::vector<uint32_t>>& ecls_its_ende, 
+    const std::vector<uint32_t>& ende_child,
+    const std::vector<uint32_t>& ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id,
+    const std::vector<float>& ende_cost,
     const std::vector<uint32_t>& best_ende_of_ecls,
     const std::vector<bool>& picked_endes);
 
@@ -226,6 +250,8 @@ private:
   std::vector<bool> _in_subgraph;
   std::vector<int> _level;
   std::vector<std::vector<uint32_t>> _ende_in_level;
+
+  std::vector<std::vector<uint32_t>> _ecls_its_ende_newG;
 
 
   // Print function
