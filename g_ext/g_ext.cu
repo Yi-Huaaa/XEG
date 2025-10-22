@@ -1,7 +1,9 @@
 #include "g_ext.cuh"
 
 // #define PRINT_LOG
+// #define CHECK_CYCLE
 #define BIBI_CHECK
+// #define BIBI_CHECK2
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -292,6 +294,7 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
                       _ende_child_ptr,
                       _root_eclass_id);   
 #endif 
+#ifdef BIBI_CHECK2
   std::unordered_map<std::string, uint32_t> _ecls_name_to_id;
   _print_read_in_data(false, 
                       _num_ecls,
@@ -304,6 +307,78 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
                       _ende_child,
                       _ende_child_ptr,
                       _root_eclass_id);  
+#endif
+  
+#ifdef CHECK_CYCLE
+  // ======================================
+  // SCC 檢查：確認 prune 後的 e-graph 是否仍有 cycle
+  // ======================================
+  {
+    std::vector<std::vector<uint32_t>> adj(_num_ecls);
+    // 建立 eclass-level adjacency
+    for (uint32_t ende = 0; ende < _num_ende; ++ende) {
+      uint32_t start = _ende_child_ptr[ende];
+      uint32_t end   = _ende_child_ptr[ende + 1];
+      uint32_t parent_ecls = _ende_ecls[ende];
+      for (uint32_t jj = start; jj < end; ++jj) {
+        uint32_t child_ecls = _ende_child[jj];
+        adj[parent_ecls].push_back(child_ecls);
+      }
+    }
+
+    // Tarjan's algorithm
+    uint32_t index = 0;
+    std::vector<int> dfn(_num_ecls, -1), low(_num_ecls, -1);
+    std::vector<bool> in_stack(_num_ecls, false);
+    std::stack<uint32_t> st;
+    std::vector<std::vector<uint32_t>> scc_list;
+
+    std::function<void(uint32_t)> tarjan = [&](uint32_t u) {
+      dfn[u] = low[u] = index++;
+      st.push(u);
+      in_stack[u] = true;
+
+      for (uint32_t v : adj[u]) {
+        if (dfn[v] == -1) {
+          tarjan(v);
+          low[u] = std::min(low[u], low[v]);
+        } else if (in_stack[v]) {
+          low[u] = std::min(low[u], dfn[v]);
+        }
+      }
+
+      if (low[u] == dfn[u]) {
+        std::vector<uint32_t> scc;
+        while (true) {
+          uint32_t w = st.top();
+          st.pop();
+          in_stack[w] = false;
+          scc.push_back(w);
+          if (w == u) break;
+        }
+        if (scc.size() > 1) { // real cycle
+          scc_list.push_back(scc);
+        }
+      }
+    };
+
+    for (uint32_t i = 0; i < _num_ecls; ++i) {
+      if (dfn[i] == -1) tarjan(i);
+    }
+
+    if (!scc_list.empty()) {
+      std::cout << "⚠️  Found " << scc_list.size() << " strongly connected components (cycles) after pruning.\n";
+      for (size_t i = 0; i < scc_list.size(); ++i) {
+        std::cout << "  SCC " << i << " (size=" << scc_list[i].size() << "): ";
+        for (uint32_t e : scc_list[i]) std::cout << e << " ";
+        std::cout << "\n";
+      }
+    } else {
+      std::cout << "✅  Graph is acyclic (no SCC found after pruning).\n";
+    }
+  }
+#endif
+
 }
 
 // =========================== TREE/DAG functions =========================== // 
@@ -473,6 +548,27 @@ double G_EXT::_compute_dag_cost(
   printf("\n");
   _print_degree(true, picked_endes);  
   _print_degree(false, picked_endes);  
+#endif
+#ifdef BIBI_CHECK2
+  printf("\ninit_pick = [");
+  for (uint32_t i = 0; i < picked_endes.size(); i++) {
+    if (picked_endes[i]) {
+      printf("%u, ", i);
+    }
+  } printf("]\n\n");
+
+
+  printf("init_pick_adj=[\n");
+  for (uint32_t fm = 0; fm < _adj.size(); fm++) {
+    if (!picked_endes[fm]) continue;
+    printf("[");
+    for (const auto& elem : _adj[fm]) {
+      MY_CHECK(picked_endes[elem] == true, "picked_endes[elem] == true");
+      printf("%u, ", elem);
+    }
+    printf("], \n");
+  }
+  printf("]\n\n"); 
 #endif
   return dag_ret;
 }
@@ -1021,10 +1117,6 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
 #ifdef PRINT_LOG
   std::cout << "BIBIBI CHECK: \n";
   printf("=== Levelization result ===\n");
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    if (_level[ende] >= 0)
-      printf("ENode %u -> _level %d\n", ende, _level[ende]);
-  }  
   for (uint32_t lvl = 0; lvl < _ende_in_level.size(); lvl++) {
     printf("level %u: ", lvl); 
     for (uint32_t ende = 0; ende < _ende_in_level[lvl].size(); ende++) {
@@ -1057,6 +1149,37 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     }
   }
 #endif  
+
+#ifdef BIBI_CHECK2
+  std::cout << "BIBIBI CHECK: \n";
+  printf("=== Levelization result ===\n");
+  for (uint32_t lvl = 0; lvl < _ende_in_level.size(); lvl++) {
+    printf("level %u: ", lvl); 
+    for (uint32_t ende = 0; ende < _ende_in_level[lvl].size(); ende++) {
+      printf("%u, ", _ende_in_level[lvl][ende]); 
+    } printf("\n"); 
+  }
+  printf("\n");
+  
+  printf("_in_subgraph = [");
+  for (uint32_t ende = 0; ende < _in_subgraph.size(); ende++) {
+    if (!_in_subgraph[ende]) continue;
+    printf("%u, ", ende);
+  }
+  printf("]\n\n"); 
+
+  printf("_in_subgraph_adj=[\n");
+  for (uint32_t fm = 0; fm < _adj.size(); fm++) {
+    if (!_in_subgraph[fm]) continue;
+    printf("[");
+    for (const auto& elem : _adj[fm]) {
+      MY_CHECK(_in_subgraph[elem] == true, "_in_subgraph[elem] == true");
+      printf("%u, ", elem);
+    }
+    printf("], \n");
+  }
+  printf("]\n\n");   
+#endif
 }
 
 void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes, 
@@ -1714,13 +1837,13 @@ double G_EXT::_cpu_dag_refinement()
 #endif 
 
   // Get best tree cost 
-  這裡下面應該是有 bug 要 debug
-  然後現在不知道為什麼找出來會是 inf
+  // 這裡上面應該是有 bug 要 debug
+  // 然後現在不知道為什麼找出來會是 inf
   double dag_ret = 0.0; 
   std::unordered_set<uint32_t> final_pick_endes;
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
     uint32_t r_ecls = _root_eclass_id[r];
-    uint32_t r_ende = 0; 
+    uint32_t r_ende = _ecls_its_ende[r_ecls][0]; 
     double cmp = std::numeric_limits<double>::infinity();
     
     for (uint32_t ende : _ecls_its_ende[r_ecls]) {
@@ -1736,18 +1859,19 @@ double G_EXT::_cpu_dag_refinement()
     for (uint32_t i = 0; i < _num_ecls; i++) {
       if (prv[i] != UINT32_MAX) {
         final_pick_endes.insert(prv[i]);
+        // printf("Here has insertion: prv[i] = %u\n", prv[i]);
       }
     }
   }
-  // printf("final_pick_endes\n");
+  // printf("final_pick_endes (sz) = %lu\n", final_pick_endes.size());
   for (uint32_t ende : final_pick_endes) {
     dag_ret += _ende_cost[ende];
-    printf("ende = %u, _ende_cost[%u] = %.2lf\n", ende, ende, _ende_cost[ende]);
+    // printf("ende = %u, _ende_cost[%u] = %.2lf\n", ende, ende, _ende_cost[ende]);
   }
-  std::cout << "\nRoot eclasses:\n";
-  for (auto r : _root_eclass_id) {
-    std::cout << "  " << r << "\n";
-  }
+  // std::cout << "\nRoot eclasses:\n";
+  // for (auto r : _root_eclass_id) {
+  //   std::cout << "  " << r << "\n";
+  // }
   
   
   return dag_ret;
@@ -2051,6 +2175,13 @@ void G_EXT::_cpsat_solver(
     std::cout << "No feasible solution found.\n";
   }
 }
+
+
+
+
+
+
+
 
 
 // =========================== Print functions =========================== // 

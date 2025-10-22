@@ -77,19 +77,19 @@ public:
     //                 cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
     // }
 
-    start = std::chrono::steady_clock::now();
-      _reconstruct_graph(cost_of_ecls, cost_of_ende, 
-                        best_ende_of_ecls, picked_endes); 
-    end = std::chrono::steady_clock::now();
-    duration = end - start;
-    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    // start = std::chrono::steady_clock::now();
+    //   _reconstruct_graph(cost_of_ecls, cost_of_ende, 
+    //                     best_ende_of_ecls, picked_endes); 
+    // end = std::chrono::steady_clock::now();
+    // duration = end - start;
+    // std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     
-    start = std::chrono::steady_clock::now();
-      double cpu_dag_refine = _cpu_dag_refinement();
-    end = std::chrono::steady_clock::now();
-    duration = end - start;
-    printf("CPU RESULTS: cpu_dag_refine = %.2lf\n", cpu_dag_refine);
-    std::cout << "CPU DAG Refinement Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    // start = std::chrono::steady_clock::now();
+    //   double cpu_dag_refine = _cpu_dag_refinement();
+    // end = std::chrono::steady_clock::now();
+    // duration = end - start;
+    // printf("CPU RESULTS: cpu_dag_refine = %.2lf\n", cpu_dag_refine);
+    // std::cout << "CPU DAG Refinement Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
 
     // // GPU version
     // float gpuTime = 0.;
