@@ -65,13 +65,6 @@ public:
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
-    // start = std::chrono::steady_clock::now();
-    //   double bibi = _cpu_best_dag();
-    // end = std::chrono::steady_clock::now();
-    // duration = end - start;
-    // std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    // printf("CPU RESULTS: best_tree_dag_cpu = %.2lf\n", bibi);
-
     // if (ILP_solver) {
     //   _cpsat_solver(ILP_time_limit, 
     //                 _ecls_its_ende, 
@@ -82,7 +75,7 @@ public:
     //                 best_ende_of_ecls, 
     //                 picked_endes);
     // }
-    
+
     std::vector<bool> picked_endes_tmp = picked_endes;
 
     start = std::chrono::steady_clock::now();
@@ -152,13 +145,7 @@ private:
     std::vector<bool>& picked_endes,
     std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
   std::pair<double, double> _gpu_best_tree();
-  /* DAG level relxation */
-  /* bibi try */
-  double _cpu_best_dag();   
-  double _get_dag_cost(const std::vector<uint32_t>& vec, uint32_t* prv);
-  double _get_dag_cost2(const std::vector<uint32_t>& vec);
-  bool _union_vector(const uint32_t len, std::vector<uint32_t>& va, const uint32_t* vb);
-  /* bibi try */
+
 
 
 
@@ -173,8 +160,7 @@ private:
   void _bottom_up_levelize(const std::vector<bool>& picked_endes,
     std::vector<int>& level);
     void _update_deg(const bool need_to_update, 
-      const std::vector<bool>& picked_endes,
-      const std::vector<int>& level);
+      const std::vector<bool>& picked_endes);
     void _update_deg_and_adjs(const std::vector<bool>& picked);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
       const std::vector<bool>& picked_endes,
@@ -194,14 +180,7 @@ private:
       const std::vector<std::unordered_set<uint32_t>>& adj,
       const std::vector<std::unordered_set<uint32_t>>& inv_adj,
       const std::vector<bool>& picked_endes);
-  double _cpu_dag_refinement();
-    void _dfs_combine_enodes(uint32_t ende, size_t idx,
-      const std::vector<std::vector<uint32_t>>& cand_by_eclass,
-      const std::vector<std::vector<uint32_t>>& path_record_table,
-      std::unordered_set<uint32_t> cur_set,
-      double cur_cost,
-      double& best_cost,
-      std::vector<uint32_t>& best_union);
+
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
@@ -212,13 +191,6 @@ private:
     const std::vector<float>& ende_cost,
     const std::vector<uint32_t>& best_ende_of_ecls,
     const std::vector<bool>& picked_endes);
-
-
-
-
-
-
-
 
 
 
@@ -237,8 +209,6 @@ private:
   std::vector<std::vector<uint32_t>> _ecls_its_ende; // enodes under that eclasses
 
   // For refinement 
-  std::vector<uint32_t> _ecls_parnt; // eclass point to its parent enode
-  std::vector<uint32_t> _ecls_parnt_ptr; // eclass point to its parent enode
   std::vector<std::unordered_set<uint32_t>> _global_adj;
   std::vector<std::unordered_set<uint32_t>> _global_inv_adj;
   // For new graph G
@@ -248,8 +218,6 @@ private:
   std::vector<uint32_t> _inv_indegree;
   int _max_level = -1;  // init as -1
   std::vector<bool> _in_subgraph;
-  std::vector<int> _level;
-  std::vector<std::vector<uint32_t>> _ende_in_level;
 
   std::vector<std::vector<uint32_t>> _ecls_its_ende_newG;
 

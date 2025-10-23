@@ -2,8 +2,7 @@
 
 // #define PRINT_LOG
 // #define CHECK_CYCLE
-#define BIBI_CHECK
-// #define BIBI_CHECK2
+// #define BIBI_CHECK
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -294,20 +293,6 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
                       _ende_child_ptr,
                       _root_eclass_id);   
 #endif 
-#ifdef BIBI_CHECK2
-  std::unordered_map<std::string, uint32_t> _ecls_name_to_id;
-  _print_read_in_data(false, 
-                      _num_ecls,
-                      _num_ende,
-                      _ende_name,
-                      _ende_op,
-                      _ende_cost,
-                      _ecls_name_to_id,
-                      _ende_ecls,
-                      _ende_child,
-                      _ende_child_ptr,
-                      _root_eclass_id);  
-#endif
   
 #ifdef CHECK_CYCLE
   // ======================================
@@ -549,262 +534,9 @@ double G_EXT::_compute_dag_cost(
   _print_degree(true, picked_endes);  
   _print_degree(false, picked_endes);  
 #endif
-#ifdef BIBI_CHECK2
-  printf("\ninit_pick = [");
-  for (uint32_t i = 0; i < picked_endes.size(); i++) {
-    if (picked_endes[i]) {
-      printf("%u, ", i);
-    }
-  } printf("]\n\n");
 
-
-  printf("init_pick_adj=[\n");
-  for (uint32_t fm = 0; fm < _adj.size(); fm++) {
-    if (!picked_endes[fm]) continue;
-    printf("[");
-    for (const auto& elem : _adj[fm]) {
-      MY_CHECK(picked_endes[elem] == true, "picked_endes[elem] == true");
-      printf("%u, ", elem);
-    }
-    printf("], \n");
-  }
-  printf("]\n\n"); 
-#endif
   return dag_ret;
 }
-
-// BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY 
-
-bool G_EXT::_union_vector(const uint32_t len, std::vector<uint32_t>& va, const uint32_t* vb)
-{
-  for (uint32_t i = 0; i < len; ++i) {
-    if (va[i] == vb[i]) { // 他們可以是兩個都是同一個 enode || 兩個都是 UINT32_MAX (aka uninitialized) -> 可以合併
-      va[i] = va[i];
-    } else if (va[i] == UINT32_MAX && vb[i] != UINT32_MAX) { // va[i] uninitialized; vb[i] 有指定 value -> 可以合併
-      va[i] = vb[i]; 
-    } else if (va[i] != UINT32_MAX && vb[i] == UINT32_MAX) { // va[i] 有指定 value; vb[i] uninitialized -> 可以合併
-      va[i] = va[i];
-    } else if (va[i] != UINT32_MAX && vb[i] != UINT32_MAX) { // va[i] 有指定 value; vb[i] 有指定 value; -> 不可以合併，合併失敗
-      return false; 
-    } else {
-      printf("?? need to debug...\n");
-      exit(1); 
-    }
-  }
-  return true;
-}
-
-double G_EXT::_get_dag_cost(const std::vector<uint32_t>& vec, uint32_t* prv)
-{
-  double ret = 0.; 
-  for (uint32_t i = 0; i < vec.size(); i++) {
-    uint32_t ende = vec[i];
-    if (ende != UINT32_MAX) {
-      ret += _ende_cost[ende];
-    }
-    prv[i] = ende; 
-  }
-  return ret;
-}
-
-double G_EXT::_get_dag_cost2(const std::vector<uint32_t>& vec)
-{
-  double ret = 0.; 
-  for (uint32_t i = 0; i < vec.size(); i++) {
-    uint32_t ende = vec[i];
-    if (ende != UINT32_MAX) {
-      ret += _ende_cost[ende];
-    }
-  }
-  return ret;
-}
-
-double G_EXT::_cpu_best_dag()
-{
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_cpu_best_dag()\n"); 
-#endif
-
-  std::vector<bool> picked_endes;
-  std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
-  std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
-  
-  // 原本 eclass 只存一個 enode. 現在我想要多存幾個，例如存下兩個該 eclass有最低 cost 的 enode
-  // std::vector<uint32_t> best_ende_of_ecls(_num_ecls, UINT32_MAX);
-  const uint32_t TOPK = 2;
-  std::vector<uint32_t> best_ende_of_ecls(_num_ecls*TOPK, UINT32_MAX);
-  auto get_best_ende_of_ecls_vec = [&](uint32_t x) { return best_ende_of_ecls.data() + x * TOPK; };
-  std::vector<uint32_t> PRT(_num_ende*_num_ecls, UINT32_MAX); // path record table
-  auto get_prv_vec = [&](uint32_t x) { return PRT.data() + x * _num_ecls; };
-  std::vector<bool> vec_updated(_num_ende, false);
-
-  // CPU relaxation
-  bool h_update = true;
- 
-  // 先用 single thread
-  uint32_t itr = 0; 
-  while (h_update) {
-    h_update = false;
-
-    for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
-      bool l_updated = false;
-      printf("Handing enode = %u\n", t_idx);
-      const uint32_t which_ecls = _ende_ecls[t_idx];
-
-      uint32_t* prv = get_prv_vec(t_idx);
-      std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
-      tmp[which_ecls] = t_idx;
-
-      uint32_t start = _ende_child_ptr[t_idx];
-      uint32_t end   = _ende_child_ptr[t_idx+1];
-      uint32_t num_children = end - start;
-
-      // // try top-k possible paths
-      // std::vector<std::vector<uint32_t>> all_combos;
-      // std::vector<uint32_t> limits(num_children, 0);
-
-      // for (uint32_t i = 0; i < num_children; i++) {
-      //   uint32_t chd_ecls = _ende_child[start + i];
-      //   uint32_t* chd_best = get_best_ende_of_ecls_vec(chd_ecls);
-      //   uint32_t valid = 0;
-      //   for (uint32_t k = 0; k < TOPK; k++)
-      //     if (chd_best[k] != UINT32_MAX) valid++;
-      //   limits[i] = valid;
-      // }
-
-      // uint32_t possible_paths = (num_children > 0) ? 1 : 0;
-      // for (uint32_t i = 0; i < num_children; i++) {
-      //   possible_paths *= limits[i];
-      // }
-
-      // // 展開所有組合
-      // all_combos.resize(possible_paths);
-      // for (uint32_t i = 0; i < possible_paths; i++) {
-      //   all_combos[i].resize(num_children);
-
-      //   uint32_t tmp = i;
-      //   for (uint32_t j = 0; j < num_children; j++) {
-      //     uint32_t chd_ecls = _ende_child[start + j];
-      //     uint32_t* chd_best = get_best_ende_of_ecls_vec(chd_ecls);
-      //     uint32_t choice_idx = tmp % limits[j];
-      //     tmp /= limits[j];
-      //     all_combos[i][j] = chd_best[choice_idx];
-      //   }
-      // }
-
-      // 這下面的 for loop 原本一個 eclass 只選一個 enode. 我現在因為會存兩個，因此所有可能都要暴力嘗試一遍，然後再從中選出最好的留下來
-      bool succ = true;
-      for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t chd_ecls = _ende_child[jj];
-        uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
-        printf("\tchildren eclass = %u (with chd_ende = %u)\n", chd_ecls, chd_ende);
-        if (chd_ende == UINT32_MAX) {
-          succ = false;
-          break;
-        }
-        uint32_t* chd_prv = get_prv_vec(chd_ende);
-        succ = _union_vector(_num_ecls, tmp, chd_prv);
-        succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
-        if (!succ) break;
-      }
-
-      if (succ) {
-        printf("\tende %u succ\n", t_idx);
-        
-        // Get dag cost and update prv
-        double acc_dag_cost = _get_dag_cost(tmp, prv);
-        cost_of_ende[t_idx] = acc_dag_cost;
-        vec_updated[t_idx] = true; 
-
-        printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
-        printf("\tprv: "); 
-        for (uint32_t i = 0; i < _num_ecls; i++) {
-          printf("%u, ", prv[i]);
-        } printf("\n"); 
-
-        // critical part
-        if (acc_dag_cost < cost_of_ecls[which_ecls]) {
-          cost_of_ecls[which_ecls] = acc_dag_cost;
-          best_ende_of_ecls[which_ecls] = t_idx;
-          l_updated = true;
-        }
-      }
-      h_update |= l_updated;
-    }
-
-    itr++; 
-    printf("\ncost_of_ecls:\n");
-    for (size_t i = 0; i < cost_of_ecls.size(); i++) {
-      printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
-    }    
-    printf("itr = %u\n=================================\n", itr);
-  } // while
-
-  printf("PRT:\n");
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    printf("ende = %u: ", ende); 
-    for (uint32_t ecls = 0; ecls < _num_ecls; ecls++) {
-      uint32_t idx = ende*_num_ecls + ecls;
-      printf("%u, ", PRT[idx]); 
-    }
-    printf("\n");
-  }
-
-  printf("\ncost_of_ecls:\n");
-  for (size_t i = 0; i < cost_of_ecls.size(); i++) {
-    printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
-  }
-
-  printf("\ncost_of_ende:\n");
-  for (size_t i = 0; i < cost_of_ende.size(); i++) {
-    printf("  [%zu] = %.1f\n", i, cost_of_ende[i]);
-  }
-  printf("\n");  
-
-  printf("\nbest_ende_of_ecls:\n");
-  for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
-    printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
-  }
-  printf("\n");
-
-  // Get best tree cost 
-  double dag_ret = 0.0; 
-  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
-    dag_ret += cost_of_ecls[_root_eclass_id[r]];
-  }
-
-  // bibibi test starts
-  std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
-  tmp[0] = 0;
-  uint32_t* prv = get_prv_vec(0);
-  uint32_t* prv2 = get_prv_vec(2);
-  uint32_t* prv6 = get_prv_vec(6);
-  bool succ = _union_vector(_num_ecls, tmp, prv2);
-  succ = _union_vector(_num_ecls, tmp, prv6);
-  
-  // Get dag cost and update prv
-  double acc_dag_cost = _get_dag_cost(tmp, prv);
-  cost_of_ende[0] = acc_dag_cost;
-  vec_updated[0] = true; 
-
-  printf("\twith acc_dag_cost = %.2lf\n", acc_dag_cost);
-  printf("\tprv: "); 
-  for (uint32_t i = 0; i < _num_ecls; i++) {
-    printf("%u, ", prv[i]);
-  } printf("\n");   
-  // bibibi test ends
-                    
-  return dag_ret;
-}
-
-
-
-
-
-
-
-// BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY BIBI TRY 
-
 
 
 
@@ -1066,7 +798,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
 
   while(updated) {
     // bottom-up levelization && top-down insertion
-    _update_deg(updated, picked_endes, level); 
+    _update_deg(updated, picked_endes); 
     _bottom_up_levelize(picked_endes, level);
     bool tp = _insertion(true, picked_endes, level);
     #ifdef PRINT_LOG
@@ -1074,7 +806,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     #endif
     
     // top-down levelization && bottom-up insertion
-    _update_deg(tp, picked_endes, level); 
+    _update_deg(tp, picked_endes); 
     _top_down_levelize(picked_endes, level);
     bool bu = _insertion(false, picked_endes, level);
     #ifdef PRINT_LOG
@@ -1111,29 +843,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     }
   }
 
-
-  // // Levelization the final graph
-  // _update_deg_and_adjs(_in_subgraph);
-  // _top_down_levelize(_in_subgraph, level);
-  // _ende_in_level.resize(_max_level, std::vector<uint32_t>());
-  // for (uint32_t i = 0; i < level.size(); i++) {
-  //   if (!_in_subgraph[i]) continue;
-  //   int lvl = level[i]; 
-  //   _ende_in_level[lvl].push_back(i); 
-  // }
-
-  // _level = level;
-
 #ifdef PRINT_LOG
-  std::cout << "BIBIBI CHECK: \n";
-  printf("=== Levelization result ===\n");
-  for (uint32_t lvl = 0; lvl < _ende_in_level.size(); lvl++) {
-    printf("level %u: ", lvl); 
-    for (uint32_t ende = 0; ende < _ende_in_level[lvl].size(); ende++) {
-      printf("%u, ", _ende_in_level[lvl][ende]); 
-    } printf("\n"); 
-  }
-  printf("\n"); 
   printf("_adj\n");
   _print_adj(_adj);
   printf("\n");
@@ -1160,40 +870,10 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   }
 #endif  
 
-#ifdef BIBI_CHECK2
-  std::cout << "BIBIBI CHECK: \n";
-  printf("=== Levelization result ===\n");
-  for (uint32_t lvl = 0; lvl < _ende_in_level.size(); lvl++) {
-    printf("level %u: ", lvl); 
-    for (uint32_t ende = 0; ende < _ende_in_level[lvl].size(); ende++) {
-      printf("%u, ", _ende_in_level[lvl][ende]); 
-    } printf("\n"); 
-  }
-  printf("\n");
-  
-  printf("_in_subgraph = [");
-  for (uint32_t ende = 0; ende < _in_subgraph.size(); ende++) {
-    if (!_in_subgraph[ende]) continue;
-    printf("%u, ", ende);
-  }
-  printf("]\n\n"); 
 
-  printf("_in_subgraph_adj=[\n");
-  for (uint32_t fm = 0; fm < _adj.size(); fm++) {
-    if (!_in_subgraph[fm]) continue;
-    printf("[");
-    for (const auto& elem : _adj[fm]) {
-      MY_CHECK(_in_subgraph[elem] == true, "_in_subgraph[elem] == true");
-      printf("%u, ", elem);
-    }
-    printf("], \n");
-  }
-  printf("]\n\n");   
-#endif
 }
 
-void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes, 
-                        const std::vector<int>& level) 
+void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes) 
 {
 #ifdef PRINT_LOG 
   printf("\nInside G_EXT::_update_deg()\n");
@@ -1625,272 +1305,6 @@ void G_EXT::get_nodes_in_subgraph(
     _in_subgraph[i] = from_roots[i] && to_leaves[i];
   }
 }
-
-double G_EXT::_cpu_dag_refinement() 
-{
-#ifdef PRINT_LOG
-  printf("\nInside G_EXT::_cpu_dag_refinement()\n"); 
-#endif
-
-  auto get_idx = [&](uint32_t a, uint32_t b) -> uint32_t {
-    return a * _num_ecls + b;
-  };
-
-  std::vector<bool> picked_endes;
-  std::vector<double> cost_of_ecls(_num_ecls, std::numeric_limits<double>::infinity());
-  std::vector<double> cost_of_ende(_num_ende, std::numeric_limits<double>::infinity());
-  
-  const uint32_t TOPK = 2;
-  std::vector<uint32_t> best_ende_of_ecls(_num_ecls * TOPK, UINT32_MAX);
-  auto get_best_ende_of_ecls_vec = [&](uint32_t x) { return best_ende_of_ecls.data() + x * TOPK; };
-  std::vector<uint32_t> PRT(_num_ende*_num_ecls, UINT32_MAX); // path record table
-  auto get_prv_vec = [&](uint32_t x) { return PRT.data() + x * _num_ecls; };
-  std::vector<bool> vec_updated(_num_ende, false);
-
-  // === bottom-up traversal ===
-  const uint32_t ITER = 1;
-  for (uint32_t itr = 0; itr < ITER; itr++) {
-    for (int lvl = (int)_ende_in_level.size() - 1; lvl >= 0; --lvl) {
-      #ifdef PRINT_LOG
-        printf("level = %d\n", lvl);
-      #endif
-
-      for (uint32_t e = 0; e < _ende_in_level[lvl].size(); e++) {
-        uint32_t ende = _ende_in_level[lvl][e];
-        const uint32_t which_ecls = _ende_ecls[ende];
-        #ifdef PRINT_LOG
-          printf("Handing enode = %u\n", ende);
-        #endif
-
-        uint32_t start = _ende_child_ptr[ende];
-        uint32_t end   = _ende_child_ptr[ende+1];
-        uint32_t num_chd = end-start; 
-        #ifdef PRINT_LOG
-          printf("\tnum_chd = %u\n", num_chd);
-          printf("\tCollect all possible paths:\n");
-        #endif
-
-        // 這裡要搜集所有的可能性
-        std::vector<uint32_t*> chd_ptrs;
-        std::vector<uint32_t> chd_num; chd_num.resize(num_chd, 0); 
-        for (uint32_t jj = start; jj < end; jj++) {
-          uint32_t chd_ecls = _ende_child[jj];
-          uint32_t* chd_ende_vec = get_best_ende_of_ecls_vec(chd_ecls);
-          #ifdef PRINT_LOG
-            printf("\tchd_ecls = %u\n", chd_ecls);
-          #endif
-          chd_ptrs.push_back(chd_ende_vec);
-          for (uint32_t k = 0; k < TOPK; k++) {
-            if (chd_ende_vec[k] != UINT32_MAX) {
-              chd_num[jj-start]++;
-            }
-          }
-          #ifdef PRINT_LOG
-            printf("\t\tchd_num = %u\n", chd_num[jj-start]);
-          #endif  
-        }
-        uint32_t num_paths = (num_chd != 0) ? (1) : (0);
-        for (uint32_t i = 0; i < num_chd; i++) {
-          num_paths *= chd_num[i];
-        }
-        // 如果他 num_chd != 0，但他最後卻找出 0 條 paths, 代表至少有一個 chd enode 不存在在 new G 上，直接換找下一個
-        if (num_chd != 0 && num_paths == 0) {
-          #ifdef PRINT_LOG
-            printf("ende %u fail (some chd enodes not on the new G)\n", ende);
-            printf("\twith best_acc_dag_cost = %.2lf\n", cost_of_ende[ende]);
-            uint32_t* prv = get_prv_vec(ende);
-            printf("\tprv: "); 
-            for (uint32_t i = 0; i < _num_ecls; i++) {
-              printf("%u, ", prv[i]);
-            } printf("\n");             
-          #endif
-          continue;
-        }
-
-
-        // 這裡要建立：combo_paths
-        std::vector<std::vector<uint32_t>> combo_paths;
-        if (num_paths == 0) {
-          combo_paths.push_back({}); // leaf
-        } else {
-          combo_paths.resize(num_paths, std::vector<uint32_t>(num_chd, UINT32_MAX));
-          for (uint32_t path_idx = 0; path_idx < num_paths; path_idx++) {
-            uint32_t tmp = path_idx;
-            for (uint32_t c = 0; c < num_chd; c++) {
-              uint32_t choice_idx = tmp % chd_num[c];   // 選擇哪個候選
-              tmp /= chd_num[c];
-              uint32_t* chd_best = chd_ptrs[c];         // 該 child eclass 的 top-k 指標
-              combo_paths[path_idx][c] = chd_best[choice_idx];
-            }
-          }
-        }
-
-        // 接著這裡需要把 TOPK 條 paths 全部都試試看，然後找到最好的
-        double best_acc_dag_cost = std::numeric_limits<double>::infinity();
-        std::vector<uint32_t> best_tmp;
-        uint32_t best_p;
-        #ifdef PRINT_LOG
-          printf("\tcombo_paths.size() = %lu\n", combo_paths.size());
-        #endif
-        
-        for (uint32_t p = 0; p < combo_paths.size(); p++) {
-          std::vector<uint32_t> tmp(_num_ecls, UINT32_MAX);
-          tmp[which_ecls] = ende;
-          bool succ = true;
-          for (uint32_t chd_ende : combo_paths[p]) {
-            #ifdef PRINT_LOG
-              printf("\tchd_ende = %u\n", chd_ende);
-            #endif
-            MY_CHECK(chd_ende != UINT32_MAX, "chd_ende != UINT32_MAX");
-            uint32_t* chd_prv = get_prv_vec(chd_ende);
-            succ = _union_vector(_num_ecls, tmp, chd_prv);
-            succ &= vec_updated[chd_ende]; // 所有的 children 都需要被 init 過，代表他至少有一個 value
-            if (!succ) break;
-          }
-          if (succ) {
-            double acc_dag_cost = _get_dag_cost2(tmp);
-            if (acc_dag_cost < best_acc_dag_cost) {
-              best_acc_dag_cost = acc_dag_cost;
-              best_tmp = std::move(tmp);
-              best_p = p;
-            }
-          }
-        }
-        
-        if (best_acc_dag_cost != std::numeric_limits<double>::infinity()) { // 代表有成功更新
-          #ifdef PRINT_LOG
-            printf("\tende %u succ\n", ende);
-          #endif
-
-          // Copy best_tmp to prv
-          uint32_t* prv = get_prv_vec(ende);
-          // update prv
-          for (uint32_t i = 0; i < _num_ecls; i++) prv[i] = best_tmp[i];
-          cost_of_ende[ende] = best_acc_dag_cost;
-          vec_updated[ende] = true; 
-
-          #ifdef PRINT_LOG
-            printf("\twith best_acc_dag_cost = %.2lf\n", cost_of_ende[ende]);
-            printf("\tprv: "); 
-            for (uint32_t i = 0; i < _num_ecls; i++) {
-              printf("%u, ", prv[i]);
-            } printf("\n"); 
-          #endif
-
-          uint32_t* ende_vec = get_best_ende_of_ecls_vec(which_ecls);
-          uint32_t pos = 0;
-          double MAX_cost = 0.;
-          
-          // 找到自己要放的位置
-          for (uint32_t k = 0; k < TOPK; k++) {
-            if (ende_vec[k] == ende || ende_vec[k] == UINT32_MAX) { // 找到自己 || 仍有空位
-              pos = k;
-              break;
-            }
-            // 若全滿了，那麼要找到 cost 最大那個人取代
-            if (MAX_cost < cost_of_ende[ende_vec[k]]) {
-              MAX_cost = cost_of_ende[ende_vec[k]];
-              pos = k;
-            }
-          }
-          ende_vec[pos] = ende;
-          
-          // 全域變數
-          if (best_acc_dag_cost < cost_of_ecls[which_ecls]) {
-            cost_of_ecls[which_ecls] = best_acc_dag_cost;
-
-          }          
-        }
-      } // for ende 
-
-      #ifdef PRINT_LOG
-        printf("Finished level %d (%d)\n", lvl, _max_level); 
-        printf("\ncost_of_ecls:\n");
-        for (size_t i = 0; i < cost_of_ecls.size(); i++) {
-          printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
-        }
-        printf("\n------------------------------------\n");
-      #endif
-    } // for lvl
-    #ifdef PRINT_LOG
-      printf("FINISHED itr = %u\n===========================================================\n\n", itr);
-    #endif
-  } // for iter 
-
-#ifdef PRINT_LOG
-  printf("PRT:\n");
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    printf("ende = %u: ", ende); 
-    for (uint32_t ecls = 0; ecls < _num_ecls; ecls++) {
-      uint32_t idx = ende*_num_ecls + ecls;
-      printf("%u, ", PRT[idx]); 
-    }
-    printf("\n");
-  }
-
-  printf("\ncost_of_ecls:\n");
-  for (size_t i = 0; i < cost_of_ecls.size(); i++) {
-    printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
-  }
-
-  printf("\ncost_of_ende:\n");
-  for (size_t i = 0; i < cost_of_ende.size(); i++) {
-    printf("  [%zu] = %.1f\n", i, cost_of_ende[i]);
-  }
-  printf("\n");  
-
-  printf("\nbest_ende_of_ecls:\n");
-  for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
-    printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
-  }
-  printf("\n");
-#endif 
-
-  // Get best tree cost 
-  // 這裡上面應該是有 bug 要 debug
-  // 然後現在不知道為什麼找出來會是 inf
-  double dag_ret = 0.0; 
-  std::unordered_set<uint32_t> final_pick_endes;
-  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
-    uint32_t r_ecls = _root_eclass_id[r];
-    uint32_t r_ende = _ecls_its_ende[r_ecls][0]; 
-    double cmp = std::numeric_limits<double>::infinity();
-    
-    for (uint32_t ende : _ecls_its_ende[r_ecls]) {
-      if (!_in_subgraph[ende]) continue;
-      if (cmp > cost_of_ende[ende]) {
-        r_ende = ende;
-        cmp = cost_of_ende[ende];
-      }
-    }
-
-    uint32_t* prv = get_prv_vec(r_ende);
-    // printf("r_ecls = %u, r_ende = %u\n", r_ecls, r_ende);
-    for (uint32_t i = 0; i < _num_ecls; i++) {
-      if (prv[i] != UINT32_MAX) {
-        final_pick_endes.insert(prv[i]);
-        // printf("Here has insertion: prv[i] = %u\n", prv[i]);
-      }
-    }
-  }
-  // printf("final_pick_endes (sz) = %lu\n", final_pick_endes.size());
-  for (uint32_t ende : final_pick_endes) {
-    dag_ret += _ende_cost[ende];
-    // printf("ende = %u, _ende_cost[%u] = %.2lf\n", ende, ende, _ende_cost[ende]);
-  }
-  // std::cout << "\nRoot eclasses:\n";
-  // for (auto r : _root_eclass_id) {
-  //   std::cout << "  " << r << "\n";
-  // }
-  
-  
-  return dag_ret;
-}
-
-
-
-
-
 
 
 
