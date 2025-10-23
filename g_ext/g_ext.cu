@@ -3,7 +3,7 @@
 // #define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
-#define GPU_CHECK
+// #define GPU_CHECK
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -685,6 +685,57 @@ __global__ void _print_dvc_ende_picked_by_ende(const uint32_t sz,
   printf("\n");
 }
 
+__global__ void _init_q(const uint32_t sz, 
+  const uint32_t* root_eclass_id,
+  const uint32_t* best_ende_of_ecls,
+  uint32_t* q,
+  uint32_t* q_sz)
+{
+  uint32_t pos = 0;
+  for (uint32_t i = 0; i < sz; i++) {
+    uint32_t ecls = root_eclass_id[i];
+    uint32_t best_ende = best_ende_of_ecls[ecls];
+    q[pos] = best_ende;
+    pos++;
+  }
+  *q_sz = pos;
+}
+
+__global__ void _get_dag_cost(
+  const uint32_t num, 
+  const float* ende_cost,
+  const uint32_t* ende_child,
+  const uint32_t* ende_child_ptr,
+  const uint32_t* ende_picked_by_ende,
+  const uint32_t* best_ende_of_ecls,
+  uint32_t* q,
+  uint32_t* q_sz,
+  const uint32_t* q_sp,
+  uint32_t* picked_endes, // 不提供 bool atomicCAS
+  double* dag_ret)
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num) return;
+  uint32_t cur = q[*q_sp + t_idx];
+  atomicAdd(dag_ret, static_cast<double>(ende_cost[cur]));
+  picked_endes[cur] = true;
+  
+  uint32_t start = ende_child_ptr[cur];
+  uint32_t end   = ende_child_ptr[cur + 1];
+
+  for (uint32_t chd = start; chd < end; chd++) {
+    uint32_t chd_ecls = ende_child[chd];
+    uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
+    if (ende_picked_by_ende[chd_ecls]) {
+      // 確保只有一次 push
+      if (atomicCAS(&picked_endes[chd_ende], 0u, 1u) == 0u) {
+        uint32_t pos = atomicAdd(q_sz, 1);
+        q[pos] = chd_ende;
+      }
+    }
+  }
+}
+
 std::pair<double, double> G_EXT::_gpu_best_tree() 
 {
 #ifdef PRINT_LOG
@@ -713,14 +764,14 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   double* dvc_tree_ret;
   double* dvc_dag_ret;
   uint32_t* dvc_ende_picked_by_ende;
-  bool* dvc_picked_endes;
+  uint32_t* dvc_picked_endes; // act bool
   uint32_t* dvc_indegree;
   uint32_t* dvc_inv_indegree;
+  uint32_t* dvc_q; // queue
+  uint32_t* dvc_q_sz; // size of queue
+  uint32_t* dvc_q_sp; // start point of queue
   // uint32_t* dvc_adj; // 這個要搞成 global inv_adj 然後這裡要改成 bool 
   // uint32_t* dvc_inv_adj; // 這個要搞成 global inv_adj 然後這裡要改成 bool 
-
-  // uint32_t* dvc_q; // queue
-  // uint32_t* dvc_q_idx; // [0]: start loc of queue; [1]: size of queue
   // bool* dvc_visited_eclasses;
 
   cudaMalloc(&dvc_ende_cost, _ende_cost.size()*sizeof(float));
@@ -737,10 +788,12 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMalloc(&dvc_tree_ret, 1*sizeof(double));
   cudaMalloc(&dvc_dag_ret, 1*sizeof(double));
   cudaMalloc(&dvc_ende_picked_by_ende, _ende_child.size()*sizeof(uint32_t));
-  // cudaMalloc(&dvc_picked_endes, _num_ende*sizeof(bool));
-  // cudaMalloc(&dvc_q, _num_ecls*sizeof(uint32_t)); // this can be resued
-  // cudaMalloc(&dvc_q_idx, 2*sizeof(uint32_t)); // this can be resued
-  // cudaMalloc(&dvc_visited_eclasses, _num_ecls*sizeof(bool));
+  cudaMalloc(&dvc_picked_endes, _num_ende*sizeof(uint32_t)); // act bool
+  cudaMalloc(&dvc_indegree, _num_ende*sizeof(uint32_t));
+  cudaMalloc(&dvc_inv_indegree, _num_ende*sizeof(uint32_t));
+  cudaMalloc(&dvc_q, _num_ende*sizeof(uint32_t));
+  cudaMalloc(&dvc_q_sz, 1*sizeof(uint32_t));
+  cudaMalloc(&dvc_q_sp, 1*sizeof(uint32_t));
   cudaCheckErrors("cudaMalloc failed");
 
   cudaMemcpy(dvc_ende_cost, _ende_cost.data(), _ende_cost.size()*sizeof(float), cudaMemcpyHostToDevice);
@@ -757,10 +810,12 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMemset(dvc_tree_ret, 0, 1*sizeof(double));
   cudaMemset(dvc_dag_ret, 0, 1*sizeof(double));
   cudaMemset(dvc_ende_picked_by_ende, 0, _ende_child.size()*sizeof(uint32_t));
-  // cudaMemset(dvc_picked_endes, 0, _num_ende*sizeof(bool));
-  // cudaMemset(dvc_q, 0, _num_ecls*sizeof(uint32_t));
-  // cudaMemset(dvc_q_idx, 0, 2*sizeof(uint32_t));
-  // cudaMemset(dvc_visited_eclasses, 0, _num_ecls*sizeof(bool));
+  cudaMemset(dvc_picked_endes, 0, _num_ende*sizeof(uint32_t)); // false
+  cudaMemset(dvc_indegree, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(dvc_q, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(dvc_q_sz, 0, 1*sizeof(uint32_t));
+  cudaMemset(dvc_q_sp, 0, 1*sizeof(uint32_t));
   cudaCheckErrors("cudaMemcpy failed");
 
   const int threads = 1024;
@@ -794,8 +849,6 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   double tree_ret = 0.0; 
   cudaMemcpy(&tree_ret, dvc_tree_ret, 1*sizeof(double), cudaMemcpyDeviceToHost);
 
-  // // Get the best dag cost on GPU
-  double dag_ret = 0.0;
   // Construct dvc_ende_picked_by_ende
   blocks = (_num_ende + threads - 1) / threads;
   _get_ende_picked_by_ende<<<blocks, threads>>>(_num_ende, 
@@ -803,38 +856,57 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
                                                 dvc_ende_child_ptr,
                                                 dvc_best_ende_of_ecls,
                                                 dvc_ende_picked_by_ende);
-  TODO here
-
-// #ifdef GPU_CHECK
-//   cudaDeviceSynchronize();
-//   _print_dvc_ende_picked_by_ende<<<1,1>>>(_ende_child.size(), dvc_ende_picked_by_ende);
-//   cudaDeviceSynchronize();
-// #endif
+#ifdef GPU_CHECK
+  cudaDeviceSynchronize();
+  _print_dvc_ende_picked_by_ende<<<1,1>>>(_ende_child.size(), dvc_ende_picked_by_ende);
+  cudaDeviceSynchronize();
+#endif
   
-  // uint32_t q_sz = ???;
-  // while (q_sz > 0) {
-  //   cudaMemcpy(???, &q_sz, sizeof(bool), cudaMemcpyHostToDevice);    
-  //   _get_dag_cost<<<blocks,threads>>>(dvc_q_idx,
-  //                                     _num_ende,
-  //                                     dvc_best_ende_of_ecls,
-  //                                     dvc_ende_cost,
-  //                                     dvc_ende_child,
-  //                                     dvc_ende_child_ptr,
-  //                                     dvc_visited_eclasses,
-  //                                     dvc_picked_endes,
-  //                                     dvc_dag_ret
-  //                                   );
+  // Get the best dag cost on GPU
+  // init queue
+  _init_q<<<1,1>>>(_root_eclass_id.size(),
+    dvc_root_eclass_id,
+    dvc_best_ende_of_ecls,
+    dvc_q, dvc_q_sz);
+  cudaCheckErrors("_init_q failed");
 
-  //   cudaCheckErrors("_get_dag_cost failed");
-  //   cudaMemcpy(&q_sz, ???, sizeof(bool), cudaMemcpyDeviceToHost);    
-  // }
+  double dag_ret = 0.0;
+  uint32_t q_sz = 0;
+  cudaMemcpy(&q_sz, dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  uint32_t q_sp = 0;
+  uint32_t num = q_sz - q_sp;
 
-  // TODO: 在 GPU 上算 dag_cost (注意：要跟 CPU version 一樣，去計算：_compute_dag_cost)
-  // TODO: 在 GPU 上算 dag_cost (注意：要跟 CPU version 一樣，去計算：_compute_dag_cost)
-  // TODO: 在 GPU 上算 dag_cost (注意：要跟 CPU version 一樣，去計算：_compute_dag_cost)
+  while (num > 0) {
+    cudaMemcpy(dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice);
+    _get_dag_cost<<<blocks, threads>>>(
+        num,
+        dvc_ende_cost,
+        dvc_ende_child,
+        dvc_ende_child_ptr,
+        dvc_ende_picked_by_ende,
+        dvc_best_ende_of_ecls,
+        dvc_q,
+        dvc_q_sz,
+        dvc_q_sp,
+        dvc_picked_endes,
+        dvc_dag_ret
+    );
+    cudaCheckErrors("_get_dag_cost failed");
+    cudaMemcpy(&q_sz, dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    q_sp += num;
+    num = q_sz - q_sp;
+  }
+
+  cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
+  cudaCheckErrors("DAG cost memcpy failed");
 
   return std::make_pair(tree_ret, dag_ret);
+
 }
+
+
+
+
 
 void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
                                 std::vector<double>& cost_of_ende,
