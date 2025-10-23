@@ -146,9 +146,7 @@ private:
     std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
   std::pair<double, double> _gpu_best_tree();
 
-
-
-
+  /* DAG Construction */
   void _reconstruct_graph(std::vector<double>& cost_of_ecls,
     std::vector<double>& cost_of_ende,
     std::vector<uint32_t>& best_ende_of_ecls,

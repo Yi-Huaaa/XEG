@@ -789,8 +789,12 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
 #endif
 
 // TODO: 
-  // // Add more roots and leaves enodes
-
+  // // Add more roots enodes
+  for (uint32_t r_ecls : _root_eclass_id) {
+    for (uint32_t r : _ecls_its_ende[r_ecls]) {
+      picked_endes[r] = true;  // 把所有 roots enode 都拉成 true
+    }
+  }
 
   bool updated = true; 
   std::vector<int> level;
@@ -804,7 +808,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     #ifdef PRINT_LOG
       std::cout << "_top_down_insertion: updated? " << tp <<"\n\n"; 
     #endif
-    
+
     // top-down levelization && bottom-up insertion
     _update_deg(tp, picked_endes); 
     _top_down_levelize(picked_endes, level);
@@ -868,9 +872,7 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
       MY_CHECK(_in_subgraph[i] == bibi_picked_endes_0[i], "_in_subgraph[i] == bibi_picked_endes_0[i]");
     }
   }
-#endif  
-
-
+#endif
 }
 
 void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes) 
