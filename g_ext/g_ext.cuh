@@ -57,45 +57,34 @@ public:
     std::vector<bool> picked_endes;
     std::chrono::duration<double> duration;
     auto start = std::chrono::steady_clock::now();
-      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, cost_of_ende, best_ende_of_ecls, picked_endes);
-
+      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, 
+                                                              cost_of_ende, best_ende_of_ecls, 
+                                                              picked_endes);
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
-
+    
+    
+    // std::vector<bool> picked_endes_tmp = picked_endes;
+    // start = std::chrono::steady_clock::now();
+    //   _reconstruct_graph(cost_of_ecls, cost_of_ende, 
+    //                     best_ende_of_ecls, picked_endes); 
+    // end = std::chrono::steady_clock::now();
+    // duration = end - start;
+    // std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    
     // if (ILP_solver) {
     //   _cpsat_solver(ILP_time_limit, 
-    //                 _ecls_its_ende, 
+    //                 _ecls_its_ende_newG, 
     //                 _ende_child, 
     //                 _ende_child_ptr, 
     //                 _root_eclass_id, 
     //                 _ende_cost,
     //                 best_ende_of_ecls, 
-    //                 picked_endes);
+    //                 picked_endes_tmp);
     // }
-
-    std::vector<bool> picked_endes_tmp = picked_endes;
-
-    start = std::chrono::steady_clock::now();
-      _reconstruct_graph(cost_of_ecls, cost_of_ende, 
-                        best_ende_of_ecls, picked_endes); 
-    end = std::chrono::steady_clock::now();
-    duration = end - start;
-    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    
-
-    if (ILP_solver) {
-      _cpsat_solver(ILP_time_limit, 
-                    _ecls_its_ende_newG, 
-                    _ende_child, 
-                    _ende_child_ptr, 
-                    _root_eclass_id, 
-                    _ende_cost,
-                    best_ende_of_ecls, 
-                    picked_endes_tmp);
-    }
 
 
     // start = std::chrono::steady_clock::now();
@@ -105,20 +94,25 @@ public:
     // printf("CPU RESULTS: cpu_dag_refine = %.2lf\n", cpu_dag_refine);
     // std::cout << "CPU DAG Refinement Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
 
-    // // GPU version
-    // float gpuTime = 0.;
-    // cudaEvent_t startGPU, stopGPU;
-    // cudaEventCreate(&startGPU);
-    // cudaEventCreate(&stopGPU);    
-    // cudaEventRecord(startGPU);
-    //   auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
-    // cudaEventRecord(stopGPU);
-    // cudaEventSynchronize(stopGPU);
-    // cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-    // printf("GPU Runtime: %.2f (ms)\n", gpuTime);
-    // printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
-    //           best_tree_cost_gpu, dag_cost_gpu);
-
+    // GPU version
+    float gpuTime = 0.;
+    cudaEvent_t startGPU, stopGPU;
+    cudaEventCreate(&startGPU);
+    cudaEventCreate(&stopGPU);    
+    cudaEventRecord(startGPU);
+      auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
+    cudaEventRecord(stopGPU);
+    cudaEventSynchronize(stopGPU);
+    cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
+    printf("GPU Runtime: %.2f (ms)\n", gpuTime);
+    printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
+              best_tree_cost_gpu, dag_cost_gpu);
+    // TODO: following exit(1) can be removed
+    if (best_tree_cost_cpu != best_tree_cost_gpu) {
+      printf("DIFFERENT: best_tree_cost_gpu = %.2lf, best_tree_cost_gpu = %.2lf\n",
+            best_tree_cost_cpu, best_tree_cost_gpu);
+      exit(1);
+    }
   }
 
 private:
@@ -205,6 +199,8 @@ private:
   std::vector<uint32_t> _root_eclass_id;
 
   std::vector<std::vector<uint32_t>> _ecls_its_ende; // enodes under that eclasses
+  std::vector<uint32_t> _ecls_its_ende_1D; // compress _ecls_its_ende into 1D
+  std::vector<uint32_t> _ecls_its_ende_1D_ptr;
 
   // For refinement 
   std::vector<std::unordered_set<uint32_t>> _global_adj;

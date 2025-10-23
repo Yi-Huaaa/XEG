@@ -267,6 +267,17 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   MY_CHECK((_num_ecls+dead_ecls_idx.size()) == tmp_num_ecls, "_num_ecls+dead_ecls_idx.size()");
   MY_CHECK(_root_eclass_id.size() == tmp_root_eclass_id.size(), "_root_eclass_id.size()");
 
+  // Compress _ecls_its_ende to 1D 
+  uint32_t acc_ptr = 0;
+  _ecls_its_ende_1D_ptr.push_back(acc_ptr);
+  for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
+    for (uint32_t ende : _ecls_its_ende[ecls]) {
+      _ecls_its_ende_1D.push_back(ende);
+      acc_ptr++;
+    }
+    _ecls_its_ende_1D_ptr.push_back(acc_ptr);
+  }
+
 #ifdef PRINT_LOG  
   for (const auto& elem : dead_ecls_idx) { std::cout << "elem: " << elem << "\n"; }
   
@@ -575,8 +586,7 @@ __global__ void relax_enodes_kernel(const uint32_t num_endes,
                                     const uint32_t* _ende_child_ptr,
                                     bool* update, 
                                     double* cost_of_ecls,
-                                    double* cost_of_ende,
-                                    uint32_t* best_ende_of_ecls) 
+                                    double* cost_of_ende) 
 {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_endes) return;
@@ -595,9 +605,43 @@ __global__ void relax_enodes_kernel(const uint32_t num_endes,
   // float old = atomicMinFloat(&cost_of_ecls[which_ecls], acc_cost);
   double old = atomicMinDouble(&cost_of_ecls[which_ecls], acc_cost);
   if (acc_cost < old) {
-    best_ende_of_ecls[which_ecls] = t_idx;
     *update = true; // No need to be atomic
   }  
+}
+
+__global__ void _get_best_ende_of_ecls(const uint32_t num_ecls, uint32_t* best_ende_of_ecls, 
+                                      const double* cost_of_ende,
+                                      const uint32_t* ecls_its_ende_1D, 
+                                      const uint32_t* ecls_its_ende_1D_ptr) 
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num_ecls) return;  
+
+  const uint32_t start = ecls_its_ende_1D_ptr[t_idx];
+  const uint32_t end = ecls_its_ende_1D_ptr[t_idx+1];
+  // double best_cost = std::numeric_limits<double>::infinity();
+  double best_cost = __longlong_as_double(0x7ff0000000000000ULL); // == +inf (constexpr)
+  uint32_t best_ende = UINT32_MAX; // init 
+  for (uint32_t jj = start; jj < end; jj++) {
+    const uint32_t ende = ecls_its_ende_1D[jj];
+    double cost = cost_of_ende[ende];
+    if (cost < best_cost) {
+      best_ende = ende; 
+      best_cost = cost;
+    }
+  }
+  best_ende_of_ecls[t_idx] = best_ende;
+}
+
+__global__ void _get_tree_cost(const uint32_t size, 
+                                const double* cost_of_ecls,
+                                const uint32_t* root_eclass_id,
+                                double* tree_ret) 
+{
+  *tree_ret = 0.0; // init
+  for (uint32_t r = 0; r < size; r++) {
+    *tree_ret += cost_of_ecls[root_eclass_id[r]];
+  }
 }
 
 
@@ -623,6 +667,11 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   double* dvc_cost_of_ecls; 
   double* dvc_cost_of_ende; 
   uint32_t* dvc_best_ende_of_ecls;
+  uint32_t* dvc_ecls_its_ende_1D;
+  uint32_t* dvc_ecls_its_ende_1D_ptr;
+  uint32_t* dvc_root_eclass_id;
+  double* dvc_tree_ret;
+  double* dvc_dag_ret;
 
   cudaMalloc(&dvc_ende_cost, _ende_cost.size() * sizeof(float));
   cudaMalloc(&dvc_ende_ecls, _ende_ecls.size() * sizeof(uint32_t));
@@ -632,6 +681,11 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMalloc(&dvc_cost_of_ecls, cost_of_ecls.size() * sizeof(double));
   cudaMalloc(&dvc_cost_of_ende, cost_of_ende.size() * sizeof(double));
   cudaMalloc(&dvc_best_ende_of_ecls, best_ende_of_ecls.size() * sizeof(uint32_t));
+  cudaMalloc(&dvc_ecls_its_ende_1D, _ecls_its_ende_1D.size() * sizeof(uint32_t));
+  cudaMalloc(&dvc_ecls_its_ende_1D_ptr, _ecls_its_ende_1D_ptr.size() * sizeof(uint32_t));
+  cudaMalloc(&dvc_root_eclass_id, _root_eclass_id.size() * sizeof(uint32_t));
+  cudaMalloc(&dvc_tree_ret, 1 * sizeof(double));
+  cudaMalloc(&dvc_dag_ret, 1 * sizeof(double));
   cudaCheckErrors("cudaMalloc failed");
 
   cudaMemcpy(dvc_ende_cost, _ende_cost.data(), _ende_cost.size()*sizeof(float), cudaMemcpyHostToDevice);
@@ -642,10 +696,15 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMemcpy(dvc_cost_of_ecls, cost_of_ecls.data(), cost_of_ecls.size()*sizeof(double), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_cost_of_ende, cost_of_ende.data(), cost_of_ende.size()*sizeof(double), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_best_ende_of_ecls, best_ende_of_ecls.data(), best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_ecls_its_ende_1D, _ecls_its_ende_1D.data(), _ecls_its_ende_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_ecls_its_ende_1D_ptr, _ecls_its_ende_1D_ptr.data(), _ecls_its_ende_1D_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(dvc_root_eclass_id, _root_eclass_id.data(), _root_eclass_id.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemset(dvc_tree_ret, 0, 1*sizeof(double));
+  cudaMemset(dvc_dag_ret, 0, 1*sizeof(double));
   cudaCheckErrors("cudaMemcpy failed");
 
   const int threads = 1024;
-  const int blocks = (_num_ende + threads - 1) / threads;
+  int blocks = (_num_ende + threads - 1) / threads;
 
   while (h_update) {
     h_update = false;
@@ -657,74 +716,69 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
                                             dvc_ende_child_ptr,
                                             dvc_update,
                                             dvc_cost_of_ecls,
-                                            dvc_cost_of_ende,
-                                            dvc_best_ende_of_ecls);
+                                            dvc_cost_of_ende);
 
     cudaCheckErrors("relax_enodes_kernel failed");
     cudaMemcpy(&h_update, dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }
 
-  // // 我在把 cost_of_ende[t_idx] = fmin(cost_of_ende[t_idx], acc_cost);
-  // //   best_ende_of_ecls[which_ecls] = t_idx;
-  // //   讓他保證正確比較重要
-  // printf("bibi check\n");
-  // uint32_t ll = 0; 
-  // for (uint32_t i = 0; i < _ecls_its_ende.size(); i++) {
-  //   uint32_t L = _ecls_its_ende[i].size(); 
-  //   ll = (L > ll) ? (L) : (ll);
-  // }
-  // printf("bibi check ll = %u\n", ll);
+  // Get the best_ende_of_ecls on GPU
+  blocks = (_num_ecls + threads - 1) / threads;
+  _get_best_ende_of_ecls<<<blocks, threads>>>(_num_ecls, 
+                                              dvc_best_ende_of_ecls, dvc_cost_of_ende,
+                                              dvc_ecls_its_ende_1D, dvc_ecls_its_ende_1D_ptr);
+  // Get the best tree cost on GPU
+  _get_tree_cost<<<1, 1>>>(_root_eclass_id.size(), dvc_cost_of_ecls, dvc_root_eclass_id, dvc_tree_ret);
+  TODO: 在 GPU 上算 dag_cost (注意：要跟 CPU version 一樣，去計算：_compute_dag_cost)
+  
 
-
-  // copy data back to CPU 
-  cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(double), cudaMemcpyDeviceToHost);
-  cudaMemcpy(cost_of_ende.data(), dvc_cost_of_ende, cost_of_ende.size()*sizeof(double), cudaMemcpyDeviceToHost);
-  cudaMemcpy(best_ende_of_ecls.data(), dvc_best_ende_of_ecls, best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  // // copy data back to CPU 
+  // cudaMemcpy(cost_of_ecls.data(), dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(double), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(cost_of_ende.data(), dvc_cost_of_ende, cost_of_ende.size()*sizeof(double), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(best_ende_of_ecls.data(), dvc_best_ende_of_ecls, best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost);
 
   // Get best tree cost 
   double tree_ret = 0.0; 
-  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
-    tree_ret += cost_of_ecls[_root_eclass_id[r]];
-  }
+  cudaMemcpy(&tree_ret, dvc_tree_ret, 1*sizeof(double), cudaMemcpyDeviceToHost);
   
   // Get best dag cost 
   double dag_ret = 0.0;
-  std::vector<bool> picked_endes; 
-  picked_endes.resize(_num_ende, false); 
+  // std::vector<bool> picked_endes; 
+  // picked_endes.resize(_num_ende, false); 
 
-  std::vector<bool> visited_eclasses(_num_ecls, false);
-  std::queue<uint32_t> q;
+  // std::vector<bool> visited_eclasses(_num_ecls, false);
+  // std::queue<uint32_t> q;
 
-  // enqueue all roots
-  for (uint32_t rid : _root_eclass_id) {
-    if (rid < _num_ecls) {
-      q.push(rid);
-      visited_eclasses[rid] = true;
-    }
-  }
+  // // enqueue all roots
+  // for (uint32_t rid : _root_eclass_id) {
+  //   if (rid < _num_ecls) {
+  //     q.push(rid);
+  //     visited_eclasses[rid] = true;
+  //   }
+  // }
 
-  while (!q.empty()) {
-    uint32_t cur_ecls = q.front();
-    q.pop();
+  // while (!q.empty()) {
+  //   uint32_t cur_ecls = q.front();
+  //   q.pop();
 
-    uint32_t ende_idx = best_ende_of_ecls[cur_ecls];
-    if (ende_idx >= _num_ende) continue;
+  //   uint32_t ende_idx = best_ende_of_ecls[cur_ecls];
+  //   if (ende_idx >= _num_ende) continue;
 
-    if (!picked_endes[ende_idx]) {
-      picked_endes[ende_idx] = true;
-      dag_ret += _ende_cost[ende_idx];
-    }
+  //   if (!picked_endes[ende_idx]) {
+  //     picked_endes[ende_idx] = true;
+  //     dag_ret += _ende_cost[ende_idx];
+  //   }
 
-    uint32_t start = _ende_child_ptr[ende_idx];
-    uint32_t end   = _ende_child_ptr[ende_idx + 1];
-    for (uint32_t jj = start; jj < end; jj++) {
-      uint32_t child_ecls = _ende_child[jj];
-      if (!visited_eclasses[child_ecls]) {
-        visited_eclasses[child_ecls] = true;
-        q.push(child_ecls);
-      }
-    }
-  }
+  //   uint32_t start = _ende_child_ptr[ende_idx];
+  //   uint32_t end   = _ende_child_ptr[ende_idx + 1];
+  //   for (uint32_t jj = start; jj < end; jj++) {
+  //     uint32_t child_ecls = _ende_child[jj];
+  //     if (!visited_eclasses[child_ecls]) {
+  //       visited_eclasses[child_ecls] = true;
+  //       q.push(child_ecls);
+  //     }
+  //   }
+  // }
 
   return std::make_pair(tree_ret, dag_ret);
 }
