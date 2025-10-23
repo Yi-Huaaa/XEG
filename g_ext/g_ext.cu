@@ -729,6 +729,9 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
                                               dvc_ecls_its_ende_1D, dvc_ecls_its_ende_1D_ptr);
   // Get the best tree cost on GPU
   _get_tree_cost<<<1, 1>>>(_root_eclass_id.size(), dvc_cost_of_ecls, dvc_root_eclass_id, dvc_tree_ret);
+  
+  TODO: 在 GPU 上算 dag_cost (注意：要跟 CPU version 一樣，去計算：_compute_dag_cost)
+  TODO: 在 GPU 上算 dag_cost (注意：要跟 CPU version 一樣，去計算：_compute_dag_cost)
   TODO: 在 GPU 上算 dag_cost (注意：要跟 CPU version 一樣，去計算：_compute_dag_cost)
   
 
