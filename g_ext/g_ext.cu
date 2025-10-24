@@ -3,7 +3,7 @@
 // #define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
-#define GPU_CHECK
+// #define GPU_CHECK
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -931,11 +931,6 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
                                                 dvc_ende_child_ptr,
                                                 dvc_best_ende_of_ecls,
                                                 dvc_ende_picked_by_ende);
-// #ifdef GPU_CHECK
-//   cudaDeviceSynchronize();
-//   _print_dvc_ende_picked_by_ende<<<1,1>>>(_ende_child.size(), dvc_ende_picked_by_ende);
-//   cudaDeviceSynchronize();
-// #endif
   
 #ifdef GPU_CHECK
 // 檢查 enode-level mutual dependency
