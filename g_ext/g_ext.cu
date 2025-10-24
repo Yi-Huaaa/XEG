@@ -3,7 +3,7 @@
 // #define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
-// #define GPU_CHECK
+#define GPU_CHECK
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -539,6 +539,7 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
         if (back == endeA) {
           printf("⚠️  Mutual dependency found between enode %u and %u\n", endeA, endeB);
           mutual_count++;
+          exit(1);
         }
       }
     }
@@ -930,12 +931,63 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
                                                 dvc_ende_child_ptr,
                                                 dvc_best_ende_of_ecls,
                                                 dvc_ende_picked_by_ende);
-#ifdef GPU_CHECK
-  cudaDeviceSynchronize();
-  _print_dvc_ende_picked_by_ende<<<1,1>>>(_ende_child.size(), dvc_ende_picked_by_ende);
-  cudaDeviceSynchronize();
-#endif
+// #ifdef GPU_CHECK
+//   cudaDeviceSynchronize();
+//   _print_dvc_ende_picked_by_ende<<<1,1>>>(_ende_child.size(), dvc_ende_picked_by_ende);
+//   cudaDeviceSynchronize();
+// #endif
   
+#ifdef GPU_CHECK
+// 檢查 enode-level mutual dependency
+{
+  std::vector<uint32_t> tmp; tmp.resize(_ende_child.size(), UINT32_MAX);
+  cudaMemcpy(tmp.data(), dvc_ende_picked_by_ende, _ende_child.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  std::vector<std::vector<uint32_t>> ende_picked_by_ende;
+  ende_picked_by_ende.resize(_num_ende, std::vector<uint32_t>());
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    uint32_t start = _ende_child_ptr[ende];
+    uint32_t end = _ende_child_ptr[ende+1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      ende_picked_by_ende[ende].push_back(tmp[jj]);
+    }
+  }
+
+  // Step 1. 建立 enode → child_enode dependency list
+  std::vector<std::vector<uint32_t>> dependency(_num_ende);
+
+  for (uint32_t ende = 0; ende < ende_picked_by_ende.size(); ende++) {
+    // 我們假設 ende_picked_by_ende[ende] 存的就是所有 "child enode"
+    for (uint32_t chd_ende : ende_picked_by_ende[ende]) {
+      if (ende == chd_ende) continue; // 自己指自己不用理
+      dependency[ende].push_back(chd_ende);
+    }
+  }
+
+  // Step 2. 檢查是否存在 A→B 且 B→A
+  uint32_t mutual_count = 0;
+  for (uint32_t endeA = 0; endeA < dependency.size(); ++endeA) {
+    for (uint32_t endeB : dependency[endeA]) {
+      if (endeB >= dependency.size()) continue;
+      // 檢查 B 是否也依賴 A
+      for (uint32_t back : dependency[endeB]) {
+        if (back == endeA) {
+          printf("⚠️  Mutual dependency found between enode %u and %u\n", endeA, endeB);
+          mutual_count++;
+          exit(1);
+        }
+      }
+    }
+  }
+
+  if (mutual_count == 0) {
+    printf("✅ No enode-level mutual dependency found.\n");
+  } else {
+    printf("⚠️  Total mutual dependencies found: %u\n", mutual_count);
+  }
+}
+#endif
+
+
   // Get the best dag cost on GPU
   // init queue
   _init_q<<<1,1>>>(_root_eclass_id.size(),

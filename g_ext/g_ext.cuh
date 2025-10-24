@@ -78,13 +78,13 @@ public:
     // }
 
     
-    std::vector<bool> picked_endes_tmp = picked_endes;
-    start = std::chrono::steady_clock::now();
-      _reconstruct_graph(cost_of_ecls, cost_of_ende, 
-                        best_ende_of_ecls, picked_endes); 
-    end = std::chrono::steady_clock::now();
-    duration = end - start;
-    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    // std::vector<bool> picked_endes_tmp = picked_endes;
+    // start = std::chrono::steady_clock::now();
+    //   _reconstruct_graph(cost_of_ecls, cost_of_ende, 
+    //                     best_ende_of_ecls, picked_endes); 
+    // end = std::chrono::steady_clock::now();
+    // duration = end - start;
+    // std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     
     // if (ILP_solver) {
     //   _cpsat_solver(ILP_time_limit, 
@@ -123,11 +123,6 @@ public:
       printf("DIFFERENT: best_tree_cost_gpu = %.2lf, best_tree_cost_gpu = %.2lf\n",
             best_tree_cost_cpu, best_tree_cost_gpu);
       exit(1);
-    }
-    if (dag_cost_cpu != dag_cost_gpu) {
-      printf("Test here\n");
-      printf("Test here\n");
-      printf("Test here\n");
     }
   }
 
