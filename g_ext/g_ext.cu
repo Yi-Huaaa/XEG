@@ -394,7 +394,7 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
   bool h_update = true;
   cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
   cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
-  best_ende_of_ecls.resize(_num_ecls, 0);
+  best_ende_of_ecls.resize(_num_ecls, UINT32_MAX);
  
   while (h_update) {
     h_update = false;
@@ -422,9 +422,19 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
             h_update = true;
           }
         }
+        // #pragma omp critical
+        // {
+        //   if (acc_cost < cost_of_ecls[which_ecls] ||
+        //     (acc_cost == cost_of_ecls[which_ecls] && t_idx < best_ende_of_ecls[which_ecls])) {
+        //     cost_of_ecls[which_ecls] = acc_cost;
+        //     best_ende_of_ecls[which_ecls] = t_idx;
+        //     h_update = true;
+        //   }
+        // }
       }
     }
   }
+
 
   // === Phase 2: reconstruct best picks ===
   std::vector<std::vector<uint32_t>> ende_picked_by_ende(_num_ende);
@@ -439,20 +449,6 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
     }
     ende_picked_by_ende[t_idx] = std::move(picks);
   }
-
-// #ifdef GPU_CHECK
-  
-//   printf("CPU: ende_picked_by_ende: ");
-//   uint32_t acc_i = 0;
-//   for (uint32_t i = 0; i < ende_picked_by_ende.size(); i++) {
-//     for (uint32_t ende : ende_picked_by_ende[i]) {
-//       printf("%u, ", ende); 
-//       acc_i++;
-//     }
-//   }
-//   printf("\n");
-//   printf("acc_i.size() = %u, _ende_child.size() = %lu\n", acc_i, _ende_child.size());
-// #endif
 
 #ifdef PRINT_LOG
   printf("\ncost_of_ecls:\n");
@@ -490,6 +486,73 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
   }
   double dag_ret = _compute_dag_cost(best_ende_of_ecls, picked_endes, ende_picked_by_ende); 
                     
+// // #ifdef GPU_CHECK
+//   // 確認他答案的正確性
+//   // Step 1. 建立 eclass-level dependency
+//   std::vector<std::vector<uint32_t>> dependency(_num_ecls);
+
+//   for (uint32_t ende = 0; ende < ende_picked_by_ende.size(); ende++) {
+//     uint32_t ecls = _ende_ecls[ende];
+//     for (uint32_t chd_ende : ende_picked_by_ende[ende]) {
+//       uint32_t chd_ecls = _ende_ecls[chd_ende];
+//       if (ecls == chd_ecls) continue; // 同一 eclass 自己的不用理
+//       dependency[ecls].push_back(chd_ecls);
+//     }
+//   }
+
+//   // Step 2. 檢查互相依賴 (A→B 且 B→A)
+//   for (uint32_t eclsA = 0; eclsA < dependency.size(); eclsA++) {
+//     for (uint32_t eclsB : dependency[eclsA]) {
+//       // 看看 eclsB 的 dependency 裡面有沒有 eclsA
+//       for (uint32_t back : dependency[eclsB]) {
+//         if (back == eclsA) {
+//           printf("⚠️  Mutual dependency found between eclass %u and %u\n", eclsA, eclsB);
+//         }
+//       }
+//     }
+//   }
+
+//   printf("✅ Done checking eclass mutual dependency.\n");
+// // #endif
+
+#ifdef GPU_CHECK
+// 檢查 enode-level mutual dependency
+{
+  // Step 1. 建立 enode → child_enode dependency list
+  std::vector<std::vector<uint32_t>> dependency(_num_ende);
+
+  for (uint32_t ende = 0; ende < ende_picked_by_ende.size(); ende++) {
+    // 我們假設 ende_picked_by_ende[ende] 存的就是所有 "child enode"
+    for (uint32_t chd_ende : ende_picked_by_ende[ende]) {
+      if (ende == chd_ende) continue; // 自己指自己不用理
+      dependency[ende].push_back(chd_ende);
+    }
+  }
+
+  // Step 2. 檢查是否存在 A→B 且 B→A
+  uint32_t mutual_count = 0;
+  for (uint32_t endeA = 0; endeA < dependency.size(); ++endeA) {
+    for (uint32_t endeB : dependency[endeA]) {
+      if (endeB >= dependency.size()) continue;
+      // 檢查 B 是否也依賴 A
+      for (uint32_t back : dependency[endeB]) {
+        if (back == endeA) {
+          printf("⚠️  Mutual dependency found between enode %u and %u\n", endeA, endeB);
+          mutual_count++;
+        }
+      }
+    }
+  }
+
+  if (mutual_count == 0) {
+    printf("✅ No enode-level mutual dependency found.\n");
+  } else {
+    printf("⚠️  Total mutual dependencies found: %u\n", mutual_count);
+  }
+}
+#endif
+
+
   return std::make_pair(tree_ret, dag_ret);
 }
 
@@ -594,6 +657,7 @@ __device__ double atomicMinDouble(double* addr, double val) {
   return __longlong_as_double(old);
 }
 
+
 __global__ void _relax_enodes_kernel(const uint32_t num_endes, 
   const float* ende_cost, 
   const uint32_t* ende_ecls,
@@ -601,7 +665,8 @@ __global__ void _relax_enodes_kernel(const uint32_t num_endes,
   const uint32_t* ende_child_ptr,
   bool* update, 
   double* cost_of_ecls,
-  double* cost_of_ende) 
+  double* cost_of_ende,
+  uint32_t* best_ende_of_ecls) 
 {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_endes) return;
@@ -617,9 +682,17 @@ __global__ void _relax_enodes_kernel(const uint32_t num_endes,
   cost_of_ende[t_idx] = fmin(cost_of_ende[t_idx], acc_cost);
   const uint32_t which_ecls = ende_ecls[t_idx];
 
-  // float old = atomicMinFloat(&cost_of_ecls[which_ecls], acc_cost);
+  // // // float old = atomicMinFloat(&cost_of_ecls[which_ecls], acc_cost);
+  // double old = atomicMinDouble(&cost_of_ecls[which_ecls], acc_cost);
+  // if (acc_cost < old) {
+  //   *update = true; // No need to be atomic
+  //   best_ende_of_ecls[]
+  // }  
+
   double old = atomicMinDouble(&cost_of_ecls[which_ecls], acc_cost);
   if (acc_cost < old) {
+    cost_of_ecls[which_ecls] = acc_cost;
+    best_ende_of_ecls[which_ecls] = t_idx;
     *update = true; // No need to be atomic
   }  
 }
@@ -718,7 +791,8 @@ __global__ void _get_dag_cost(
   if (t_idx >= num) return;
   uint32_t cur = q[*q_sp + t_idx];
   atomicAdd(dag_ret, static_cast<double>(ende_cost[cur]));
-  picked_endes[cur] = true;
+  picked_endes[cur] = 1; // set as true
+  // printf("t_idx = %u, cur = %u\n", t_idx, cur);
   
   uint32_t start = ende_child_ptr[cur];
   uint32_t end   = ende_child_ptr[cur + 1];
@@ -726,12 +800,11 @@ __global__ void _get_dag_cost(
   for (uint32_t chd = start; chd < end; chd++) {
     uint32_t chd_ecls = ende_child[chd];
     uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
-    if (ende_picked_by_ende[chd_ecls]) {
-      // 確保只有一次 push
-      if (atomicCAS(&picked_endes[chd_ende], 0u, 1u) == 0u) {
-        uint32_t pos = atomicAdd(q_sz, 1);
-        q[pos] = chd_ende;
-      }
+    // printf("t_idx = %u, chd_ecls = %u, chd_ende = %u\n", t_idx, chd_ecls, chd_ende);
+    // 確保只有一次 push
+    if (atomicCAS(&picked_endes[chd_ende], 0u, 1u) == 0u) {
+      uint32_t pos = atomicAdd(q_sz, 1);
+      q[pos] = chd_ende;
     }
   }
 }
@@ -831,17 +904,18 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
                                             dvc_ende_child_ptr,
                                             dvc_update,
                                             dvc_cost_of_ecls,
-                                            dvc_cost_of_ende);
+                                            dvc_cost_of_ende,
+                                            dvc_best_ende_of_ecls);
 
     cudaCheckErrors("_relax_enodes_kernel failed");
     cudaMemcpy(&h_update, dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }
 
-  // Get the best_ende_of_ecls on GPU
-  blocks = (_num_ecls + threads - 1) / threads;
-  _get_best_ende_of_ecls<<<blocks, threads>>>(_num_ecls, 
-                                              dvc_best_ende_of_ecls, dvc_cost_of_ende,
-                                              dvc_ecls_its_ende_1D, dvc_ecls_its_ende_1D_ptr);
+  // // Get the best_ende_of_ecls on GPU
+  // blocks = (_num_ecls + threads - 1) / threads;
+  // _get_best_ende_of_ecls<<<blocks, threads>>>(_num_ecls, 
+  //                                             dvc_best_ende_of_ecls, dvc_cost_of_ende,
+  //                                             dvc_ecls_its_ende_1D, dvc_ecls_its_ende_1D_ptr);
   // Get the best tree cost on GPU
   _get_tree_cost<<<1, 1>>>(_root_eclass_id.size(), dvc_cost_of_ecls, dvc_root_eclass_id, dvc_tree_ret);
 
@@ -877,6 +951,8 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   uint32_t num = q_sz - q_sp;
 
   while (num > 0) {
+    // printf("num = %u\n", num); // used for debug
+    
     cudaMemcpy(dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice);
     _get_dag_cost<<<blocks, threads>>>(
         num,
@@ -895,13 +971,14 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
     cudaMemcpy(&q_sz, dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
     q_sp += num;
     num = q_sz - q_sp;
+    // printf("\n"); // used for debug
+    // cudaDeviceSynchronize(); // used for debug
   }
 
   cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
   cudaCheckErrors("DAG cost memcpy failed");
 
   return std::make_pair(tree_ret, dag_ret);
-
 }
 
 
@@ -1257,6 +1334,15 @@ bool G_EXT::_insertion(const bool is_td,
     printf("\nG_EXT::_top_down_insertion()\n");
   } else {
     printf("\nG_EXT::_bottom_up_insertion()\n");
+    // printf("level:\n");
+    // for (uint32_t i = 0; i < level.size(); i++) {
+    //   if (picked_endes[i]) {
+    //     printf("level[%u] = %d\n", i, level[i]);
+    //     if (level[i] == 0) {
+    //       printf("QQQQQQQQQ\n");
+    //     }
+    //   }
+    // }
   }
 #endif
   // Lambda
@@ -1321,8 +1407,6 @@ bool G_EXT::_insertion(const bool is_td,
     #endif
     for (uint32_t chd_ende : _global_adj[ende]) {
       if (!picked_endes[chd_ende]) continue;
-      // TODO: 這裏其實可能會造成搜索範圍變小，因為實際上，我們可以選擇不把該 parent and enode edge 加進來 QWQ
-      // 但我們現在就是很暴力的，把所有可以是 parents 的 enode 都和 target enode 連上線的概念
       int chd_lvl = level[chd_ende];
       if (chd_lvl < 0) {
         printf("WTF: \n");
@@ -1897,3 +1981,51 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
   }
   printf("\n"); 
 }
+
+
+
+// __device__ double atomicMinDoubleEps(double* addr, double val) {
+//   const double EPS = 1e-12;
+//   unsigned long long int* addr_as_ull = (unsigned long long int*)addr;
+//   unsigned long long int old = *addr_as_ull, assumed;
+//   do {
+//     assumed = old;
+//     double old_val = __longlong_as_double(assumed);
+//     if (old_val <= val + EPS) break;  // 注意：加上 EPS 防止平手更新
+//     old = atomicCAS(addr_as_ull, assumed, __double_as_longlong(val));
+//   } while (assumed != old);
+//   return __longlong_as_double(old);
+// }
+
+// #include <curand_kernel.h>
+
+// __device__ double atomicMinDoubleRandEps(double* addr, double val, unsigned int seed) {
+//   // 每個 thread 用 seed + thread id 當亂數來源
+//   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+//   unsigned int local_seed = seed ^ (tid * 0x9e3779b9);  // 混合 hash
+//   // LCG 簡單亂數
+//   local_seed = (1103515245u * local_seed + 12345u);
+//   double rand01 = (double)(local_seed & 0x00FFFFFF) / (double)0x01000000; // 0~1
+  
+//   // 隨機 ±EPS 偏移
+//   const double EPS = 1e-12;
+//   double jitter = (rand01 < 0.5 ? -EPS : +EPS);
+
+//   unsigned long long int* addr_as_ull = (unsigned long long int*)addr;
+//   unsigned long long int old = *addr_as_ull, assumed;
+//   do {
+//     assumed = old;
+//     double old_val = __longlong_as_double(assumed);
+//     // 平手時有 50% 機率選擇更新
+//     if (old_val <= val + jitter) break;
+//     old = atomicCAS(addr_as_ull, assumed, __double_as_longlong(val));
+//   } while (assumed != old);
+
+//   return __longlong_as_double(old);
+// }
+
+// __device__ inline float simple_rand(uint32_t seed) {
+//   // 線性同餘生成器 (LCG) – 極簡版，足夠 GPU 每 thread 做簡單擾動
+//   seed = seed * 1664525u + 1013904223u;
+//   return (float)(seed & 0x00FFFFFF) / (float)0x01000000; // 範圍 [0,1)
+// }
