@@ -588,8 +588,8 @@ double G_EXT::_compute_dag_cost(
   // Get best dag cost 
   double dag_ret = 0.0; 
   picked_endes.resize(_num_ende, false); 
-  _adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-  _inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  // _adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  // _inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
 
   std::queue<uint32_t> q;
 
@@ -610,8 +610,8 @@ double G_EXT::_compute_dag_cost(
 
     for (uint32_t chd : ende_picked_by_ende[cur]) {
       MY_CHECK(chd < _num_ende, "chd < _num_ende");
-      _adj[cur].insert(chd);
-      _inv_adj[chd].insert(cur);
+      // _adj[cur].insert(chd);
+      // _inv_adj[chd].insert(cur);
 
       if (!picked_endes[chd]) {
         picked_endes[chd] = true;
@@ -628,12 +628,12 @@ double G_EXT::_compute_dag_cost(
              i, _ende_ecls[i], _ende_cost[i]);
     }
   }
-  printf("_adj:\n");
-  _print_adj(_adj);
+  // printf("_adj:\n");
+  // _print_adj(_adj);
 
-  printf("\n_inv_adj:\n");
-  _print_adj(_inv_adj);
-  printf("\n");
+  // printf("\n_inv_adj:\n");
+  // _print_adj(_inv_adj);
+  // printf("\n");
 #endif
 
   return dag_ret;
@@ -801,14 +801,6 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
     }
   }
 
-#ifdef PRINT_LOG
-  printf("_adj\n");
-  _print_adj(_adj);
-  printf("\n");
-  printf("_inv_adj\n");
-  _print_adj(_inv_adj);
-  printf("\n");
-#endif
 #ifdef BIBI_CHECK
   uint32_t bibi_acc_2 = 0;
   for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
@@ -854,20 +846,6 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
     }
   }
 
-  // // init 
-  // _indegree.assign(_num_ende, 0);
-  // _inv_indegree.assign(_num_ende, 0);  
-
-  // for (uint32_t fm_ende = 0; fm_ende < _num_ende; fm_ende++) {
-  //   if (!picked_endes[fm_ende]) continue;
-
-  //   for (uint32_t to_ende : _adj[fm_ende]) {
-  //     if (!picked_endes[to_ende]) continue;
-  //     _indegree[to_ende]++;
-  //     _inv_indegree[fm_ende]++;
-  //   }
-  // }
-
 #ifdef PRINT_LOG
   printf("Post:\n"); 
   _print_degree(true, picked_endes);
@@ -877,7 +855,9 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
 
 void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg, 
                 const std::vector<bool>& picked_endes,
-                const std::vector<std::unordered_set<uint32_t>>& adj,
+                const std::vector<uint32_t>& global_adj_1D,
+                const std::vector<uint32_t>& global_adj_1D_ptr,
+                const std::vector<bool>& picked_adj,
                 std::vector<int>& level)
 {
 #ifdef PRINT_LOG
@@ -893,14 +873,14 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if ((deg[ende] == 0) && picked_endes[ende]) {
       q.push(ende);
-      #ifdef PRINT_LOG  
-        printf("  Queue init push in enode %u\n", ende);
-      #endif
+      // #ifdef PRINT_LOG  
+      //   printf("  Queue init push in enode %u\n", ende);
+      // #endif
     }
   } 
-  #ifdef PRINT_LOG  
-    printf("\n");
-  #endif
+  // #ifdef PRINT_LOG  
+  //   printf("\n");
+  // #endif
 
   // BFS: top-down levelization 
   int cur_level = 0;
@@ -909,20 +889,28 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
     for (size_t t = 0; t < layer; ++t) {
       uint32_t u = q.front(); q.pop();
       level[u] = cur_level;
-      #ifdef PRINT_LOG
-        printf("  Processing enode %u\n", u);
-      #endif
-      for (uint32_t v : adj[u]) {
-        if (!picked_endes[v]) continue;
-        #ifdef PRINT_LOG
-          printf("   child enode %u, with deg[%u] = %u\n", v, v, deg[v]); 
-        #endif
+      // #ifdef PRINT_LOG
+      //   printf("  Processing enode %u\n", u);
+      // #endif
+      // for (uint32_t v : adj[u]) {
+      //   if (!picked_endes[v]) continue;
+      //   // #ifdef PRINT_LOG
+      //   //   printf("   child enode %u, with deg[%u] = %u\n", v, v, deg[v]); 
+      //   // #endif
+      //   if (deg[v] > 0 && --deg[v] == 0) {
+      //     q.push(v);
+      //     // #ifdef PRINT_LOG
+      //     //   printf("    Push enode %u (indegree->0)\n", v);
+      //     // #endif
+      //   }
+      // }
+      // new version 
+      for (uint32_t k = global_adj_1D_ptr[u]; k < global_adj_1D_ptr[u+1]; k++) {
+        if (!picked_adj[k]) continue;
+        const uint32_t v = global_adj_1D[k];
         if (deg[v] > 0 && --deg[v] == 0) {
           q.push(v);
-          #ifdef PRINT_LOG
-            printf("    Push enode %u (indegree->0)\n", v);
-          #endif
-        }
+        }        
       }
     }
     ++cur_level;
@@ -952,7 +940,8 @@ void G_EXT::_top_down_levelize(const std::vector<bool>& picked_endes,
 
   // Top-down BFS levelization
   level.assign(_num_ende, -1); 
-  _BFS(true, _indegree, picked_endes, _adj, level);
+  _BFS(true, _indegree, picked_endes, 
+      _global_adj_1D, _global_adj_1D_ptr, _picked_adj, level);
 
 #ifdef PRINT_LOG
   _print_levelization(true, level, picked_endes);
@@ -968,7 +957,8 @@ void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
 
   // Bottom-up BFS levelization
   level.assign(_num_ende, -1); 
-  _BFS(false, _inv_indegree, picked_endes, _inv_adj, level);
+  _BFS(false, _inv_indegree, picked_endes, 
+      _global_inv_adj_1D, _global_inv_adj_1D_ptr, _picked_inv_adj, level);
 
 #ifdef PRINT_LOG
   _print_levelization(false, level, picked_endes);
@@ -1083,13 +1073,13 @@ bool G_EXT::_insertion(const bool is_td,
       level[ende] = given_lvl;
       // update _adj and _inv_adj
       for (uint32_t par_ende : valid_pars) {
-        _adj[par_ende].insert(ende);
-        _inv_adj[ende].insert(par_ende);
+        // _adj[par_ende].insert(ende);
+        // _inv_adj[ende].insert(par_ende);
         _update_picked_adj(par_ende, ende); 
       }
       for (uint32_t chd_ende : valid_chds) {
-        _adj[ende].insert(chd_ende);
-        _inv_adj[chd_ende].insert(ende);
+        // _adj[ende].insert(chd_ende);
+        // _inv_adj[chd_ende].insert(ende);
         _update_picked_adj(ende, chd_ende); 
       }
       update = true; 
@@ -1171,7 +1161,7 @@ void G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes)
   } printf("\n");
 #endif 
 
-  get_nodes_in_subgraph(roots, leaves, _adj, _inv_adj, picked_endes);
+  get_nodes_in_subgraph(roots, leaves, picked_endes);
 
 #ifdef PRINT_LOG
   printf("enodes in subgraph:  ");
@@ -1185,12 +1175,16 @@ void G_EXT::_clear_redundant_endes(std::vector<bool>& picked_endes)
 }
 
 void G_EXT::mark_reachable(const std::vector<uint32_t>& starts,
-                    const std::vector<std::unordered_set<uint32_t>>& adj,
-                    std::vector<bool>& visited,
-                    const std::vector<bool>& picked_endes) {
+  const std::vector<uint32_t>& global_adj_1D,
+  const std::vector<uint32_t>& global_adj_1D_ptr,
+  const std::vector<bool>& picked_adj,
+  std::vector<bool>& visited,
+  const std::vector<bool>& picked_endes) 
+{
+  // new version
   std::queue<uint32_t> q;
   for (uint32_t s : starts) {
-    if (s < adj.size() && picked_endes[s] && !visited[s]) {
+    if (picked_endes[s] && !visited[s]) {
       q.push(s);
       visited[s] = true;
     }
@@ -1198,35 +1192,57 @@ void G_EXT::mark_reachable(const std::vector<uint32_t>& starts,
 
   while (!q.empty()) {
     uint32_t u = q.front(); q.pop();
-    for (uint32_t v : adj[u]) {
-      if (v < adj.size() && picked_endes[v] && !visited[v]) {
+    for (uint32_t k = global_adj_1D_ptr[u]; k < global_adj_1D_ptr[u+1]; k++) {
+      if (!picked_adj[k]) continue;
+      const uint32_t v = global_adj_1D[k];
+      MY_CHECK(picked_endes[v] == true, "picked_endes[v] == true");
+      if (!visited[v]) {
         visited[v] = true;
         q.push(v);
       }
     }
   }
+
+  // std::queue<uint32_t> q;
+  // for (uint32_t s : starts) {
+  //   if (s < adj.size() && picked_endes[s] && !visited[s]) {
+  //     q.push(s);
+  //     visited[s] = true;
+  //   }
+  // }
+
+  // while (!q.empty()) {
+  //   uint32_t u = q.front(); q.pop();
+  //   for (uint32_t v : adj[u]) {
+  //     if (v < adj.size() && picked_endes[v] && !visited[v]) {
+  //       visited[v] = true;
+  //       q.push(v);
+  //     }
+  //   }
+  // }
 }
 
 void G_EXT::get_nodes_in_subgraph(
     const std::vector<uint32_t>& roots,
     const std::vector<uint32_t>& leaves,
-    const std::vector<std::unordered_set<uint32_t>>& adj,
-    const std::vector<std::unordered_set<uint32_t>>& inv_adj,
     const std::vector<bool>& picked_endes)
 {
-  size_t N = adj.size();
-  std::vector<bool> from_roots(N, false);
-  std::vector<bool> to_leaves(N, false);
-  _in_subgraph.resize(N, false);
+  std::vector<bool> from_roots(_num_ende, false);
+  std::vector<bool> to_leaves(_num_ende, false);
+  _in_subgraph.resize(_num_ende, false);
 
   // 1. reachable from roots
-  mark_reachable(roots, adj, from_roots, picked_endes);
+  mark_reachable(roots, 
+                _global_adj_1D, _global_adj_1D_ptr, _picked_adj, 
+                from_roots, picked_endes);
 
   // 2. can reach leaves
-  mark_reachable(leaves, inv_adj, to_leaves, picked_endes);
+  mark_reachable(leaves, 
+                _global_inv_adj_1D, _global_inv_adj_1D_ptr, _picked_inv_adj, 
+                to_leaves, picked_endes);
 
   // 3. intersection
-  for (size_t i = 0; i < N; ++i) {
+  for (size_t i = 0; i < _num_ende; ++i) {
     _in_subgraph[i] = from_roots[i] && to_leaves[i];
   }
 }

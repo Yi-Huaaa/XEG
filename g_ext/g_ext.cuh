@@ -87,38 +87,38 @@ public:
     duration = end - start;
     std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     
-    if (ILP_solver) {
-      _cpsat_solver(ILP_time_limit, 
-                    _ecls_its_ende_newG, 
-                    _ende_child, 
-                    _ende_child_ptr, 
-                    _root_eclass_id, 
-                    _ende_cost,
-                    best_ende_of_ecls, 
-                    picked_endes_tmp);
-    }
+  //   if (ILP_solver) {
+  //     _cpsat_solver(ILP_time_limit, 
+  //                   _ecls_its_ende_newG, 
+  //                   _ende_child, 
+  //                   _ende_child_ptr, 
+  //                   _root_eclass_id, 
+  //                   _ende_cost,
+  //                   best_ende_of_ecls, 
+  //                   picked_endes_tmp);
+  //   }
 
-  #ifdef GPU_VERSION
-    // GPU version
-    float gpuTime = 0.;
-    cudaEvent_t startGPU, stopGPU;
-    cudaEventCreate(&startGPU);
-    cudaEventCreate(&stopGPU);    
-    cudaEventRecord(startGPU);
-      auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
-    cudaEventRecord(stopGPU);
-    cudaEventSynchronize(stopGPU);
-    cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-    printf("GPU Runtime: %.2f (ms)\n", gpuTime);
-    printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
-              best_tree_cost_gpu, dag_cost_gpu);
-    // TODO: following exit(1) can be removed
-    if (best_tree_cost_cpu != best_tree_cost_gpu) {
-      printf("DIFFERENT: best_tree_cost_gpu = %.2lf, best_tree_cost_gpu = %.2lf\n",
-            best_tree_cost_cpu, best_tree_cost_gpu);
-      exit(1);
-    }
-  #endif
+  // #ifdef GPU_VERSION
+  //   // GPU version
+  //   float gpuTime = 0.;
+  //   cudaEvent_t startGPU, stopGPU;
+  //   cudaEventCreate(&startGPU);
+  //   cudaEventCreate(&stopGPU);    
+  //   cudaEventRecord(startGPU);
+  //     auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
+  //   cudaEventRecord(stopGPU);
+  //   cudaEventSynchronize(stopGPU);
+  //   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
+  //   printf("GPU Runtime: %.2f (ms)\n", gpuTime);
+  //   printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
+  //             best_tree_cost_gpu, dag_cost_gpu);
+  //   // TODO: following exit(1) can be removed
+  //   if (best_tree_cost_cpu != best_tree_cost_gpu) {
+  //     printf("DIFFERENT: best_tree_cost_gpu = %.2lf, best_tree_cost_gpu = %.2lf\n",
+  //           best_tree_cost_cpu, best_tree_cost_gpu);
+  //     exit(1);
+  //   }
+  //   #endif
   }
 
 private:
@@ -162,7 +162,9 @@ private:
       const std::vector<bool>& picked_endes);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
       const std::vector<bool>& picked_endes,
-      const std::vector<std::unordered_set<uint32_t>>& adj,
+      const std::vector<uint32_t>& global_adj_1D,
+      const std::vector<uint32_t>& global_adj_1D_ptr,
+      const std::vector<bool>& picked_adj,
       std::vector<int>& level);
   bool _insertion(const bool is_td, 
     std::vector<bool>& picked_endes,
@@ -170,14 +172,14 @@ private:
   void _update_picked_adj(const uint32_t fm_ende, const uint32_t to_ende);
   void _clear_redundant_endes(std::vector<bool>& picked_endes);
     void mark_reachable(const std::vector<uint32_t>& starts,
-      const std::vector<std::unordered_set<uint32_t>>& adj,
+      const std::vector<uint32_t>& global_adj_1D,
+      const std::vector<uint32_t>& global_adj_1D_ptr,
+      const std::vector<bool>& picked_adj,      
       std::vector<bool>& visited,
       const std::vector<bool>& picked_endes);
     void get_nodes_in_subgraph(
       const std::vector<uint32_t>& roots,
       const std::vector<uint32_t>& leaves,
-      const std::vector<std::unordered_set<uint32_t>>& adj,
-      const std::vector<std::unordered_set<uint32_t>>& inv_adj,
       const std::vector<bool>& picked_endes);
 
 
@@ -217,8 +219,8 @@ private:
   std::vector<uint32_t> _global_inv_adj_1D;
   std::vector<uint32_t> _global_inv_adj_1D_ptr;
   // For new graph G
-  std::vector<std::unordered_set<uint32_t>> _adj; // store edges of enodes on new G
-  std::vector<std::unordered_set<uint32_t>> _inv_adj; // store edges of enodes on new G
+  // std::vector<std::unordered_set<uint32_t>> _adj; // store edges of enodes on new G
+  // std::vector<std::unordered_set<uint32_t>> _inv_adj; // store edges of enodes on new G
   std::vector<uint32_t> _indegree;
   std::vector<uint32_t> _inv_indegree;
   int _max_level = -1;  // init as -1
