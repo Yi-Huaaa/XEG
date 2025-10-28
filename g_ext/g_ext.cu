@@ -376,6 +376,54 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   }
 #endif
 
+  // Construct _global_adj, _global_inv_adj --> There maybe cycle inside _global_adj and _global_inv_adj
+  _global_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  _global_inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    uint32_t start = _ende_child_ptr[ende]; 
+    uint32_t end = _ende_child_ptr[ende+1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t chd_ecls = _ende_child[jj];
+      for (uint32_t ende2 : _ecls_its_ende[chd_ecls]) {
+        // remove self-loop
+        if (ende != ende2) {
+          // update _global_adj 
+          _global_adj[ende].insert(ende2); 
+          // update inv_adjs
+          _global_inv_adj[ende2].insert(ende);
+        }
+      }
+    }
+  }
+
+  // Compress _global_adj and _global_inv_adj to 1D 
+  acc_ptr = 0;
+  _global_adj_1D_ptr.push_back(acc_ptr);
+  for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
+    for (uint32_t to_ende : _global_adj[ende]) {
+      _global_adj_1D.push_back(to_ende);
+      acc_ptr++;
+    }
+    _global_adj_1D_ptr.push_back(acc_ptr);
+  }
+  
+  acc_ptr = 0;
+  _global_inv_adj_1D_ptr.push_back(acc_ptr);
+  for (uint32_t ende = 0; ende < _global_inv_adj.size(); ende++) {
+    for (uint32_t to_ende : _global_inv_adj[ende]) {
+      _global_inv_adj_1D.push_back(to_ende);
+      acc_ptr++;
+    }
+    _global_inv_adj_1D_ptr.push_back(acc_ptr);
+  }
+
+#ifdef PRINT_LOG
+  printf("_global_adj mapping (ende Id -> ende Id):\n");
+  _print_adj(_global_adj);
+  printf("_global_inv_adj mapping (ende Id -> ende Id):\n");
+  _print_adj(_global_inv_adj);
+  printf("\n\n============================== START TO _reconstruct_graph... ==============================\n");
+#endif
 }
 
 // =========================== TREE/DAG functions =========================== // 
@@ -485,35 +533,6 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
     tree_ret += cost_of_ecls[_root_eclass_id[r]];
   }
   double dag_ret = _compute_dag_cost(best_ende_of_ecls, picked_endes, ende_picked_by_ende); 
-                    
-// // #ifdef GPU_CHECK
-//   // 確認他答案的正確性
-//   // Step 1. 建立 eclass-level dependency
-//   std::vector<std::vector<uint32_t>> dependency(_num_ecls);
-
-//   for (uint32_t ende = 0; ende < ende_picked_by_ende.size(); ende++) {
-//     uint32_t ecls = _ende_ecls[ende];
-//     for (uint32_t chd_ende : ende_picked_by_ende[ende]) {
-//       uint32_t chd_ecls = _ende_ecls[chd_ende];
-//       if (ecls == chd_ecls) continue; // 同一 eclass 自己的不用理
-//       dependency[ecls].push_back(chd_ecls);
-//     }
-//   }
-
-//   // Step 2. 檢查互相依賴 (A→B 且 B→A)
-//   for (uint32_t eclsA = 0; eclsA < dependency.size(); eclsA++) {
-//     for (uint32_t eclsB : dependency[eclsA]) {
-//       // 看看 eclsB 的 dependency 裡面有沒有 eclsA
-//       for (uint32_t back : dependency[eclsB]) {
-//         if (back == eclsA) {
-//           printf("⚠️  Mutual dependency found between eclass %u and %u\n", eclsA, eclsB);
-//         }
-//       }
-//     }
-//   }
-
-//   printf("✅ Done checking eclass mutual dependency.\n");
-// // #endif
 
 #ifdef GPU_CHECK
 // 檢查 enode-level mutual dependency
@@ -552,7 +571,6 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
   }
 }
 #endif
-
 
   return std::make_pair(tree_ret, dag_ret);
 }
@@ -793,7 +811,6 @@ __global__ void _get_dag_cost(
   uint32_t cur = q[*q_sp + t_idx];
   atomicAdd(dag_ret, static_cast<double>(ende_cost[cur]));
   picked_endes[cur] = 1; // set as true
-  // printf("t_idx = %u, cur = %u\n", t_idx, cur);
   
   uint32_t start = ende_child_ptr[cur];
   uint32_t end   = ende_child_ptr[cur + 1];
@@ -801,7 +818,6 @@ __global__ void _get_dag_cost(
   for (uint32_t chd = start; chd < end; chd++) {
     uint32_t chd_ecls = ende_child[chd];
     uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
-    // printf("t_idx = %u, chd_ecls = %u, chd_ende = %u\n", t_idx, chd_ecls, chd_ende);
     // 確保只有一次 push
     if (atomicCAS(&picked_endes[chd_ende], 0u, 1u) == 0u) {
       uint32_t pos = atomicAdd(q_sz, 1);
@@ -1064,33 +1080,6 @@ void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
   }
 #endif
 
-  // Construct _global_adj, _global_inv_adj --> There maybe cycle inside _global_adj and _global_inv_adj
-  _global_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-  _global_inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    uint32_t start = _ende_child_ptr[ende]; 
-    uint32_t end = _ende_child_ptr[ende+1];
-    for (uint32_t jj = start; jj < end; jj++) {
-      uint32_t chd_ecls = _ende_child[jj];
-      for (uint32_t ende2 : _ecls_its_ende[chd_ecls]) {
-        // remove self-loop
-        if (ende != ende2) {
-          // update _global_adj 
-          _global_adj[ende].insert(ende2); 
-          // update inv_adjs
-          _global_inv_adj[ende2].insert(ende);
-        }
-      }
-    }
-  }
-#ifdef PRINT_LOG
-  printf("_global_adj mapping (ende Id -> ende Id):\n");
-  _print_adj(_global_adj);
-  printf("_global_inv_adj mapping (ende Id -> ende Id):\n");
-  _print_adj(_global_inv_adj);
-  printf("\n\n============================== START TO _reconstruct_graph... ==============================\n");
-#endif
-
   // Add more roots enodes
   for (uint32_t r_ecls : _root_eclass_id) {
     for (uint32_t r : _ecls_its_ende[r_ecls]) {
@@ -1185,6 +1174,7 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
   _print_degree(true, picked_endes);
   _print_degree(false, picked_endes);
 #endif
+
   if (!need_to_update) return; 
   // init 
   _indegree.assign(_num_ende, 0);
@@ -1196,14 +1186,16 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
     for (uint32_t to_ende : _adj[fm_ende]) {
       if (!picked_endes[to_ende]) continue;
       _indegree[to_ende]++;
+
       _inv_indegree[fm_ende]++;
     }
   }
-  #ifdef PRINT_LOG
-    printf("Post:\n"); 
-    _print_degree(true, picked_endes);
-    _print_degree(false, picked_endes);
-  #endif  
+
+#ifdef PRINT_LOG
+  printf("Post:\n"); 
+  _print_degree(true, picked_endes);
+  _print_degree(false, picked_endes);
+#endif  
 }
 
 
@@ -1325,6 +1317,7 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
     }
     ++cur_level;
   }
+
   // update _max_level
   _max_level = cur_level; 
 

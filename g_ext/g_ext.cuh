@@ -76,15 +76,14 @@ public:
     //                 best_ende_of_ecls, 
     //                 picked_endes);
     // }
-
     
-    // std::vector<bool> picked_endes_tmp = picked_endes;
-    // start = std::chrono::steady_clock::now();
-    //   _reconstruct_graph(cost_of_ecls, cost_of_ende, 
-    //                     best_ende_of_ecls, picked_endes); 
-    // end = std::chrono::steady_clock::now();
-    // duration = end - start;
-    // std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    std::vector<bool> picked_endes_tmp = picked_endes;
+    start = std::chrono::steady_clock::now();
+      _reconstruct_graph(cost_of_ecls, cost_of_ende, 
+                        best_ende_of_ecls, picked_endes); 
+    end = std::chrono::steady_clock::now();
+    duration = end - start;
+    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     
     // if (ILP_solver) {
     //   _cpsat_solver(ILP_time_limit, 
@@ -105,6 +104,7 @@ public:
     // printf("CPU RESULTS: cpu_dag_refine = %.2lf\n", cpu_dag_refine);
     // std::cout << "CPU DAG Refinement Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
 
+  #ifdef GPU_VERSION
     // GPU version
     float gpuTime = 0.;
     cudaEvent_t startGPU, stopGPU;
@@ -124,6 +124,7 @@ public:
             best_tree_cost_cpu, best_tree_cost_gpu);
       exit(1);
     }
+  #endif
   }
 
 private:
@@ -216,6 +217,10 @@ private:
   // For refinement 
   std::vector<std::unordered_set<uint32_t>> _global_adj;
   std::vector<std::unordered_set<uint32_t>> _global_inv_adj;
+  std::vector<uint32_t> _global_adj_1D;
+  std::vector<uint32_t> _global_adj_1D_ptr;
+  std::vector<uint32_t> _global_inv_adj_1D;
+  std::vector<uint32_t> _global_inv_adj_1D_ptr;
   // For new graph G
   std::vector<std::unordered_set<uint32_t>> _adj; // store edges of enodes on new G
   std::vector<std::unordered_set<uint32_t>> _inv_adj; // store edges of enodes on new G
