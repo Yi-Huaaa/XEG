@@ -31,6 +31,8 @@
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
 
+#define GPU_VERSION
+
 class G_EXT {
 
 public:
@@ -85,24 +87,16 @@ public:
     duration = end - start;
     std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     
-    // if (ILP_solver) {
-    //   _cpsat_solver(ILP_time_limit, 
-    //                 _ecls_its_ende_newG, 
-    //                 _ende_child, 
-    //                 _ende_child_ptr, 
-    //                 _root_eclass_id, 
-    //                 _ende_cost,
-    //                 best_ende_of_ecls, 
-    //                 picked_endes_tmp);
-    // }
-
-
-    // start = std::chrono::steady_clock::now();
-    //   double cpu_dag_refine = _cpu_dag_refinement();
-    // end = std::chrono::steady_clock::now();
-    // duration = end - start;
-    // printf("CPU RESULTS: cpu_dag_refine = %.2lf\n", cpu_dag_refine);
-    // std::cout << "CPU DAG Refinement Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    if (ILP_solver) {
+      _cpsat_solver(ILP_time_limit, 
+                    _ecls_its_ende_newG, 
+                    _ende_child, 
+                    _ende_child_ptr, 
+                    _root_eclass_id, 
+                    _ende_cost,
+                    best_ende_of_ecls, 
+                    picked_endes_tmp);
+    }
 
   #ifdef GPU_VERSION
     // GPU version
@@ -150,6 +144,7 @@ private:
   double _compute_dag_cost(const std::vector<uint32_t>& best_ende_of_ecls,
     std::vector<bool>& picked_endes,
     std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
+  void _init_picked_adj(const std::vector<bool>& picked_endes);
   std::pair<double, double> _gpu_best_tree();
 
   /* DAG Construction */
@@ -165,7 +160,6 @@ private:
     std::vector<int>& level);
     void _update_deg(const bool need_to_update, 
       const std::vector<bool>& picked_endes);
-    void _update_deg_and_adjs(const std::vector<bool>& picked);
     void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
       const std::vector<bool>& picked_endes,
       const std::vector<std::unordered_set<uint32_t>>& adj,
@@ -173,6 +167,7 @@ private:
   bool _insertion(const bool is_td, 
     std::vector<bool>& picked_endes,
     std::vector<int>& level);
+  void _update_picked_adj(const uint32_t fm_ende, const uint32_t to_ende);
   void _clear_redundant_endes(std::vector<bool>& picked_endes);
     void mark_reachable(const std::vector<uint32_t>& starts,
       const std::vector<std::unordered_set<uint32_t>>& adj,
@@ -214,7 +209,7 @@ private:
   std::vector<uint32_t> _ecls_its_ende_1D; // compress _ecls_its_ende into 1D
   std::vector<uint32_t> _ecls_its_ende_1D_ptr;
 
-  // For refinement 
+  // For construction of new graph G 
   std::vector<std::unordered_set<uint32_t>> _global_adj;
   std::vector<std::unordered_set<uint32_t>> _global_inv_adj;
   std::vector<uint32_t> _global_adj_1D;
@@ -228,6 +223,10 @@ private:
   std::vector<uint32_t> _inv_indegree;
   int _max_level = -1;  // init as -1
   std::vector<bool> _in_subgraph;
+  // 20251028
+  std::vector<bool> _picked_adj; // for picked enode: set as true, pointer based on _global_adj_1D_ptr
+  std::vector<bool> _picked_inv_adj; // for picked enode: set as true, pointer based on _global_inv_adj_1D_ptr
+
 
   std::vector<std::vector<uint32_t>> _ecls_its_ende_newG;
 
