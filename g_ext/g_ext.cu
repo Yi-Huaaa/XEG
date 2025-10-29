@@ -993,7 +993,7 @@ bool G_EXT::_insertion(const bool is_td,
   _tmp_picked_adj.assign(_global_adj_1D.size(), false);
   _tmp_picked_inv_adj.assign(_global_inv_adj_1D.size(), false);
 
-  omp_set_num_threads(8); // 這裏 threads = 8 比較快
+  // omp_set_num_threads(8); // 這裏 threads = 8 比較快
   // uint32_t acc = 0;  // used for check 
 
   // Try all candidates
@@ -1100,14 +1100,14 @@ bool G_EXT::_insertion(const bool is_td,
       update = true; 
 
       // update _adj and _inv_adj
-      #pragma omp parallel for
+      // #pragma omp parallel for
       for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
         if(!_tmp_picked_inv_adj[k]) continue;
         const uint32_t par_ende = _global_inv_adj_1D[k];
         _update_picked_adj(par_ende, ende); 
       }
 
-      #pragma omp parallel for
+      // #pragma omp parallel for
       for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
         if(!_tmp_picked_adj[k]) continue;
         const uint32_t chd_ende = _global_adj_1D[k];
