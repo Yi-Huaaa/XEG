@@ -80,6 +80,12 @@ public:
     // }
     
     std::vector<bool> picked_endes_tmp = picked_endes;
+    uint32_t bibi = 0;
+    for (uint32_t i = 0; i < picked_endes_tmp.size(); i++) {
+      if (picked_endes_tmp[i]) bibi++;
+    }
+    printf("bibi picked_endes_tmp = %u\n", bibi);
+
     start = std::chrono::steady_clock::now();
       _reconstruct_graph(cost_of_ecls, cost_of_ende, 
                         best_ende_of_ecls, picked_endes); 
@@ -87,16 +93,16 @@ public:
     duration = end - start;
     std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     
-  //   if (ILP_solver) {
-  //     _cpsat_solver(ILP_time_limit, 
-  //                   _ecls_its_ende_newG, 
-  //                   _ende_child, 
-  //                   _ende_child_ptr, 
-  //                   _root_eclass_id, 
-  //                   _ende_cost,
-  //                   best_ende_of_ecls, 
-  //                   picked_endes_tmp);
-  //   }
+    if (ILP_solver) {
+      _cpsat_solver(ILP_time_limit, 
+                    _ecls_its_ende_newG, 
+                    _ende_child, 
+                    _ende_child_ptr, 
+                    _root_eclass_id, 
+                    _ende_cost,
+                    best_ende_of_ecls, 
+                    picked_endes_tmp);
+    }
 
   // #ifdef GPU_VERSION
   //   // GPU version
@@ -218,17 +224,16 @@ private:
   std::vector<uint32_t> _global_adj_1D_ptr;
   std::vector<uint32_t> _global_inv_adj_1D;
   std::vector<uint32_t> _global_inv_adj_1D_ptr;
+  std::vector<bool> _picked_adj; // for picked enode: set as true, pointer based on _global_adj_1D_ptr
+  std::vector<bool> _picked_inv_adj; // for picked enode: set as true, pointer based on _global_inv_adj_1D_ptr
+  std::vector<bool> _tmp_picked_adj;
+  std::vector<bool> _tmp_picked_inv_adj;
+    
   // For new graph G
-  // std::vector<std::unordered_set<uint32_t>> _adj; // store edges of enodes on new G
-  // std::vector<std::unordered_set<uint32_t>> _inv_adj; // store edges of enodes on new G
   std::vector<uint32_t> _indegree;
   std::vector<uint32_t> _inv_indegree;
   int _max_level = -1;  // init as -1
   std::vector<bool> _in_subgraph;
-  // 20251028
-  std::vector<bool> _picked_adj; // for picked enode: set as true, pointer based on _global_adj_1D_ptr
-  std::vector<bool> _picked_inv_adj; // for picked enode: set as true, pointer based on _global_inv_adj_1D_ptr
-
 
   std::vector<std::vector<uint32_t>> _ecls_its_ende_newG;
 
