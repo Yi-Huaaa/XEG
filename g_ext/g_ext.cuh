@@ -80,11 +80,11 @@ public:
     // }
     
     std::vector<bool> picked_endes_tmp = picked_endes;
-    uint32_t bibi = 0;
-    for (uint32_t i = 0; i < picked_endes_tmp.size(); i++) {
-      if (picked_endes_tmp[i]) bibi++;
-    }
-    printf("bibi picked_endes_tmp = %u\n", bibi);
+    // uint32_t bibi = 0;
+    // for (uint32_t i = 0; i < picked_endes_tmp.size(); i++) {
+    //   if (picked_endes_tmp[i]) bibi++;
+    // }
+    // printf("bibi picked_endes_tmp = %u\n", bibi);
 
     start = std::chrono::steady_clock::now();
       _reconstruct_graph(cost_of_ecls, cost_of_ende, 

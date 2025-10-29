@@ -968,165 +968,6 @@ void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
 }
 
 
-// bool G_EXT::_insertion(const bool is_td, 
-//                       std::vector<bool>& picked_endes,
-//                       std::vector<int>& level) 
-// {
-// #ifdef PRINT_LOG
-//   if (is_td) {
-//     printf("\nG_EXT::_top_down_insertion()\n");
-//   } else {
-//     printf("\nG_EXT::_bottom_up_insertion()\n");
-//   }
-// #endif
-//   // Lambda
-//   auto has_overlap = [&](const std::vector<uint32_t>& a,
-//                         const std::vector<uint32_t>& b) -> bool {
-//     for (uint32_t x : a)
-//       for (uint32_t y : b)
-//         if (x == y)
-//           return true;
-//     return false;
-//   };
-
-//   bool update = false;
-//   _tmp_picked_adj.assign(_global_adj_1D.size(), false);
-//   _tmp_picked_inv_adj.assign(_global_inv_adj_1D.size(), false);
-
-//   // std::chrono::duration<double> duration_find_par, duration_find_chd, duration_valid;
-//   // omp_set_num_threads(6); // 這裏 threads = 6 比較快
-//   uint32_t acc = 0;  // used for check 
-
-//   // #pragma omp parallel
-//   {  
-//     // Try all candidates
-//     // #pragma omp for
-//     for (uint32_t ende = 0; ende < _num_ende; ende++) {
-//       if (picked_endes[ende]) continue;
-//       #ifdef PRINT_LOG
-//         printf("\n* Processing ende = %u\n", ende);
-//       #endif
-
-//       // auto start = std::chrono::steady_clock::now();
-//       std::vector<uint32_t> valid_pars;
-//       std::vector<uint32_t> valid_chds;
-//       // _top_down_insertion(): 
-//         // If not picked, check whether it can be added to this graph
-//         // Conditions:
-//         //   1. At least 1 parent enode exists (located @ MAX(parent_level))
-//         //   2. At least 0 chldrn enode exists (located @ min(chldrn_level))
-//         //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
-//       // _bottom_up_insertion(): 
-//         // If not picked, check whether it can be added to this graph
-//         // Conditions:
-//         //   1. At least 0 parent enode exists (located @ MAX(parent_level))
-//         //   2. At least 1 chldrn enode exists (located @ min(chldrn_level))
-//         //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
-//       bool has_par = false, has_chd = false;
-//       int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-//       uint32_t max_par_ende = UINT32_MAX, min_chd_ende = UINT32_MAX; // Note: init values here are not important!
-//       // Find max parent level 
-//       #ifdef PRINT_LOG
-//         printf("Find max parent level\n"); 
-//       #endif
-//       for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
-//         uint32_t par_ende = _global_inv_adj_1D[k];
-//         if (!picked_endes[par_ende]) continue;
-//         int par_lvl = level[par_ende];
-//         valid_pars.push_back(par_ende);
-//         _tmp_picked_inv_adj[k] = true;
-//         if (max_par_lvl < par_lvl) {
-//           // #ifdef PRINT_LOG
-//           //   printf("  pre: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
-//           // #endif
-//           MY_CHECK(par_lvl >= 0, "par_lvl >= 0"); 
-//           has_par = true; 
-//           max_par_lvl = par_lvl; 
-//           max_par_ende = par_ende;
-//           // #ifdef PRINT_LOG
-//           //   printf("  pos: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
-//           // #endif
-//         }
-//       }
-//       // auto end = std::chrono::steady_clock::now();
-//       // duration_find_par += end - start;
-
-//       // Find min child level
-//       // start = std::chrono::steady_clock::now();
-//       #ifdef PRINT_LOG
-//         printf("Find min child level\n"); 
-//       #endif
-//       for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
-//         uint32_t chd_ende = _global_adj_1D[k];      
-//         if (!picked_endes[chd_ende]) continue;
-//         int chd_lvl = level[chd_ende];
-//         // if (chd_lvl < 0) {
-//         //   printf("WTF: \n");
-//         //   std::cout << "chd_ende: " << chd_ende << ", chd_lvl = " << chd_lvl << "\n";
-//         //   exit(1);
-//         // }
-//         MY_CHECK(chd_lvl >= 0, "chd_lvl >= 0"); 
-//         valid_chds.push_back(chd_ende);
-//         _tmp_picked_adj[k] = true;
-//         if (min_chd_lvl > chd_lvl) {
-//           // #ifdef PRINT_LOG
-//           //   printf("  pre: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
-//           // #endif
-//           has_chd = true; 
-//           min_chd_lvl = chd_lvl;
-//           min_chd_ende = chd_ende; 
-//           // #ifdef PRINT_LOG
-//           //   printf("  pos: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
-//           // #endif
-//         }
-//       }
-//       // end = std::chrono::steady_clock::now();
-//       // duration_find_chd += end - start;
-      
-//       // Check whether form a cycle
-//       // start = std::chrono::steady_clock::now();
-//       bool cond = (is_td) ? (has_par) : (has_chd);
-//       int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-//       // given_lvl == 0 的時候就有可能把非 root 的 enode 加到 level 0，這個時候就不能再繼續往上加上去否則 level 就會壞掉
-//       // 因此我們會停在 given level = 0 的狀況下
-//       bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap(valid_pars, valid_chds)) && (given_lvl >= 0);
-//       // Critical zone
-//       // #pragma omp critical
-//       {
-//         if (valid) {
-//           MY_CHECK(given_lvl > -1, "given_lvl > -1");
-//           acc++; // used for check 
-
-//           // Update 
-//           picked_endes[ende] = true;
-//           level[ende] = given_lvl;
-//           update = true; 
-
-//           for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
-//             _picked_inv_adj[k] = _picked_inv_adj[k] || _tmp_picked_inv_adj[k];
-//           }
-//           for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
-//             _picked_adj[k] = _picked_adj[k] || _tmp_picked_adj[k];
-//           }
-
-//           #ifdef PRINT_LOG
-//             printf("! valid ende = %u, max_par_lvl = %d (max_par_ende = %u), min_chd_lvl = %d (min_chd_ende = %u), given_lvl = %d\n", 
-//                     ende, 
-//                     max_par_lvl, max_par_ende,
-//                     min_chd_lvl, min_chd_ende,
-//                     given_lvl);
-//           #endif
-//         } 
-//       }
-//     }
-//     printf("acc %u\n", acc);
-//   }
-
-
-//   return update;
-// }
-
-
 bool G_EXT::_insertion(const bool is_td, 
                       std::vector<bool>& picked_endes,
                       std::vector<int>& level) 
@@ -1149,117 +990,282 @@ bool G_EXT::_insertion(const bool is_td,
   };
 
   bool update = false;
+  _tmp_picked_adj.assign(_global_adj_1D.size(), false);
+  _tmp_picked_inv_adj.assign(_global_inv_adj_1D.size(), false);
 
-  // Try all candidates
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    if (picked_endes[ende]) continue;
-    #ifdef PRINT_LOG
-      printf("\n* Processing ende = %u\n", ende);
-    #endif
-    std::vector<uint32_t> valid_pars;
-    std::vector<uint32_t> valid_chds;
-    // _top_down_insertion(): 
-      // If not picked, check whether it can be added to this graph
-      // Conditions:
-      //   1. At least 1 parent enode exists (located @ MAX(parent_level))
-      //   2. At least 0 chldrn enode exists (located @ min(chldrn_level))
-      //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
-    // _bottom_up_insertion(): 
-      // If not picked, check whether it can be added to this graph
-      // Conditions:
-      //   1. At least 0 parent enode exists (located @ MAX(parent_level))
-      //   2. At least 1 chldrn enode exists (located @ min(chldrn_level))
-      //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
-    bool has_par = false, has_chd = false;
-    int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-    uint32_t max_par_ende = UINT32_MAX, min_chd_ende = UINT32_MAX; // Note: init values here are not important!
-    // Find max parent level 
-    #ifdef PRINT_LOG
-      printf("Find max parent level\n"); 
-    #endif
-    for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
-      uint32_t par_ende = _global_inv_adj_1D[k];
-      if (!picked_endes[par_ende]) continue;
-      int par_lvl = level[par_ende];
-      valid_pars.push_back(par_ende);
-      if (max_par_lvl < par_lvl) {
-        #ifdef PRINT_LOG
-          printf("  pre: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
-        #endif
-        MY_CHECK(par_lvl >= 0, "par_lvl >= 0"); 
-        has_par = true; 
-        max_par_lvl = par_lvl; 
-        max_par_ende = par_ende;
-        #ifdef PRINT_LOG
-          printf("  pos: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
-       #endif
-      }
-    }
-    // Find min child level
-    #ifdef PRINT_LOG
-      printf("Find min child level\n"); 
-    #endif
-    for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
-      uint32_t chd_ende = _global_adj_1D[k];      
-      if (!picked_endes[chd_ende]) continue;
-      int chd_lvl = level[chd_ende];
-      if (chd_lvl < 0) {
-        printf("WTF: \n");
-        std::cout << "chd_ende: " << chd_ende << ", chd_lvl = " << chd_lvl << "\n";
-        exit(1); 
-      }      
-      MY_CHECK(chd_lvl >= 0, "chd_lvl >= 0"); 
-      valid_chds.push_back(chd_ende);
-      if (min_chd_lvl > chd_lvl) {
-        #ifdef PRINT_LOG
-          printf("  pre: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
-        #endif 
-        has_chd = true; 
-        min_chd_lvl = chd_lvl;
-        min_chd_ende = chd_ende; 
-        #ifdef PRINT_LOG
-          printf("  pos: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
-        #endif 
-      }
-    }
-    
-    // Check whether form a cycle
-    bool cond = (is_td) ? (has_par) : (has_chd);
-    int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-    // given_lvl == 0 的時候就有可能把非 root 的 enode 加到 level 0，這個時候就不能再繼續往上加上去否則 level 就會壞掉
-    // 因此我們會停在 given level = 0 的狀況下
-    bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap(valid_pars, valid_chds)) && (given_lvl >= 0);
-    if (valid) {
-      MY_CHECK(given_lvl > -1, "given_lvl > -1");
+  // std::chrono::duration<double> duration_find_par, duration_find_chd, duration_valid;
+  // omp_set_num_threads(6); // 這裏 threads = 6 比較快
+  // uint32_t acc = 0;  // used for check 
 
-      // Update 
-      picked_endes[ende] = true;
-      level[ende] = given_lvl;
-      // update _adj and _inv_adj
-      for (uint32_t par_ende : valid_pars) {
-        // _adj[par_ende].insert(ende);
-        // _inv_adj[ende].insert(par_ende);
-        _update_picked_adj(par_ende, ende); 
-      }
-      for (uint32_t chd_ende : valid_chds) {
-        // _adj[ende].insert(chd_ende);
-        // _inv_adj[chd_ende].insert(ende);
-        _update_picked_adj(ende, chd_ende); 
-      }
-      update = true; 
-
+  // #pragma omp parallel
+  {  
+    // Try all candidates
+    // #pragma omp for
+    for (uint32_t ende = 0; ende < _num_ende; ende++) {
+      if (picked_endes[ende]) continue;
       #ifdef PRINT_LOG
-        printf("! valid ende = %u, max_par_lvl = %d (max_par_ende = %u), min_chd_lvl = %d (min_chd_ende = %u), given_lvl = %d\n", 
-                ende, 
-                max_par_lvl, max_par_ende,
-                min_chd_lvl, min_chd_ende,
-                given_lvl);
-      #endif      
+        printf("\n* Processing ende = %u\n", ende);
+      #endif
+
+      // auto start = std::chrono::steady_clock::now();
+      std::vector<uint32_t> valid_pars;
+      std::vector<uint32_t> valid_chds;
+      // _top_down_insertion(): 
+        // If not picked, check whether it can be added to this graph
+        // Conditions:
+        //   1. At least 1 parent enode exists (located @ MAX(parent_level))
+        //   2. At least 0 chldrn enode exists (located @ min(chldrn_level))
+        //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
+      // _bottom_up_insertion(): 
+        // If not picked, check whether it can be added to this graph
+        // Conditions:
+        //   1. At least 0 parent enode exists (located @ MAX(parent_level))
+        //   2. At least 1 chldrn enode exists (located @ min(chldrn_level))
+        //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
+      bool has_par = false, has_chd = false;
+      int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+      uint32_t max_par_ende = UINT32_MAX, min_chd_ende = UINT32_MAX; // Note: init values here are not important!
+      // Find max parent level 
+      #ifdef PRINT_LOG
+        printf("Find max parent level\n"); 
+      #endif
+      for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
+        uint32_t par_ende = _global_inv_adj_1D[k];
+        if (!picked_endes[par_ende]) continue;
+        int par_lvl = level[par_ende];
+        valid_pars.push_back(par_ende);
+        _tmp_picked_inv_adj[k] = true;
+        if (max_par_lvl < par_lvl) {
+          // #ifdef PRINT_LOG
+          //   printf("  pre: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
+          // #endif
+          MY_CHECK(par_lvl >= 0, "par_lvl >= 0"); 
+          has_par = true; 
+          max_par_lvl = par_lvl; 
+          max_par_ende = par_ende;
+          // #ifdef PRINT_LOG
+          //   printf("  pos: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
+          // #endif
+        }
+      }
+      // auto end = std::chrono::steady_clock::now();
+      // duration_find_par += end - start;
+
+      // Find min child level
+      // start = std::chrono::steady_clock::now();
+      #ifdef PRINT_LOG
+        printf("Find min child level\n"); 
+      #endif
+      for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
+        uint32_t chd_ende = _global_adj_1D[k];      
+        if (!picked_endes[chd_ende]) continue;
+        int chd_lvl = level[chd_ende];
+        // if (chd_lvl < 0) {
+        //   printf("WTF: \n");
+        //   std::cout << "chd_ende: " << chd_ende << ", chd_lvl = " << chd_lvl << "\n";
+        //   exit(1);
+        // }
+        MY_CHECK(chd_lvl >= 0, "chd_lvl >= 0"); 
+        valid_chds.push_back(chd_ende);
+        _tmp_picked_adj[k] = true;
+        if (min_chd_lvl > chd_lvl) {
+          // #ifdef PRINT_LOG
+          //   printf("  pre: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
+          // #endif
+          has_chd = true; 
+          min_chd_lvl = chd_lvl;
+          min_chd_ende = chd_ende; 
+          // #ifdef PRINT_LOG
+          //   printf("  pos: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
+          // #endif
+        }
+      }
+      // end = std::chrono::steady_clock::now();
+      // duration_find_chd += end - start;
+      
+      // Check whether form a cycle
+      // start = std::chrono::steady_clock::now();
+      bool cond = (is_td) ? (has_par) : (has_chd);
+      int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+      // given_lvl == 0 的時候就有可能把非 root 的 enode 加到 level 0，這個時候就不能再繼續往上加上去否則 level 就會壞掉
+      // 因此我們會停在 given level = 0 的狀況下
+      bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap(valid_pars, valid_chds)) && (given_lvl >= 0);
+      // Critical zone
+      // #pragma omp critical
+      {
+        if (valid) {
+          MY_CHECK(given_lvl > -1, "given_lvl > -1");
+          // acc++; // used for check 
+
+          // Update 
+          picked_endes[ende] = true;
+          level[ende] = given_lvl;
+          update = true; 
+
+          // update _adj and _inv_adj
+          for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
+            if(!_tmp_picked_inv_adj[k]) continue;
+            const uint32_t par_ende = _global_inv_adj_1D[k];
+            _update_picked_adj(par_ende, ende); 
+          }
+          // for (uint32_t chd_ende : valid_chds) {
+          for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
+            if(!_tmp_picked_adj[k]) continue;
+            const uint32_t chd_ende = _global_adj_1D[k];
+            _update_picked_adj(ende, chd_ende); 
+          }         
+
+          #ifdef PRINT_LOG
+            printf("! valid ende = %u, max_par_lvl = %d (max_par_ende = %u), min_chd_lvl = %d (min_chd_ende = %u), given_lvl = %d\n", 
+                    ende, 
+                    max_par_lvl, max_par_ende,
+                    min_chd_lvl, min_chd_ende,
+                    given_lvl);
+          #endif
+        } 
+      }
     }
+    // printf("acc %u\n", acc);
   }
+
 
   return update;
 }
+
+
+// bool G_EXT::_insertion(const bool is_td, 
+//                       std::vector<bool>& picked_endes,
+//                       std::vector<int>& level) 
+// {
+// #ifdef PRINT_LOG
+//   if (is_td) {
+//     printf("\nG_EXT::_top_down_insertion()\n");
+//   } else {
+//     printf("\nG_EXT::_bottom_up_insertion()\n");
+//   }
+// #endif
+//   // Lambda
+//   auto has_overlap = [&](const std::vector<uint32_t>& a,
+//                         const std::vector<uint32_t>& b) -> bool {
+//     for (uint32_t x : a)
+//       for (uint32_t y : b)
+//         if (x == y)
+//           return true;
+//     return false;
+//   };
+
+//   bool update = false;
+
+//   // Try all candidates
+//   for (uint32_t ende = 0; ende < _num_ende; ende++) {
+//     if (picked_endes[ende]) continue;
+//     #ifdef PRINT_LOG
+//       printf("\n* Processing ende = %u\n", ende);
+//     #endif
+//     std::vector<uint32_t> valid_pars;
+//     std::vector<uint32_t> valid_chds;
+//     // _top_down_insertion(): 
+//       // If not picked, check whether it can be added to this graph
+//       // Conditions:
+//       //   1. At least 1 parent enode exists (located @ MAX(parent_level))
+//       //   2. At least 0 chldrn enode exists (located @ min(chldrn_level))
+//       //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
+//     // _bottom_up_insertion(): 
+//       // If not picked, check whether it can be added to this graph
+//       // Conditions:
+//       //   1. At least 0 parent enode exists (located @ MAX(parent_level))
+//       //   2. At least 1 chldrn enode exists (located @ min(chldrn_level))
+//       //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
+//     bool has_par = false, has_chd = false;
+//     int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+//     uint32_t max_par_ende = UINT32_MAX, min_chd_ende = UINT32_MAX; // Note: init values here are not important!
+//     // Find max parent level 
+//     #ifdef PRINT_LOG
+//       printf("Find max parent level\n"); 
+//     #endif
+//     for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
+//       uint32_t par_ende = _global_inv_adj_1D[k];
+//       if (!picked_endes[par_ende]) continue;
+//       int par_lvl = level[par_ende];
+//       valid_pars.push_back(par_ende);
+//       if (max_par_lvl < par_lvl) {
+//         #ifdef PRINT_LOG
+//           printf("  pre: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
+//         #endif
+//         MY_CHECK(par_lvl >= 0, "par_lvl >= 0"); 
+//         has_par = true; 
+//         max_par_lvl = par_lvl; 
+//         max_par_ende = par_ende;
+//         #ifdef PRINT_LOG
+//           printf("  pos: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
+//        #endif
+//       }
+//     }
+//     // Find min child level
+//     #ifdef PRINT_LOG
+//       printf("Find min child level\n"); 
+//     #endif
+//     for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
+//       uint32_t chd_ende = _global_adj_1D[k];      
+//       if (!picked_endes[chd_ende]) continue;
+//       int chd_lvl = level[chd_ende];
+//       if (chd_lvl < 0) {
+//         printf("WTF: \n");
+//         std::cout << "chd_ende: " << chd_ende << ", chd_lvl = " << chd_lvl << "\n";
+//         exit(1); 
+//       }      
+//       MY_CHECK(chd_lvl >= 0, "chd_lvl >= 0"); 
+//       valid_chds.push_back(chd_ende);
+//       if (min_chd_lvl > chd_lvl) {
+//         #ifdef PRINT_LOG
+//           printf("  pre: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
+//         #endif 
+//         has_chd = true; 
+//         min_chd_lvl = chd_lvl;
+//         min_chd_ende = chd_ende; 
+//         #ifdef PRINT_LOG
+//           printf("  pos: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
+//         #endif 
+//       }
+//     }
+    
+//     // Check whether form a cycle
+//     bool cond = (is_td) ? (has_par) : (has_chd);
+//     int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+//     // given_lvl == 0 的時候就有可能把非 root 的 enode 加到 level 0，這個時候就不能再繼續往上加上去否則 level 就會壞掉
+//     // 因此我們會停在 given level = 0 的狀況下
+//     bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap(valid_pars, valid_chds)) && (given_lvl >= 0);
+//     if (valid) {
+//       MY_CHECK(given_lvl > -1, "given_lvl > -1");
+
+//       // Update 
+//       picked_endes[ende] = true;
+//       level[ende] = given_lvl;
+//       // update _adj and _inv_adj
+//       for (uint32_t par_ende : valid_pars) {
+//         // _adj[par_ende].insert(ende);
+//         // _inv_adj[ende].insert(par_ende);
+//         _update_picked_adj(par_ende, ende); 
+//       }
+//       for (uint32_t chd_ende : valid_chds) {
+//         // _adj[ende].insert(chd_ende);
+//         // _inv_adj[chd_ende].insert(ende);
+//         _update_picked_adj(ende, chd_ende); 
+//       }
+//       update = true; 
+
+//       #ifdef PRINT_LOG
+//         printf("! valid ende = %u, max_par_lvl = %d (max_par_ende = %u), min_chd_lvl = %d (min_chd_ende = %u), given_lvl = %d\n", 
+//                 ende, 
+//                 max_par_lvl, max_par_ende,
+//                 min_chd_lvl, min_chd_ende,
+//                 given_lvl);
+//       #endif      
+//     }
+//   }
+
+//   return update;
+// }
 
 
 void G_EXT::_update_picked_adj(const uint32_t fm_ende, const uint32_t to_ende) 
@@ -1410,21 +1416,21 @@ void G_EXT::get_nodes_in_subgraph(
     _in_subgraph[i] = from_roots[i] && to_leaves[i];
   }
 
-  uint32_t bibi0 = 0;
-  for (uint32_t i = 0; i < from_roots.size(); i++) {
-    if (from_roots[i]) bibi0++;
-  }
+  // uint32_t bibi0 = 0;
+  // for (uint32_t i = 0; i < from_roots.size(); i++) {
+  //   if (from_roots[i]) bibi0++;
+  // }
 
-  uint32_t bibi1 = 0;
-  for (uint32_t i = 0; i < to_leaves.size(); i++) {
-    if (to_leaves[i]) bibi1++;
-  }  
+  // uint32_t bibi1 = 0;
+  // for (uint32_t i = 0; i < to_leaves.size(); i++) {
+  //   if (to_leaves[i]) bibi1++;
+  // }  
 
-  uint32_t bibi = 0;
-  for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
-    if (_in_subgraph[i]) bibi++;
-  }
-  printf("bibi _in_subgraph = %u %u %u\n", bibi0, bibi1, bibi);
+  // uint32_t bibi = 0;
+  // for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
+  //   if (_in_subgraph[i]) bibi++;
+  // }
+  // printf("bibi _in_subgraph = %u %u %u\n", bibi0, bibi1, bibi);
 }
 
 
