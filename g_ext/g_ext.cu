@@ -1177,7 +1177,8 @@ bool G_EXT::_insertion(const bool is_td,
     #ifdef PRINT_LOG
       printf("Find max parent level\n"); 
     #endif
-    for (uint32_t par_ende : _global_inv_adj[ende]) {
+    for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
+      uint32_t par_ende = _global_inv_adj_1D[k];
       if (!picked_endes[par_ende]) continue;
       int par_lvl = level[par_ende];
       valid_pars.push_back(par_ende);
@@ -1198,7 +1199,8 @@ bool G_EXT::_insertion(const bool is_td,
     #ifdef PRINT_LOG
       printf("Find min child level\n"); 
     #endif
-    for (uint32_t chd_ende : _global_adj[ende]) {
+    for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
+      uint32_t chd_ende = _global_adj_1D[k];      
       if (!picked_endes[chd_ende]) continue;
       int chd_lvl = level[chd_ende];
       if (chd_lvl < 0) {
