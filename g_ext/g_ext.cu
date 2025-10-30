@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-// #define PRINT_LOG
+#define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
 #define threads 1024 // num GPU threads
@@ -1570,6 +1570,32 @@ __global__ void _gpu_init_picked_adj (const uint32_t num_endes,
   }
 }
 
+__global__ void _print_gpu_degree(const uint32_t n0, 
+  const uint32_t n1, 
+  const uint32_t* dvc_picked_endes,
+  const uint32_t* dvc_indegree,
+  const uint32_t* dvc_inv_indegree) 
+{
+  printf("\n==================== _print_gpu_degree ====================\n");
+  printf("  dvc_indegree:\n");
+  for (uint32_t i = 0; i < n0; i++) {
+    if (dvc_picked_endes[i]) {
+      printf("    dvc_indegree[%u] = %u (picked: T)\n", i, dvc_indegree[i]);
+    } else {
+      printf("    dvc_indegree[%u] = %u (picked: F)\n", i, dvc_indegree[i]);
+    }
+  }
+  printf("  dvc_inv_indegree:\n");
+  for (uint32_t i = 0; i < n1; i++) {
+    if (dvc_picked_endes[i]) {
+      printf("    dvc_indegree[%u] = %u (picked: T)\n", i, dvc_inv_indegree[i]);
+    } else {
+      printf("    dvc_indegree[%u] = %u (picked: F)\n", i, dvc_inv_indegree[i]);
+    }
+  }
+  printf("\n");
+}
+
 __global__ void _print_gpu_init_picked_adj(const uint32_t n0, 
   const uint32_t n1, 
   const uint32_t n2, 
@@ -1618,23 +1644,6 @@ __global__ void _print_gpu_init_picked_adj(const uint32_t n0,
       }
     }
     if (has) printf("\n");
-  }
-  
-  printf("dvc_indegree:\n");
-  for (uint32_t i = 0; i < n0; i++) {
-    if (dvc_picked_endes[i]) {
-      printf("\tdvc_indegree[%u] = %u (picked: T)\n", i, dvc_indegree[i]);
-    } else {
-      printf("\tdvc_indegree[%u] = %u (picked: F)\n", i, dvc_indegree[i]);
-    }
-  }
-  printf("dvc_inv_indegree:\n");
-  for (uint32_t i = 0; i < n1; i++) {
-    if (dvc_picked_endes[i]) {
-      printf("\tdvc_indegree[%u] = %u (picked: T)\n", i, dvc_inv_indegree[i]);
-    } else {
-      printf("\tdvc_indegree[%u] = %u (picked: F)\n", i, dvc_inv_indegree[i]);
-    }
   }
 }
 
@@ -1875,6 +1884,9 @@ void G_EXT::_gpu_reconstruct_graph() {
     _dvc_global_inv_adj_1D); // debug
   cudaCheckErrors("_print_gpu_init_picked_adj failed"); // debug 
   cudaDeviceSynchronize(); // debug
+  _print_gpu_degree<<<1,1>>>(_num_ende, _num_ende, _dvc_picked_endes, _dvc_indegree, _dvc_inv_indegree);
+  cudaCheckErrors("_print_gpu_degree failed"); // debug 
+  cudaDeviceSynchronize(); // debug
 #endif
   
   bool updated = true;
@@ -1884,8 +1896,8 @@ void G_EXT::_gpu_reconstruct_graph() {
   //   updated = false;
   //   cudaMemcpy(_dvc_update, &updated, sizeof(bool), cudaMemcpyHostToDevice); // acts as init
     _gpu_update_deg_init_level(true);
-  //   _gpu_BFS();
-  //   bool tp = _gpu_insertion();
+    _gpu_BFS(false);
+    bool tp = _gpu_insertion();
     
   //   cudaMemcpy(_dvc_update, &updated, sizeof(bool), cudaMemcpyHostToDevice); // acts as init
   //   _gpu_update_deg_init_level();
@@ -1938,7 +1950,23 @@ void G_EXT::_gpu_update_deg_init_level(const bool need_to_update)
     _dvc_indegree,
     _dvc_inv_indegree);
   cudaCheckErrors("_update_deg_kl failed");
+
+#ifdef PRINT_LOG
+  _print_gpu_degree<<<1,1>>>(_num_ende, _num_ende, _dvc_picked_endes, _dvc_indegree, _dvc_inv_indegree);
+  cudaCheckErrors("_print_gpu_degree failed"); // debug 
+  cudaDeviceSynchronize(); // debug  
+#endif
 }
+
+void G_EXT::_gpu_BFS(const bool is_td) 
+{
+  if (is_td) {
+    要從這裡開始寫
+  } else {
+
+  }
+}
+
 
 bool G_EXT::_gpu_insertion()
 {
