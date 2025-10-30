@@ -219,7 +219,6 @@ private:
   std::vector<uint32_t> _ecls_its_ende_1D; // compress _ecls_its_ende into 1D
   std::vector<uint32_t> _ecls_its_ende_1D_ptr;
   std::vector<uint32_t> _all_root_ende_1D; // store all of the enodes in 1D
-  
 
   // For construction of new graph G 
   std::vector<std::unordered_set<uint32_t>> _global_adj;
@@ -240,6 +239,7 @@ private:
   std::vector<bool> _in_subgraph;
 
   std::vector<std::vector<uint32_t>> _ecls_its_ende_newG;
+  // std::queue<uint32_t> _insertion_q;
 
   // global Device memory 
   uint32_t* _dvc_best_ende_of_ecls;

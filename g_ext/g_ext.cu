@@ -731,7 +731,7 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
     bool tp = _insertion(true, picked_endes, level);
 
     // top-down levelization && bottom-up insertion
-    // _update_deg(tp, picked_endes);  這裏不用
+    _update_deg(tp, picked_endes); 
     _top_down_levelize(picked_endes, level);
     bool bu = _insertion(false, picked_endes, level);
    
@@ -982,7 +982,9 @@ bool G_EXT::_insertion(const bool is_td,
       //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
     bool has_par = false, has_chd = false;
     int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-    uint32_t max_par_ende = UINT32_MAX, min_chd_ende = UINT32_MAX; // Note: init values here are not important!
+    #ifdef PRINT_LOG
+      uint32_t max_par_ende = UINT32_MAX, min_chd_ende = UINT32_MAX; // Note: init values here are not important!
+    #endif
     // Find max parent level 
     #ifdef PRINT_LOG
       printf("Find max parent level\n"); 
@@ -999,7 +1001,9 @@ bool G_EXT::_insertion(const bool is_td,
         MY_CHECK(par_lvl >= 0, "par_lvl >= 0"); 
         has_par = true; 
         max_par_lvl = par_lvl; 
-        max_par_ende = par_ende;
+        #ifdef PRINT_LOG
+          max_par_ende = par_ende;
+        #endif
         // #ifdef PRINT_LOG
         //   printf("  pos: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
         // #endif
@@ -1028,7 +1032,9 @@ bool G_EXT::_insertion(const bool is_td,
         // #endif
         has_chd = true; 
         min_chd_lvl = chd_lvl;
-        min_chd_ende = chd_ende; 
+        #ifdef PRINT_LOG
+          min_chd_ende = chd_ende; 
+        #endif
         // #ifdef PRINT_LOG
         //   printf("  pos: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
         // #endif
@@ -1841,7 +1847,7 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-  printf("GPU Runtime: %.2f (ms)\n", gpuTime);
+  printf("GPU Relaxation Runtime: %.2f (ms)\n", gpuTime);
 
   return std::make_pair(tree_ret, dag_ret);
 }
@@ -1895,14 +1901,13 @@ void G_EXT::_gpu_reconstruct_graph() {
   while (updated) {
     updated = false;
     _gpu_update_deg_init_level(updated);
-    
     _gpu_BFS(false, _dvc_inv_indegree, 
       _dvc_picked_endes, 
       _dvc_global_inv_adj_1D, _dvc_global_inv_adj_1D_ptr, 
       _dvc_picked_inv_adj, _dvc_level);
     bool tp = _gpu_insertion();
     
-    // 我在想這裡是不是要把 level 重新設成 -1
+    _gpu_update_deg_init_level(updated);
     _gpu_BFS(true, _dvc_indegree, 
       _dvc_picked_endes, 
       _dvc_global_adj_1D, _dvc_global_adj_1D_ptr, 
@@ -1910,8 +1915,9 @@ void G_EXT::_gpu_reconstruct_graph() {
     bool bu = _gpu_insertion();
 
     updated = tp || bu; 
-    break;
   }
+
+  // TODO...
   
 }
 
@@ -1969,14 +1975,13 @@ __global__ void _init_q1(const uint32_t num_ende,
   uint32_t* q,
   uint32_t* q_sz)
 {
-  uint32_t pos = 0;
-  for (uint32_t ende = 0; ende < num_ende; ende++) {
-    if ((dvc_indegree[ende] == 0) && dvc_picked_endes[ende]) {
-      q[pos] = ende;
-      pos++;
-    }
-  } 
-  *q_sz = pos;
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num_ende) return;
+
+  if ((dvc_indegree[t_idx] == 0) && dvc_picked_endes[t_idx]) {
+    uint32_t pos = atomicAdd(q_sz, 1);
+    q[pos] = t_idx; // Note: t_idx is ende
+  }
 }
 
 __global__ void _gpu_BFS_kl(
@@ -2032,7 +2037,8 @@ void G_EXT::_gpu_BFS(const bool is_td,
   cudaMemset(_dvc_max_level, 0, 1*sizeof(int));
 
   // init queue
-  _init_q1<<<1,1>>>(_num_ende, 
+  int blocks = (_num_ende + threads - 1) / threads;
+  _init_q1<<<blocks,threads>>>(_num_ende, 
     deg,
     picked_endes,
     _dvc_q, _dvc_q_sz);
@@ -2048,7 +2054,7 @@ void G_EXT::_gpu_BFS(const bool is_td,
   while (num > 0) {
     // printf("num = %u\n", num); // used for debug
     cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice); // start point
-    int blocks = (num + threads - 1) / threads;
+    blocks = (num + threads - 1) / threads;
 
     _gpu_BFS_kl<<<blocks, threads>>>(
       num,
@@ -2071,7 +2077,7 @@ void G_EXT::_gpu_BFS(const bool is_td,
   }
 
   if (!is_td) {
-    int blocks = (_num_ende + threads - 1) / threads;
+    blocks = (_num_ende + threads - 1) / threads;
     _reverse_level<<<blocks,threads>>>(_num_ende, _dvc_max_level, level);
     cudaCheckErrors("_reverse_level failed");
   }
@@ -2098,7 +2104,7 @@ void G_EXT::_gpu_BFS(const bool is_td,
 
 bool G_EXT::_gpu_insertion()
 {
-  bool ret = true;
+  bool update = false;
   
   // cudaMemcpy(&ret, _dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   
@@ -2522,51 +2528,3 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
   }
   printf("\n"); 
 }
-
-
-
-// __device__ double atomicMinDoubleEps(double* addr, double val) {
-//   const double EPS = 1e-12;
-//   unsigned long long int* addr_as_ull = (unsigned long long int*)addr;
-//   unsigned long long int old = *addr_as_ull, assumed;
-//   do {
-//     assumed = old;
-//     double old_val = __longlong_as_double(assumed);
-//     if (old_val <= val + EPS) break;  // 注意：加上 EPS 防止平手更新
-//     old = atomicCAS(addr_as_ull, assumed, __double_as_longlong(val));
-//   } while (assumed != old);
-//   return __longlong_as_double(old);
-// }
-
-// #include <curand_kernel.h>
-
-// __device__ double atomicMinDoubleRandEps(double* addr, double val, unsigned int seed) {
-//   // 每個 thread 用 seed + thread id 當亂數來源
-//   unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
-//   unsigned int local_seed = seed ^ (tid * 0x9e3779b9);  // 混合 hash
-//   // LCG 簡單亂數
-//   local_seed = (1103515245u * local_seed + 12345u);
-//   double rand01 = (double)(local_seed & 0x00FFFFFF) / (double)0x01000000; // 0~1
-  
-//   // 隨機 ±EPS 偏移
-//   const double EPS = 1e-12;
-//   double jitter = (rand01 < 0.5 ? -EPS : +EPS);
-
-//   unsigned long long int* addr_as_ull = (unsigned long long int*)addr;
-//   unsigned long long int old = *addr_as_ull, assumed;
-//   do {
-//     assumed = old;
-//     double old_val = __longlong_as_double(assumed);
-//     // 平手時有 50% 機率選擇更新
-//     if (old_val <= val + jitter) break;
-//     old = atomicCAS(addr_as_ull, assumed, __double_as_longlong(val));
-//   } while (assumed != old);
-
-//   return __longlong_as_double(old);
-// }
-
-// __device__ inline float simple_rand(uint32_t seed) {
-//   // 線性同餘生成器 (LCG) – 極簡版，足夠 GPU 每 thread 做簡單擾動
-//   seed = seed * 1664525u + 1013904223u;
-//   return (float)(seed & 0x00FFFFFF) / (float)0x01000000; // 範圍 [0,1)
-// }
