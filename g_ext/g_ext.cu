@@ -3,7 +3,7 @@
 // #define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
-// #define GPU_CHECK
+#define threads 1024 // for GPU
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -428,21 +428,18 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   _print_adj(_global_adj);
   printf("_global_inv_adj mapping (ende Id -> ende Id):\n");
   _print_adj(_global_inv_adj);
-  printf("\n\n============================== START TO _reconstruct_graph... ==============================\n");
+
+  printf("_num_ende = %u\n", _num_ende);
+  printf("_global_adj:\n");
+  for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
+    printf("_global_adj[%u] (sz = %lu) = [", ende, _global_adj.size());
+    for (uint32_t to_ende : _global_adj[ende]) {
+      printf("%u, ", to_ende);
+    }
+    printf("]\n");
+  }
+  printf("\n");  
 #endif
-
-  // printf("_num_ende = %u\n", _num_ende);
-  // printf("_global_adj:\n");
-  // for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
-  //   printf("_global_adj[%u] (sz = %lu) = [", _global_adj.size());
-  //   for (uint32_t to_ende : _global_adj[ende]) {
-  //     printf("%u, ", to_ende);
-  //   }
-  //   printf("]\n");
-  // }
-  // printf("\n");
-
-
 }
 
 // =========================== TREE/DAG functions =========================== // 
@@ -554,44 +551,6 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
   }
   double dag_ret = _compute_dag_cost(best_ende_of_ecls, picked_endes, ende_picked_by_ende); 
   _init_picked_adj(picked_endes);
-  
-#ifdef GPU_CHECK
-// 檢查 enode-level mutual dependency
-{
-  // Step 1. 建立 enode → child_enode dependency list
-  std::vector<std::vector<uint32_t>> dependency(_num_ende);
-
-  for (uint32_t ende = 0; ende < ende_picked_by_ende.size(); ende++) {
-    // 我們假設 ende_picked_by_ende[ende] 存的就是所有 "child enode"
-    for (uint32_t chd_ende : ende_picked_by_ende[ende]) {
-      if (ende == chd_ende) continue; // 自己指自己不用理
-      dependency[ende].push_back(chd_ende);
-    }
-  }
-
-  // Step 2. 檢查是否存在 A→B 且 B→A
-  uint32_t mutual_count = 0;
-  for (uint32_t endeA = 0; endeA < dependency.size(); ++endeA) {
-    for (uint32_t endeB : dependency[endeA]) {
-      if (endeB >= dependency.size()) continue;
-      // 檢查 B 是否也依賴 A
-      for (uint32_t back : dependency[endeB]) {
-        if (back == endeA) {
-          printf("⚠️  Mutual dependency found between enode %u and %u\n", endeA, endeB);
-          mutual_count++;
-          exit(1);
-        }
-      }
-    }
-  }
-
-  if (mutual_count == 0) {
-    printf("✅ No enode-level mutual dependency found.\n");
-  } else {
-    printf("⚠️  Total mutual dependencies found: %u\n", mutual_count);
-  }
-}
-#endif
 
   return std::make_pair(tree_ret, dag_ret);
 }
@@ -717,13 +676,10 @@ void G_EXT::_init_picked_adj(const std::vector<bool>& picked_endes)
 
 
 
-void G_EXT::_reconstruct_graph(std::vector<double>& cost_of_ecls,
-                                std::vector<double>& cost_of_ende,
-                                std::vector<uint32_t>& best_ende_of_ecls,
-                                std::vector<bool>& picked_endes) 
+void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
 {
 #ifdef PRINT_LOG
-  printf("\nInside G_EXT::_reconstruct_graph()\n"); 
+  printf("\nInside G_EXT::_cpu_reconstruct_graph()\n"); 
   // Reconstruct graph that can be levelization
   printf("picked_endes\n");
   for (uint32_t i = 0; i < picked_endes.size(); i++) {
@@ -1081,9 +1037,9 @@ bool G_EXT::_insertion(const bool is_td,
     for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
       if(!_tmp_picked_inv_adj[k]) continue;
       const uint32_t par_ende = _global_inv_adj_1D[k];      
-      for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
-        if(!_tmp_picked_adj[k]) continue;
-        const uint32_t chd_ende = _global_adj_1D[k];
+      for (uint32_t kk = _global_adj_1D_ptr[ende]; kk < _global_adj_1D_ptr[ende+1]; kk++) {
+        if(!_tmp_picked_adj[kk]) continue;
+        const uint32_t chd_ende = _global_adj_1D[kk];
         if (par_ende == chd_ende) has_overlap_b = true;
         break;
       }      
@@ -1411,22 +1367,6 @@ void G_EXT::get_nodes_in_subgraph(
   for (size_t i = 0; i < _num_ende; ++i) {
     _in_subgraph[i] = from_roots[i] && to_leaves[i];
   }
-
-  // uint32_t bibi0 = 0;
-  // for (uint32_t i = 0; i < from_roots.size(); i++) {
-  //   if (from_roots[i]) bibi0++;
-  // }
-
-  // uint32_t bibi1 = 0;
-  // for (uint32_t i = 0; i < to_leaves.size(); i++) {
-  //   if (to_leaves[i]) bibi1++;
-  // }  
-
-  // uint32_t bibi = 0;
-  // for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
-  //   if (_in_subgraph[i]) bibi++;
-  // }
-  // printf("bibi _in_subgraph = %u %u %u\n", bibi0, bibi1, bibi);
 }
 
 
@@ -1500,30 +1440,6 @@ __global__ void _relax_enodes_kernel(const uint32_t num_endes,
     best_ende_of_ecls[which_ecls] = t_idx;
     *update = true; // No need to be atomic
   }  
-}
-
-__global__ void _get_best_ende_of_ecls(const uint32_t num_ecls, uint32_t* best_ende_of_ecls, 
-  const double* cost_of_ende,
-  const uint32_t* ecls_its_ende_1D, 
-  const uint32_t* ecls_its_ende_1D_ptr) 
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num_ecls) return;
-
-  const uint32_t start = ecls_its_ende_1D_ptr[t_idx];
-  const uint32_t end = ecls_its_ende_1D_ptr[t_idx+1];
-  // double best_cost = std::numeric_limits<double>::infinity();
-  double best_cost = __longlong_as_double(0x7ff0000000000000ULL); // == +inf (constexpr)
-  uint32_t best_ende = UINT32_MAX; // init 
-  for (uint32_t jj = start; jj < end; jj++) {
-    const uint32_t ende = ecls_its_ende_1D[jj];
-    double cost = cost_of_ende[ende];
-    if (cost < best_cost) {
-      best_ende = ende; 
-      best_cost = cost;
-    }
-  }
-  best_ende_of_ecls[t_idx] = best_ende;
 }
 
 __global__ void _get_tree_cost(const uint32_t size, 
@@ -1612,223 +1528,362 @@ __global__ void _get_dag_cost(
   }
 }
 
+__global__ void _gpu_init_picked_adj (const uint32_t num_endes, 
+  const uint32_t* dvc_global_adj_1D,
+  const uint32_t* dvc_global_adj_1D_ptr,
+  const uint32_t* dvc_global_inv_adj_1D,
+  const uint32_t* dvc_global_inv_adj_1D_ptr,
+  const uint32_t* dvc_picked_endes,
+  uint32_t* dvc_picked_adj, uint32_t* dvc_picked_inv_adj,
+  uint32_t* dvc_indegree, uint32_t* dvc_inv_indegree) 
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num_endes) return;
+
+  if (!dvc_picked_endes[t_idx]) return;
+  // init dvc_picked_adj
+  uint32_t start = dvc_global_adj_1D_ptr[t_idx];
+  uint32_t end = dvc_global_adj_1D_ptr[t_idx+1];
+  for (uint32_t k = start; k < end; k++) {
+    const uint32_t to_ende = dvc_global_adj_1D[k];
+    if (dvc_picked_endes[to_ende]) {
+      dvc_picked_adj[k] = 1; // true
+      dvc_indegree[to_ende]++;
+      dvc_inv_indegree[t_idx]++;
+      // atomicAdd(&dvc_indegree[to_ende], 1);
+      // atomicAdd(&dvc_inv_indegree[t_idx], 1);
+    }
+  }
+
+  // init dvc_picked_inv_adj
+  start = dvc_global_inv_adj_1D_ptr[t_idx];
+  end = dvc_global_inv_adj_1D_ptr[t_idx+1];
+  for (uint32_t k = start; k < end; k++) {
+    const uint32_t to_ende = dvc_global_inv_adj_1D[k];
+    if (dvc_picked_endes[to_ende]) {
+      dvc_picked_inv_adj[k] = 1; // true
+    }
+  }
+}
+
+__global__ void _print_gpu_init_picked_adj(const uint32_t n0, 
+  const uint32_t n1, 
+  const uint32_t n2, 
+  const uint32_t n3, 
+  const uint32_t* dvc_picked_endes,
+  const uint32_t* dvc_indegree,
+  const uint32_t* dvc_inv_indegree,
+  const uint32_t* dvc_picked_adj,
+  const uint32_t* dvc_picked_inv_adj,
+  const uint32_t* dvc_global_adj_1D_ptr, 
+  const uint32_t* dvc_global_inv_adj_1D_ptr,
+  const uint32_t* dvc_global_adj_1D,
+  const uint32_t* dvc_global_inv_adj_1D
+  )
+{
+  printf("_print_gpu_init_picked_adj\n");
+  printf("\n===== dvc_picked_adj =====\n");
+  for (uint32_t fm_ende = 0; fm_ende < n2; fm_ende++) {
+    uint32_t start = dvc_global_adj_1D_ptr[fm_ende];
+    uint32_t end   = dvc_global_adj_1D_ptr[fm_ende + 1];
+    bool has = false;
+    for (uint32_t k = start; k < end; k++) {
+      if (dvc_picked_adj[k]) {
+        if (!has) {
+          printf("from %u:", fm_ende);
+          has = true;
+        }
+        printf(" %u", dvc_global_adj_1D[k]);
+      }
+    }
+    if (has) printf("\n");
+  }
+
+  printf("\n===== dvc_picked_inv_adj =====\n");
+  for (uint32_t fm_ende = 0; fm_ende < n3; fm_ende++) {
+    uint32_t start = dvc_global_inv_adj_1D_ptr[fm_ende];
+    uint32_t end   = dvc_global_inv_adj_1D_ptr[fm_ende + 1];
+    bool has = false;
+    for (uint32_t k = start; k < end; k++) {
+      if (dvc_picked_inv_adj[k]) {
+        if (!has) {
+          printf("to %u:", fm_ende);
+          has = true;
+        }
+        printf(" %u", dvc_global_inv_adj_1D[k]);
+      }
+    }
+    if (has) printf("\n");
+  }
+  
+  printf("dvc_indegree:\n");
+  for (uint32_t i = 0; i < n0; i++) {
+    if (dvc_picked_endes[i]) {
+      printf("\tdvc_indegree[%u] = %u (picked: T)\n", i, dvc_indegree[i]);
+    } else {
+      printf("\tdvc_indegree[%u] = %u (picked: F)\n", i, dvc_indegree[i]);
+    }
+  }
+  printf("dvc_inv_indegree:\n");
+  for (uint32_t i = 0; i < n1; i++) {
+    if (dvc_picked_endes[i]) {
+      printf("\tdvc_indegree[%u] = %u (picked: T)\n", i, dvc_inv_indegree[i]);
+    } else {
+      printf("\tdvc_indegree[%u] = %u (picked: F)\n", i, dvc_inv_indegree[i]);
+    }
+  }
+}
+
+__global__ void _gpu_add_more_roots(const uint32_t num_root_ecls, 
+  const uint32_t* dvc_ecls_its_ende_1D,
+  uint32_t* dvc_picked_endes)
+{
+  // Add more roots enodes
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num_root_ecls) return;
+  // printf("num_root_ecls = %u, %u, %u\n", num_root_ecls, dvc_ecls_its_ende_1D[r], dvc_picked_endes[dvc_ecls_its_ende_1D[r]]);
+  dvc_picked_endes[dvc_ecls_its_ende_1D[t_idx]] = 1;
+}
+
+__global__ void _init_levels(const uint32_t num_ende, int* dvc_level)
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num_ende) return;  
+  dvc_level[t_idx] = -1;
+}
+
+
 std::pair<double, double> G_EXT::_gpu_best_tree() 
 {
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_gpu_best_tree()\n"); 
 #endif
-  // CPU relaxation 
+  int blocks = (_num_ende + threads - 1) / threads;
+
+  // Local memory 
+  float* dvc_ende_cost; 
+  uint32_t* dvc_ende_ecls;
+  uint32_t* dvc_ende_child;
+  uint32_t* dvc_ende_child_ptr;
+  double* dvc_cost_of_ecls; 
+  double* dvc_cost_of_ende; 
+  double* dvc_tree_ret;
+  double* dvc_dag_ret;
+  
+  // GPU relaxation 
   bool h_update = true;
   std::vector<double> cost_of_ecls, cost_of_ende; 
   std::vector<uint32_t> best_ende_of_ecls;
   cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
   cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
   best_ende_of_ecls.resize(_num_ecls, 0);
-
-  // Device memory 
-  float* dvc_ende_cost; 
-  uint32_t* dvc_ende_ecls;
-  uint32_t* dvc_ende_child;
-  uint32_t* dvc_ende_child_ptr;
-  bool* dvc_update;
-  double* dvc_cost_of_ecls; 
-  double* dvc_cost_of_ende; 
-  uint32_t* dvc_best_ende_of_ecls;
-  uint32_t* dvc_ecls_its_ende_1D;
-  uint32_t* dvc_ecls_its_ende_1D_ptr;
-  uint32_t* dvc_root_eclass_id;
-  double* dvc_tree_ret;
-  double* dvc_dag_ret;
-  uint32_t* dvc_ende_picked_by_ende;
-  uint32_t* dvc_picked_endes; // act bool
-  uint32_t* dvc_indegree;
-  uint32_t* dvc_inv_indegree;
-  uint32_t* dvc_q; // queue
-  uint32_t* dvc_q_sz; // size of queue
-  uint32_t* dvc_q_sp; // start point of queue
-  // uint32_t* dvc_adj; // 這個要搞成 global inv_adj 然後這裡要改成 bool 
-  // uint32_t* dvc_inv_adj; // 這個要搞成 global inv_adj 然後這裡要改成 bool 
-  // bool* dvc_visited_eclasses;
-
+  // Get best tree cost
   cudaMalloc(&dvc_ende_cost, _ende_cost.size()*sizeof(float));
   cudaMalloc(&dvc_ende_ecls, _ende_ecls.size()*sizeof(uint32_t));
   cudaMalloc(&dvc_ende_child, _ende_child.size()*sizeof(uint32_t));
   cudaMalloc(&dvc_ende_child_ptr, _ende_child_ptr.size()*sizeof(uint32_t));
-  cudaMalloc(&dvc_update, 1*sizeof(bool));
   cudaMalloc(&dvc_cost_of_ecls, cost_of_ecls.size()*sizeof(double));
   cudaMalloc(&dvc_cost_of_ende, cost_of_ende.size()*sizeof(double));
-  cudaMalloc(&dvc_best_ende_of_ecls, best_ende_of_ecls.size()*sizeof(uint32_t));
-  cudaMalloc(&dvc_ecls_its_ende_1D, _ecls_its_ende_1D.size()*sizeof(uint32_t));
-  cudaMalloc(&dvc_ecls_its_ende_1D_ptr, _ecls_its_ende_1D_ptr.size()*sizeof(uint32_t));
-  cudaMalloc(&dvc_root_eclass_id, _root_eclass_id.size()*sizeof(uint32_t));
   cudaMalloc(&dvc_tree_ret, 1*sizeof(double));
   cudaMalloc(&dvc_dag_ret, 1*sizeof(double));
-  cudaMalloc(&dvc_ende_picked_by_ende, _ende_child.size()*sizeof(uint32_t));
-  cudaMalloc(&dvc_picked_endes, _num_ende*sizeof(uint32_t)); // act bool
-  cudaMalloc(&dvc_indegree, _num_ende*sizeof(uint32_t));
-  cudaMalloc(&dvc_inv_indegree, _num_ende*sizeof(uint32_t));
-  cudaMalloc(&dvc_q, _num_ende*sizeof(uint32_t));
-  cudaMalloc(&dvc_q_sz, 1*sizeof(uint32_t));
-  cudaMalloc(&dvc_q_sp, 1*sizeof(uint32_t));
+  cudaMalloc(&_dvc_best_ende_of_ecls, best_ende_of_ecls.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_update, 1*sizeof(bool));
+  cudaMalloc(&_dvc_ecls_its_ende_1D, _ecls_its_ende_1D.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_ecls_its_ende_1D_ptr, _ecls_its_ende_1D_ptr.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_root_eclass_id, _root_eclass_id.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_ende_picked_by_ende, _ende_child.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_picked_endes, _num_ende*sizeof(uint32_t)); // act bool
+  cudaMalloc(&_dvc_q, _num_ende*sizeof(uint32_t));
+  cudaMalloc(&_dvc_q_sz, 1*sizeof(uint32_t));
+  cudaMalloc(&_dvc_q_sp, 1*sizeof(uint32_t));
+  cudaMalloc(&_dvc_indegree, _num_ende*sizeof(uint32_t));
+  cudaMalloc(&_dvc_inv_indegree, _num_ende*sizeof(uint32_t));
+  // new G
+  cudaMalloc(&_dvc_global_adj_1D, _global_adj_1D.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_global_adj_1D_ptr, _global_adj_1D_ptr.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_global_inv_adj_1D, _global_inv_adj_1D.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_global_inv_adj_1D_ptr, _global_inv_adj_1D_ptr.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_picked_adj, _global_adj_1D.size()*sizeof(uint32_t)); // set as 0
+  cudaMalloc(&_dvc_picked_inv_adj, _global_inv_adj_1D.size()*sizeof(uint32_t)); // set as 0
+  cudaMalloc(&_dvc_tmp_picked_adj, _global_adj_1D.size()*sizeof(uint32_t)); // set as 0
+  cudaMalloc(&_dvc_tmp_picked_inv_adj, _global_inv_adj_1D.size()*sizeof(uint32_t)); // set as 0
+  cudaMalloc(&_dvc_level, _num_ende*sizeof(int));
   cudaCheckErrors("cudaMalloc failed");
 
+  // Get best tree cost
   cudaMemcpy(dvc_ende_cost, _ende_cost.data(), _ende_cost.size()*sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_ende_ecls, _ende_ecls.data(), _ende_ecls.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_ende_child, _ende_child.data(), _ende_child.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_ende_child_ptr, _ende_child_ptr.data(), _ende_child_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
-  cudaMemcpy(dvc_update, &h_update, 1*sizeof(bool), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_cost_of_ecls, cost_of_ecls.data(), cost_of_ecls.size()*sizeof(double), cudaMemcpyHostToDevice);
   cudaMemcpy(dvc_cost_of_ende, cost_of_ende.data(), cost_of_ende.size()*sizeof(double), cudaMemcpyHostToDevice);
-  cudaMemcpy(dvc_best_ende_of_ecls, best_ende_of_ecls.data(), best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
-  cudaMemcpy(dvc_ecls_its_ende_1D, _ecls_its_ende_1D.data(), _ecls_its_ende_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
-  cudaMemcpy(dvc_ecls_its_ende_1D_ptr, _ecls_its_ende_1D_ptr.data(), _ecls_its_ende_1D_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
-  cudaMemcpy(dvc_root_eclass_id, _root_eclass_id.data(), _root_eclass_id.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemset(dvc_tree_ret, 0, 1*sizeof(double));
   cudaMemset(dvc_dag_ret, 0, 1*sizeof(double));
-  cudaMemset(dvc_ende_picked_by_ende, 0, _ende_child.size()*sizeof(uint32_t));
-  cudaMemset(dvc_picked_endes, 0, _num_ende*sizeof(uint32_t)); // false
-  cudaMemset(dvc_indegree, 0, _num_ende*sizeof(uint32_t));
-  cudaMemset(dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
-  cudaMemset(dvc_q, 0, _num_ende*sizeof(uint32_t));
-  cudaMemset(dvc_q_sz, 0, 1*sizeof(uint32_t));
-  cudaMemset(dvc_q_sp, 0, 1*sizeof(uint32_t));
+  cudaMemcpy(_dvc_best_ende_of_ecls, best_ende_of_ecls.data(), best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(_dvc_update, &h_update, 1*sizeof(bool), cudaMemcpyHostToDevice);
+  cudaMemcpy(_dvc_ecls_its_ende_1D, _ecls_its_ende_1D.data(), _ecls_its_ende_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(_dvc_ecls_its_ende_1D_ptr, _ecls_its_ende_1D_ptr.data(), _ecls_its_ende_1D_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(_dvc_root_eclass_id, _root_eclass_id.data(), _root_eclass_id.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemset(_dvc_ende_picked_by_ende, 0, _ende_child.size()*sizeof(uint32_t));
+  cudaMemset(_dvc_picked_endes, 0, _num_ende*sizeof(uint32_t)); // false
+  cudaMemset(_dvc_q, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(_dvc_q_sz, 0, 1*sizeof(uint32_t));
+  cudaMemset(_dvc_q_sp, 0, 1*sizeof(uint32_t));
+  cudaMemset(_dvc_indegree, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(_dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
+  // new G
+  cudaMemcpy(_dvc_global_adj_1D, _global_adj_1D.data(), _global_adj_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(_dvc_global_adj_1D_ptr, _global_adj_1D_ptr.data(), _global_adj_1D_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(_dvc_global_inv_adj_1D, _global_inv_adj_1D.data(), _global_inv_adj_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(_dvc_global_inv_adj_1D_ptr, _global_inv_adj_1D_ptr.data(), _global_inv_adj_1D_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemset(_dvc_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
+  cudaMemset(_dvc_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
+  cudaMemset(_dvc_tmp_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
+  cudaMemset(_dvc_tmp_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
+  _init_levels<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: 這個放在這裡也可以當作 GPU kernel warm-up, 如果沒有這個，下面 runtime 會變很長，這是合法熱身
   cudaCheckErrors("cudaMemcpy failed");
 
-  const int threads = 1024;
-  int blocks = (_num_ende + threads - 1) / threads;
+  float gpuTime = 0.;
+  cudaEvent_t startGPU, stopGPU;
+  cudaEventCreate(&startGPU);
+  cudaEventCreate(&stopGPU);    
+  cudaEventRecord(startGPU);
 
+  blocks = (_num_ende + threads - 1) / threads;
   while (h_update) {
     h_update = false;
-    cudaMemcpy(dvc_update, &h_update, sizeof(bool), cudaMemcpyHostToDevice);
+    cudaMemcpy(_dvc_update, &h_update, sizeof(bool), cudaMemcpyHostToDevice);
     _relax_enodes_kernel<<<blocks, threads>>>(_num_ende,
-                                            dvc_ende_cost,
-                                            dvc_ende_ecls,
-                                            dvc_ende_child,
-                                            dvc_ende_child_ptr,
-                                            dvc_update,
-                                            dvc_cost_of_ecls,
-                                            dvc_cost_of_ende,
-                                            dvc_best_ende_of_ecls);
-
+      dvc_ende_cost,
+      dvc_ende_ecls,
+      dvc_ende_child,
+      dvc_ende_child_ptr,
+      _dvc_update,
+      dvc_cost_of_ecls,
+      dvc_cost_of_ende,
+      _dvc_best_ende_of_ecls);
     cudaCheckErrors("_relax_enodes_kernel failed");
-    cudaMemcpy(&h_update, dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&h_update, _dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }
 
-  // // Get the best_ende_of_ecls on GPU
-  // blocks = (_num_ecls + threads - 1) / threads;
-  // _get_best_ende_of_ecls<<<blocks, threads>>>(_num_ecls, 
-  //                                             dvc_best_ende_of_ecls, dvc_cost_of_ende,
-  //                                             dvc_ecls_its_ende_1D, dvc_ecls_its_ende_1D_ptr);
   // Get the best tree cost on GPU
-  _get_tree_cost<<<1, 1>>>(_root_eclass_id.size(), dvc_cost_of_ecls, dvc_root_eclass_id, dvc_tree_ret);
+  _get_tree_cost<<<1, 1>>>(_root_eclass_id.size(), dvc_cost_of_ecls, _dvc_root_eclass_id, dvc_tree_ret);
 
   // Get best tree cost 
   double tree_ret = 0.0; 
   cudaMemcpy(&tree_ret, dvc_tree_ret, 1*sizeof(double), cudaMemcpyDeviceToHost);
 
-  // Construct dvc_ende_picked_by_ende
+  // Construct _dvc_ende_picked_by_ende
   blocks = (_num_ende + threads - 1) / threads;
   _get_ende_picked_by_ende<<<blocks, threads>>>(_num_ende, 
-                                                dvc_ende_child,
-                                                dvc_ende_child_ptr,
-                                                dvc_best_ende_of_ecls,
-                                                dvc_ende_picked_by_ende);
-  
-#ifdef GPU_CHECK
-// 檢查 enode-level mutual dependency
-{
-  std::vector<uint32_t> tmp; tmp.resize(_ende_child.size(), UINT32_MAX);
-  cudaMemcpy(tmp.data(), dvc_ende_picked_by_ende, _ende_child.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-  std::vector<std::vector<uint32_t>> ende_picked_by_ende;
-  ende_picked_by_ende.resize(_num_ende, std::vector<uint32_t>());
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    uint32_t start = _ende_child_ptr[ende];
-    uint32_t end = _ende_child_ptr[ende+1];
-    for (uint32_t jj = start; jj < end; jj++) {
-      ende_picked_by_ende[ende].push_back(tmp[jj]);
-    }
-  }
-
-  // Step 1. 建立 enode → child_enode dependency list
-  std::vector<std::vector<uint32_t>> dependency(_num_ende);
-
-  for (uint32_t ende = 0; ende < ende_picked_by_ende.size(); ende++) {
-    // 我們假設 ende_picked_by_ende[ende] 存的就是所有 "child enode"
-    for (uint32_t chd_ende : ende_picked_by_ende[ende]) {
-      if (ende == chd_ende) continue; // 自己指自己不用理
-      dependency[ende].push_back(chd_ende);
-    }
-  }
-
-  // Step 2. 檢查是否存在 A→B 且 B→A
-  uint32_t mutual_count = 0;
-  for (uint32_t endeA = 0; endeA < dependency.size(); ++endeA) {
-    for (uint32_t endeB : dependency[endeA]) {
-      if (endeB >= dependency.size()) continue;
-      // 檢查 B 是否也依賴 A
-      for (uint32_t back : dependency[endeB]) {
-        if (back == endeA) {
-          printf("⚠️  Mutual dependency found between enode %u and %u\n", endeA, endeB);
-          mutual_count++;
-          exit(1);
-        }
-      }
-    }
-  }
-
-  if (mutual_count == 0) {
-    printf("✅ No enode-level mutual dependency found.\n");
-  } else {
-    printf("⚠️  Total mutual dependencies found: %u\n", mutual_count);
-  }
-}
-#endif
-
+    dvc_ende_child,
+    dvc_ende_child_ptr,
+    _dvc_best_ende_of_ecls,
+    _dvc_ende_picked_by_ende);
 
   // Get the best dag cost on GPU
   // init queue
   _init_q<<<1,1>>>(_root_eclass_id.size(),
-    dvc_root_eclass_id,
-    dvc_best_ende_of_ecls,
-    dvc_q, dvc_q_sz);
+    _dvc_root_eclass_id,
+    _dvc_best_ende_of_ecls,
+    _dvc_q, _dvc_q_sz);
   cudaCheckErrors("_init_q failed");
 
   double dag_ret = 0.0;
   uint32_t q_sz = 0;
-  cudaMemcpy(&q_sz, dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  cudaMemcpy(&q_sz, _dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
   uint32_t q_sp = 0;
   uint32_t num = q_sz - q_sp;
 
   while (num > 0) {
     // printf("num = %u\n", num); // used for debug
-    
-    cudaMemcpy(dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice);
+    blocks = (num + threads - 1) / threads;
+
     _get_dag_cost<<<blocks, threads>>>(
-        num,
-        dvc_ende_cost,
-        dvc_ende_child,
-        dvc_ende_child_ptr,
-        dvc_ende_picked_by_ende,
-        dvc_best_ende_of_ecls,
-        dvc_q,
-        dvc_q_sz,
-        dvc_q_sp,
-        dvc_picked_endes,
-        dvc_dag_ret
-    );
+      num,
+      dvc_ende_cost,
+      dvc_ende_child,
+      dvc_ende_child_ptr,
+      _dvc_ende_picked_by_ende,
+      _dvc_best_ende_of_ecls,
+      _dvc_q,
+      _dvc_q_sz,
+      _dvc_q_sp,
+      _dvc_picked_endes,
+      dvc_dag_ret);
     cudaCheckErrors("_get_dag_cost failed");
-    cudaMemcpy(&q_sz, dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&q_sz, _dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
     q_sp += num;
     num = q_sz - q_sp;
-    // printf("\n"); // used for debug
-    // cudaDeviceSynchronize(); // used for debug
   }
-
   cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
   cudaCheckErrors("DAG cost memcpy failed");
+  
+
+  cudaEventRecord(stopGPU);
+  cudaEventSynchronize(stopGPU);
+  cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
+  printf("GPU Runtime: %.2f (ms)\n", gpuTime);
 
   return std::make_pair(tree_ret, dag_ret);
 }
+
+void G_EXT::_gpu_reconstruct_graph() {
+#ifdef PRINT_LOG
+  printf("\nInside _gpu_reconstruct_graph()\n");
+#endif
+  printf("\nInside _gpu_reconstruct_graph()\n");
+
+  // 用 1 個 threads 最快
+  // blocks = (_num_ende + threads - 1) / threads;
+  _gpu_init_picked_adj<<<1,1>>>(_num_ende, 
+    _dvc_global_adj_1D,
+    _dvc_global_adj_1D_ptr,
+    _dvc_global_inv_adj_1D,
+    _dvc_global_inv_adj_1D_ptr,
+    _dvc_picked_endes,
+    _dvc_picked_adj, _dvc_picked_inv_adj,
+    _dvc_indegree, _dvc_inv_indegree);
+  cudaCheckErrors("_gpu_init_picked_adj failed");
+  
+  int blocks = (_num_ende + threads - 1) / threads;
+  _gpu_add_more_roots<<<blocks,threads>>>(_ecls_its_ende_1D.size(),
+    _dvc_ecls_its_ende_1D,
+    _dvc_picked_endes);
+
+#ifdef PRINT_LOG
+  _print_gpu_init_picked_adj<<<1,1>>>(_num_ende,
+    _num_ende,
+    _global_adj_1D.size(),
+    _global_adj_1D.size(),
+    _dvc_picked_endes,
+    _dvc_indegree,
+    _dvc_inv_indegree,
+    _dvc_picked_adj,
+    _dvc_picked_inv_adj,
+    _dvc_global_adj_1D_ptr, 
+    _dvc_global_inv_adj_1D_ptr,
+    _dvc_global_adj_1D,
+    _dvc_global_inv_adj_1D); // debug
+  cudaCheckErrors("_print_gpu_init_picked_adj failed"); // debug 
+  cudaDeviceSynchronize(); // debug
+#endif
+  
+
+  
+
+  
+}
+
+
+
+
+
+
+
+
+
 
 
 

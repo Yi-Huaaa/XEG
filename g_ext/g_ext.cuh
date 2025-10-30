@@ -80,51 +80,44 @@ public:
     // }
     
     std::vector<bool> picked_endes_tmp = picked_endes;
-    // uint32_t bibi = 0;
-    // for (uint32_t i = 0; i < picked_endes_tmp.size(); i++) {
-    //   if (picked_endes_tmp[i]) bibi++;
-    // }
-    // printf("bibi picked_endes_tmp = %u\n", bibi);
-
     start = std::chrono::steady_clock::now();
-      _reconstruct_graph(cost_of_ecls, cost_of_ende, 
-                        best_ende_of_ecls, picked_endes); 
+      _cpu_reconstruct_graph(picked_endes); 
     end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     
-    if (ILP_solver) {
-      _cpsat_solver(ILP_time_limit, 
-                    _ecls_its_ende_newG, 
-                    _ende_child, 
-                    _ende_child_ptr, 
-                    _root_eclass_id, 
-                    _ende_cost,
-                    best_ende_of_ecls, 
-                    picked_endes_tmp);
-    }
+    // if (ILP_solver) {
+    //   _cpsat_solver(ILP_time_limit, 
+    //                 _ecls_its_ende_newG, 
+    //                 _ende_child, 
+    //                 _ende_child_ptr, 
+    //                 _root_eclass_id, 
+    //                 _ende_cost,
+    //                 best_ende_of_ecls, 
+    //                 picked_endes_tmp);
+    // }
 
-  // #ifdef GPU_VERSION
-  //   // GPU version
-  //   float gpuTime = 0.;
-  //   cudaEvent_t startGPU, stopGPU;
-  //   cudaEventCreate(&startGPU);
-  //   cudaEventCreate(&stopGPU);    
-  //   cudaEventRecord(startGPU);
-  //     auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
-  //   cudaEventRecord(stopGPU);
-  //   cudaEventSynchronize(stopGPU);
-  //   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-  //   printf("GPU Runtime: %.2f (ms)\n", gpuTime);
-  //   printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
-  //             best_tree_cost_gpu, dag_cost_gpu);
-  //   // TODO: following exit(1) can be removed
-  //   if (best_tree_cost_cpu != best_tree_cost_gpu) {
-  //     printf("DIFFERENT: best_tree_cost_gpu = %.2lf, best_tree_cost_gpu = %.2lf\n",
-  //           best_tree_cost_cpu, best_tree_cost_gpu);
-  //     exit(1);
-  //   }
-  //   #endif
+  #ifdef GPU_VERSION
+    // GPU version
+    // 計時我放在 function 裡面
+    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
+    printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
+              best_tree_cost_gpu, dag_cost_gpu);
+
+  float gpu_reconst_Time = 0.;
+  cudaEvent_t startGPU, stopGPU;
+  cudaEventCreate(&startGPU);
+  cudaEventCreate(&stopGPU);    
+  cudaEventRecord(startGPU);
+      _gpu_reconstruct_graph(); 
+  cudaEventRecord(stopGPU);
+  cudaEventSynchronize(stopGPU);
+  cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);                                    
+  printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
+
+
+
+    #endif
   }
 
 private:
@@ -142,6 +135,7 @@ private:
   
   /* Run */
   /* Tree Level Relaxation */
+  // CPU version
   std::pair<double, double> _cpu_best_tree(const std::vector<float>& tmp_ende_cost,
     std::vector<double>& cost_of_ecls,
     std::vector<double>& cost_of_ende,
@@ -151,13 +145,13 @@ private:
     std::vector<bool>& picked_endes,
     std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
   void _init_picked_adj(const std::vector<bool>& picked_endes);
+  // GPU version
   std::pair<double, double> _gpu_best_tree();
 
+
   /* DAG Construction */
-  void _reconstruct_graph(std::vector<double>& cost_of_ecls,
-    std::vector<double>& cost_of_ende,
-    std::vector<uint32_t>& best_ende_of_ecls,
-    std::vector<bool>& picked_endes);
+  // CPU version
+  void _cpu_reconstruct_graph(std::vector<bool>& picked_endes);
   void _construct_deg(const std::vector<bool>& picked_endes,
     const std::vector<double>& cost_of_ende); 
   void _top_down_levelize(const std::vector<bool>& picked_endes,
@@ -187,7 +181,8 @@ private:
       const std::vector<uint32_t>& roots,
       const std::vector<uint32_t>& leaves,
       const std::vector<bool>& picked_endes);
-
+  // GPU version
+  void _gpu_reconstruct_graph();
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
@@ -198,7 +193,6 @@ private:
     const std::vector<float>& ende_cost,
     const std::vector<uint32_t>& best_ende_of_ecls,
     const std::vector<bool>& picked_endes);
-
 
 
   /* Private members */
@@ -237,6 +231,29 @@ private:
 
   std::vector<std::vector<uint32_t>> _ecls_its_ende_newG;
 
+  // global Device memory 
+  uint32_t* _dvc_best_ende_of_ecls;
+  bool* _dvc_update;
+  uint32_t* _dvc_ecls_its_ende_1D; // 有用了
+  uint32_t* _dvc_ecls_its_ende_1D_ptr; // 目前還沒有用
+  uint32_t* _dvc_root_eclass_id;
+  uint32_t* _dvc_ende_picked_by_ende;
+  uint32_t* _dvc_picked_endes; // act bool
+  uint32_t* _dvc_q; // queue
+  uint32_t* _dvc_q_sz; // size of queue
+  uint32_t* _dvc_q_sp; // start point of queue
+
+  uint32_t* _dvc_global_adj_1D;
+  uint32_t* _dvc_global_adj_1D_ptr;
+  uint32_t* _dvc_global_inv_adj_1D;
+  uint32_t* _dvc_global_inv_adj_1D_ptr;
+  uint32_t* _dvc_indegree;
+  uint32_t* _dvc_inv_indegree;
+  uint32_t* _dvc_picked_adj;
+  uint32_t* _dvc_picked_inv_adj;
+  uint32_t* _dvc_tmp_picked_adj;
+  uint32_t* _dvc_tmp_picked_inv_adj; 
+  int *_dvc_level;
 
   // Print function
   void _print_input() const;
