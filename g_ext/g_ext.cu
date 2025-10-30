@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-#define PRINT_LOG
+// #define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
 #define threads 1024 // num GPU threads
@@ -731,7 +731,7 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
     bool tp = _insertion(true, picked_endes, level);
 
     // top-down levelization && bottom-up insertion
-    _update_deg(tp, picked_endes); 
+    // _update_deg(tp, picked_endes);  這裏不用
     _top_down_levelize(picked_endes, level);
     bool bu = _insertion(false, picked_endes, level);
    
@@ -1608,8 +1608,7 @@ __global__ void _print_gpu_init_picked_adj(const uint32_t n0,
   const uint32_t* dvc_global_adj_1D_ptr, 
   const uint32_t* dvc_global_inv_adj_1D_ptr,
   const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_global_inv_adj_1D
-  )
+  const uint32_t* dvc_global_inv_adj_1D)
 {
   printf("_print_gpu_init_picked_adj\n");
   printf("\n===== dvc_picked_adj =====\n");
@@ -1722,6 +1721,7 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMalloc(&_dvc_tmp_picked_inv_adj, _global_inv_adj_1D.size()*sizeof(uint32_t)); // set as 0
   cudaMalloc(&_dvc_level, _num_ende*sizeof(int));
   cudaMalloc(&_dvc_all_root_ende_1D, _all_root_ende_1D.size()*sizeof(uint32_t));
+  cudaMalloc(&_dvc_max_level, 1*sizeof(int));
   cudaCheckErrors("cudaMalloc failed");
 
   // Get best tree cost
@@ -1757,6 +1757,7 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   _gpu_warm_up<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: place this GPU kernel here as the warm-up for GPU; w/o this, the kernel runtime below will be extremely long. Need to remrmber!
   // cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int));
   cudaMemcpy(_dvc_all_root_ende_1D, _all_root_ende_1D.data(), _all_root_ende_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cudaMemset(_dvc_max_level, 0, 1*sizeof(int));
   cudaCheckErrors("cudaMemcpy failed");
 
   float gpuTime = 0.;
@@ -1849,7 +1850,6 @@ void G_EXT::_gpu_reconstruct_graph() {
 #ifdef PRINT_LOG
   printf("\nInside _gpu_reconstruct_graph()\n");
 #endif
-  printf("\nInside _gpu_reconstruct_graph()\n");
 
   int blocks = (_num_ende + threads - 1) / threads;
   _gpu_init_picked_adj<<<blocks,threads>>>(_num_ende, 
@@ -1892,21 +1892,26 @@ void G_EXT::_gpu_reconstruct_graph() {
   bool updated = true;
   cudaMemcpy(_dvc_update, &updated, 1*sizeof(bool), cudaMemcpyHostToDevice);
   
-  // while (updated) {
-  //   updated = false;
-  //   cudaMemcpy(_dvc_update, &updated, sizeof(bool), cudaMemcpyHostToDevice); // acts as init
-    _gpu_update_deg_init_level(true);
-    _gpu_BFS(false);
+  while (updated) {
+    updated = false;
+    _gpu_update_deg_init_level(updated);
+    
+    _gpu_BFS(false, _dvc_inv_indegree, 
+      _dvc_picked_endes, 
+      _dvc_global_inv_adj_1D, _dvc_global_inv_adj_1D_ptr, 
+      _dvc_picked_inv_adj, _dvc_level);
     bool tp = _gpu_insertion();
     
-  //   cudaMemcpy(_dvc_update, &updated, sizeof(bool), cudaMemcpyHostToDevice); // acts as init
-  //   _gpu_update_deg_init_level();
-  //   _gpu_BFS();
-  //   bool bu = _gpu_insertion();
-  //   cudaMemcpy(&bu, _dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
+    // 我在想這裡是不是要把 level 重新設成 -1
+    _gpu_BFS(true, _dvc_indegree, 
+      _dvc_picked_endes, 
+      _dvc_global_adj_1D, _dvc_global_adj_1D_ptr, 
+      _dvc_picked_adj, _dvc_level);
+    bool bu = _gpu_insertion();
 
-  //   updated = tp || bu; 
-  // }
+    updated = tp || bu; 
+    break;
+  }
   
 }
 
@@ -1958,13 +1963,136 @@ void G_EXT::_gpu_update_deg_init_level(const bool need_to_update)
 #endif
 }
 
-void G_EXT::_gpu_BFS(const bool is_td) 
+__global__ void _init_q1(const uint32_t num_ende, 
+  const uint32_t* dvc_indegree,
+  const uint32_t* dvc_picked_endes,
+  uint32_t* q,
+  uint32_t* q_sz)
 {
-  if (is_td) {
-    要從這裡開始寫
-  } else {
+  uint32_t pos = 0;
+  for (uint32_t ende = 0; ende < num_ende; ende++) {
+    if ((dvc_indegree[ende] == 0) && dvc_picked_endes[ende]) {
+      q[pos] = ende;
+      pos++;
+    }
+  } 
+  *q_sz = pos;
+}
 
+__global__ void _gpu_BFS_kl(
+  const uint32_t num, 
+  const uint32_t* dvc_global_adj_1D_ptr,
+  const uint32_t* dvc_global_adj_1D,
+  const uint32_t* q_sp,
+  uint32_t* q,
+  uint32_t* q_sz,
+  int* level,
+  int* cur_level,
+  const uint32_t* dvc_picked_adj,
+  uint32_t* deg)
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num) return;
+
+  uint32_t u = q[*q_sp + t_idx];
+  level[u] = *cur_level;
+  for (uint32_t k = dvc_global_adj_1D_ptr[u]; k < dvc_global_adj_1D_ptr[u+1]; k++) {
+    if (!dvc_picked_adj[k]) continue;
+    const uint32_t v = dvc_global_adj_1D[k];
+    uint32_t old_deg = atomicSub(&deg[v], 1);
+    if (old_deg == 1) {
+      uint32_t pos = atomicAdd(q_sz, 1);
+      q[pos] = v;
+    }        
   }
+}
+
+__global__ void _reverse_level(  
+  const uint32_t num, 
+  const int* cur_level,
+  int* level) 
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (t_idx >= num) return;
+  level[t_idx] = *cur_level - level[t_idx] - 1;
+}
+
+void G_EXT::_gpu_BFS(const bool is_td, 
+  uint32_t* deg, 
+  const uint32_t* picked_endes,
+  const uint32_t* global_adj_1D,
+  const uint32_t* global_adj_1D_ptr,
+  const uint32_t* picked_adj,
+  int* level)
+{
+  // clear queue 
+  cudaMemset(_dvc_q, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(_dvc_q_sz, 0, 1*sizeof(uint32_t));
+  cudaMemset(_dvc_q_sp, 0, 1*sizeof(uint32_t));
+  cudaMemset(_dvc_max_level, 0, 1*sizeof(int));
+
+  // init queue
+  _init_q1<<<1,1>>>(_num_ende, 
+    deg,
+    picked_endes,
+    _dvc_q, _dvc_q_sz);
+  cudaCheckErrors("_init_q1 failed");
+  
+  // BFS: top-down levelization 
+  uint32_t q_sz = 0;
+  cudaMemcpy(&q_sz, _dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  uint32_t q_sp = 0;
+  uint32_t num = q_sz - q_sp;  
+  int cur_level = 0;
+
+  while (num > 0) {
+    // printf("num = %u\n", num); // used for debug
+    cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice); // start point
+    int blocks = (num + threads - 1) / threads;
+
+    _gpu_BFS_kl<<<blocks, threads>>>(
+      num,
+      global_adj_1D_ptr,
+      global_adj_1D,
+      _dvc_q_sp, 
+      _dvc_q,
+      _dvc_q_sz,
+      level,
+      _dvc_max_level,
+      picked_adj,
+      deg);
+    cudaCheckErrors("_gpu_BFS_kl failed");
+
+    cudaMemcpy(&q_sz, _dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    q_sp += num;
+    num = q_sz - q_sp;
+    cur_level++; 
+    cudaMemcpy(_dvc_max_level, &cur_level, sizeof(int), cudaMemcpyHostToDevice);
+  }
+
+  if (!is_td) {
+    int blocks = (_num_ende + threads - 1) / threads;
+    _reverse_level<<<blocks,threads>>>(_num_ende, _dvc_max_level, level);
+    cudaCheckErrors("_reverse_level failed");
+  }
+
+#ifdef PRINT_LOG
+  cudaMemcpy(&_max_level, _dvc_max_level, sizeof(int), cudaMemcpyDeviceToHost);
+  cudaDeviceSynchronize();
+  std::vector<uint32_t> picked_endes_cpu; picked_endes_cpu.resize(_num_ende, 0);
+  std::vector<int> level_cpu; level_cpu.resize(_num_ende, -1);
+  cudaMemcpy(picked_endes_cpu.data(), picked_endes, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  cudaMemcpy(level_cpu.data(), level, _num_ende*sizeof(int), cudaMemcpyDeviceToHost);
+  cudaDeviceSynchronize();
+  std::vector<bool> picked_endes_cpu_bool; picked_endes_cpu_bool.resize(_num_ende, false);
+  for (uint32_t i = 0; i < _num_ende; i++) {
+    if (picked_endes_cpu[i] == 1) {
+      picked_endes_cpu_bool[i] = true;
+    }
+  }
+  printf("==================== GPU _print_levelization ====================\n");
+  _print_levelization(is_td, level_cpu, picked_endes_cpu_bool);
+#endif
 }
 
 

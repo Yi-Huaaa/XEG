@@ -183,7 +183,13 @@ private:
   // GPU version
   void _gpu_reconstruct_graph();
     void _gpu_update_deg_init_level(const bool need_to_update);
-    void _gpu_BFS();
+    void _gpu_BFS(const bool is_td, 
+      uint32_t* deg, 
+      const uint32_t* picked_endes,
+      const uint32_t* global_adj_1D,
+      const uint32_t* global_adj_1D_ptr,
+      const uint32_t* picked_adj,
+      int* level);
     bool _gpu_insertion();
 
   /* ILP solver */ 
@@ -257,8 +263,9 @@ private:
   uint32_t* _dvc_picked_inv_adj;
   uint32_t* _dvc_tmp_picked_adj;
   uint32_t* _dvc_tmp_picked_inv_adj; 
-  int *_dvc_level;
+  int* _dvc_level;
   uint32_t* _dvc_all_root_ende_1D;
+  int* _dvc_max_level;
 
   // Print function
   void _print_input() const;
