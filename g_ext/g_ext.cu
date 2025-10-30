@@ -3,7 +3,7 @@
 // #define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
-#define threads 1024 // for GPU
+#define threads 1024 // num GPU threads
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -277,6 +277,13 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
       acc_ptr++;
     }
     _ecls_its_ende_1D_ptr.push_back(acc_ptr);
+  }
+
+  for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
+    uint32_t ecls = _root_eclass_id[r];
+    for (uint32_t ende : _ecls_its_ende[ecls]) {
+      _all_root_ende_1D.push_back(ende);
+    }
   }
 
 #ifdef PRINT_LOG  
@@ -1373,7 +1380,6 @@ void G_EXT::get_nodes_in_subgraph(
 
 // =========================== GPU functions =========================== // 
 
-
 __device__ float atomicMinFloat(float* addr, float val) {
   int* addr_as_i = (int*)addr;
   int old = *addr_as_i, assumed;
@@ -1548,10 +1554,8 @@ __global__ void _gpu_init_picked_adj (const uint32_t num_endes,
     const uint32_t to_ende = dvc_global_adj_1D[k];
     if (dvc_picked_endes[to_ende]) {
       dvc_picked_adj[k] = 1; // true
-      dvc_indegree[to_ende]++;
-      dvc_inv_indegree[t_idx]++;
-      // atomicAdd(&dvc_indegree[to_ende], 1);
-      // atomicAdd(&dvc_inv_indegree[t_idx], 1);
+      atomicAdd(&dvc_indegree[to_ende], 1);
+      atomicAdd(&dvc_inv_indegree[t_idx], 1);
     }
   }
 
@@ -1635,17 +1639,17 @@ __global__ void _print_gpu_init_picked_adj(const uint32_t n0,
 }
 
 __global__ void _gpu_add_more_roots(const uint32_t num_root_ecls, 
-  const uint32_t* dvc_ecls_its_ende_1D,
+  const uint32_t* _dvc_all_root_ende_1D,
   uint32_t* dvc_picked_endes)
 {
   // Add more roots enodes
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_root_ecls) return;
-  // printf("num_root_ecls = %u, %u, %u\n", num_root_ecls, dvc_ecls_its_ende_1D[r], dvc_picked_endes[dvc_ecls_its_ende_1D[r]]);
-  dvc_picked_endes[dvc_ecls_its_ende_1D[t_idx]] = 1;
+  // printf("num_root_ecls = %u, %u, %u\n", num_root_ecls, _dvc_all_root_ende_1D[t_idx], dvc_picked_endes[_dvc_all_root_ende_1D[t_idx]]);
+  dvc_picked_endes[_dvc_all_root_ende_1D[t_idx]] = 1;
 }
 
-__global__ void _init_levels(const uint32_t num_ende, int* dvc_level)
+__global__ void _gpu_warm_up(const uint32_t num_ende, int* dvc_level)
 {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_ende) return;  
@@ -1708,6 +1712,7 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMalloc(&_dvc_tmp_picked_adj, _global_adj_1D.size()*sizeof(uint32_t)); // set as 0
   cudaMalloc(&_dvc_tmp_picked_inv_adj, _global_inv_adj_1D.size()*sizeof(uint32_t)); // set as 0
   cudaMalloc(&_dvc_level, _num_ende*sizeof(int));
+  cudaMalloc(&_dvc_all_root_ende_1D, _all_root_ende_1D.size()*sizeof(uint32_t));
   cudaCheckErrors("cudaMalloc failed");
 
   // Get best tree cost
@@ -1740,7 +1745,9 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMemset(_dvc_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
   cudaMemset(_dvc_tmp_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
   cudaMemset(_dvc_tmp_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
-  _init_levels<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: 這個放在這裡也可以當作 GPU kernel warm-up, 如果沒有這個，下面 runtime 會變很長，這是合法熱身
+  _gpu_warm_up<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: place this GPU kernel here as the warm-up for GPU; w/o this, the kernel runtime below will be extremely long. Need to remrmber!
+  // cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int));
+  cudaMemcpy(_dvc_all_root_ende_1D, _all_root_ende_1D.data(), _all_root_ende_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaCheckErrors("cudaMemcpy failed");
 
   float gpuTime = 0.;
@@ -1835,9 +1842,8 @@ void G_EXT::_gpu_reconstruct_graph() {
 #endif
   printf("\nInside _gpu_reconstruct_graph()\n");
 
-  // 用 1 個 threads 最快
-  // blocks = (_num_ende + threads - 1) / threads;
-  _gpu_init_picked_adj<<<1,1>>>(_num_ende, 
+  int blocks = (_num_ende + threads - 1) / threads;
+  _gpu_init_picked_adj<<<blocks,threads>>>(_num_ende, 
     _dvc_global_adj_1D,
     _dvc_global_adj_1D_ptr,
     _dvc_global_inv_adj_1D,
@@ -1847,10 +1853,11 @@ void G_EXT::_gpu_reconstruct_graph() {
     _dvc_indegree, _dvc_inv_indegree);
   cudaCheckErrors("_gpu_init_picked_adj failed");
   
-  int blocks = (_num_ende + threads - 1) / threads;
-  _gpu_add_more_roots<<<blocks,threads>>>(_ecls_its_ende_1D.size(),
-    _dvc_ecls_its_ende_1D,
+  blocks = (_all_root_ende_1D.size() + threads - 1) / threads;
+  _gpu_add_more_roots<<<blocks,threads>>>(_all_root_ende_1D.size(),
+    _dvc_all_root_ende_1D,
     _dvc_picked_endes);
+  cudaCheckErrors("_gpu_add_more_roots failed"); // debug 
 
 #ifdef PRINT_LOG
   _print_gpu_init_picked_adj<<<1,1>>>(_num_ende,
@@ -1870,10 +1877,77 @@ void G_EXT::_gpu_reconstruct_graph() {
   cudaDeviceSynchronize(); // debug
 #endif
   
-
+  bool updated = true;
+  cudaMemcpy(_dvc_update, &updated, 1*sizeof(bool), cudaMemcpyHostToDevice);
   
+  // while (updated) {
+  //   updated = false;
+  //   cudaMemcpy(_dvc_update, &updated, sizeof(bool), cudaMemcpyHostToDevice); // acts as init
+    _gpu_update_deg_init_level(true);
+  //   _gpu_BFS();
+  //   bool tp = _gpu_insertion();
+    
+  //   cudaMemcpy(_dvc_update, &updated, sizeof(bool), cudaMemcpyHostToDevice); // acts as init
+  //   _gpu_update_deg_init_level();
+  //   _gpu_BFS();
+  //   bool bu = _gpu_insertion();
+  //   cudaMemcpy(&bu, _dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
 
+  //   updated = tp || bu; 
+  // }
   
+}
+
+__global__ void _update_deg_kl (const uint32_t num_endes, 
+  const uint32_t* dvc_global_adj_1D,
+  const uint32_t* dvc_global_adj_1D_ptr,
+  const uint32_t* dvc_picked_endes,
+  const uint32_t* dvc_picked_adj, 
+  uint32_t* dvc_indegree, uint32_t* dvc_inv_indegree) 
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if ((t_idx >= num_endes) || (!dvc_picked_endes[t_idx])) return;
+
+  // assign dvc_indegree and dvc_inv_indegree
+  for (uint32_t k = dvc_global_adj_1D_ptr[t_idx]; k < dvc_global_adj_1D_ptr[t_idx+1]; k++) {
+    if (!dvc_picked_adj[k]) continue;
+    const uint32_t to_ende = dvc_global_adj_1D[k];
+    if (dvc_picked_endes[to_ende]) {
+      atomicAdd(&dvc_indegree[to_ende], 1);
+      atomicAdd(&dvc_inv_indegree[t_idx], 1);
+    }
+  }
+}
+
+void G_EXT::_gpu_update_deg_init_level(const bool need_to_update) 
+{
+  if (!need_to_update) return;
+
+  // Init 
+  cudaMemset(_dvc_indegree, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(_dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int));
+  cudaCheckErrors("_gpu_update_deg_init_level failed");
+  
+  int blocks = (_num_ende + threads - 1) / threads;
+  _update_deg_kl<<<blocks, threads>>>(_num_ende,
+    _dvc_global_adj_1D,
+    _dvc_global_adj_1D_ptr,
+    _dvc_picked_endes,
+    _dvc_picked_adj,
+    _dvc_indegree,
+    _dvc_inv_indegree);
+  cudaCheckErrors("_update_deg_kl failed");
+}
+
+bool G_EXT::_gpu_insertion()
+{
+  bool ret = true;
+  
+  // cudaMemcpy(&ret, _dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
+  
+  // return ret;
+  return false;
 }
 
 

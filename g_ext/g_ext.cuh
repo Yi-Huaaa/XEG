@@ -48,10 +48,9 @@ public:
   }
   
   void run(const bool ILP_solver = false, 
-          const double ILP_time_limit = 360
-) {
+          const double ILP_time_limit = 360) 
+  {
     printf("Hello bibi\n");
-
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
     std::vector<double> cost_of_ende; // Final cost of each enode
@@ -183,6 +182,9 @@ private:
       const std::vector<bool>& picked_endes);
   // GPU version
   void _gpu_reconstruct_graph();
+    void _gpu_update_deg_init_level(const bool need_to_update);
+    void _gpu_BFS();
+    bool _gpu_insertion();
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
@@ -210,6 +212,8 @@ private:
   std::vector<std::vector<uint32_t>> _ecls_its_ende; // enodes under that eclasses
   std::vector<uint32_t> _ecls_its_ende_1D; // compress _ecls_its_ende into 1D
   std::vector<uint32_t> _ecls_its_ende_1D_ptr;
+  std::vector<uint32_t> _all_root_ende_1D; // store all of the enodes in 1D
+  
 
   // For construction of new graph G 
   std::vector<std::unordered_set<uint32_t>> _global_adj;
@@ -254,6 +258,7 @@ private:
   uint32_t* _dvc_tmp_picked_adj;
   uint32_t* _dvc_tmp_picked_inv_adj; 
   int *_dvc_level;
+  uint32_t* _dvc_all_root_ende_1D;
 
   // Print function
   void _print_input() const;
