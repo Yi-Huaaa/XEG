@@ -1069,18 +1069,32 @@ bool G_EXT::_insertion(const bool is_td,
       update = true; 
 
       // update _adj and _inv_adj
-      // #pragma omp parallel for
       for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
         if(!_tmp_picked_inv_adj[k]) continue;
         const uint32_t par_ende = _global_inv_adj_1D[k];
-        _update_picked_adj(par_ende, ende); 
+        // _update_picked_adj(par_ende, ende); 
+        _picked_inv_adj[k] = true;
+        for (uint32_t kk = _global_adj_1D_ptr[par_ende]; kk < _global_adj_1D_ptr[par_ende+1]; kk++) {
+          const uint32_t tar_ende = _global_adj_1D[kk];
+          if (ende == tar_ende) {
+            _picked_adj[kk] = true;
+            break;
+          }
+        }
       }
 
-      // #pragma omp parallel for
       for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
         if(!_tmp_picked_adj[k]) continue;
         const uint32_t chd_ende = _global_adj_1D[k];
-        _update_picked_adj(ende, chd_ende); 
+        // _update_picked_adj(ende, chd_ende); 
+        _picked_adj[k] = true;
+        for (uint32_t kk = _global_inv_adj_1D_ptr[chd_ende]; kk < _global_inv_adj_1D_ptr[chd_ende+1]; kk++) {
+          const uint32_t tar_ende = _global_inv_adj_1D[kk];
+          if (ende == tar_ende) {
+            _picked_inv_adj[kk] = true;
+            break;
+          }
+        }
       }         
 
       #ifdef PRINT_LOG
@@ -2101,12 +2115,20 @@ void G_EXT::_gpu_BFS(const bool is_td,
 #endif
 }
 
+__global__ void _gpu_insertion_kl()
+{
+
+}
+
+
 
 bool G_EXT::_gpu_insertion()
 {
   bool update = false;
   
   // cudaMemcpy(&ret, _dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
+  int blocks = (_num_ende + threads - 1) / threads;
+  _gpu_insertion_kl<<<blocks,threads>>>();
   
   // return ret;
   return false;
