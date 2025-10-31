@@ -20,7 +20,8 @@
 #include <limits>
 #include <omp.h>
 #include <cstdint> // For UINT32_MAX
-
+#include <cuda_runtime.h>
+#include <limits.h>
 
 /* ILP Solver */
 #include "ortools/sat/cp_model.h"
@@ -102,7 +103,7 @@ public:
     printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
     if (ILP_solver) {
       _cpsat_solver(ILP_time_limit, 
-                    _ecls_its_ende_newG, 
+                    _ecls_its_ende_newG_GPU, 
                     _ende_child, 
                     _ende_child_ptr, 
                     _root_eclass_id, 
@@ -279,6 +280,7 @@ private:
   uint32_t* _dvc_leaves;
   uint32_t* _dvc_from_roots; // for final construction
   uint32_t* _dvc_from_leaves; // for final construction
+  uint32_t _graph_density; // [0,2] 
 
   // Print function
   void _print_input() const;

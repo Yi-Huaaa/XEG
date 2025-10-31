@@ -403,6 +403,30 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
       }
     }
   }
+  
+  double total_degree = 0.0;
+  uint32_t max_degree = 0;
+
+  for (uint32_t ende = 0; ende < _num_ende; ++ende) {
+    uint32_t deg = _global_adj[ende].size() + _global_inv_adj[ende].size();
+    total_degree += static_cast<double>(deg);
+    if (deg > max_degree) max_degree = deg;
+  }
+
+  double avg_degree = total_degree / static_cast<double>(_num_ende);
+
+  // Simple heuristic for graph density
+  // _graph_density = 2;
+  if (avg_degree < 32) {
+    _graph_density = 0;  // Sparse → per-thread
+  } else if (avg_degree < 64) {
+    _graph_density = 1;  // Medium → warp
+  } else {
+    _graph_density = 2;  // Dense → block
+  }
+  printf("_num_ende = %u, _num_ecls = %u, max_degree = %u, avg_degree = %.2lf, _graph_density = %u\n", 
+    _num_ende, _num_ecls,
+    max_degree, avg_degree, _graph_density);
 
   // Compress _global_adj and _global_inv_adj to 1D 
   acc_ptr = 0;
@@ -2274,6 +2298,308 @@ __global__ void _gpu_insertion_kl(
   } 
 }
 
+__inline__ __device__ int warpReduceMax(int val) {
+  return __reduce_max_sync(0xffffffff, val);
+}
+
+__inline__ __device__ int warpReduceMin(int val) {
+  return __reduce_min_sync(0xffffffff, val);
+}
+
+__global__ void _gpu_insertion_kl_warp(
+  const bool is_td,
+  const uint32_t num_ende, 
+  uint32_t* dvc_picked_endes,
+  const uint32_t* dvc_global_adj_1D_ptr,
+  const uint32_t* dvc_global_adj_1D,
+  const uint32_t* dvc_global_inv_adj_1D_ptr,
+  const uint32_t* dvc_global_inv_adj_1D,
+  uint32_t* dvc_tmp_picked_adj,
+  uint32_t* dvc_tmp_picked_inv_adj,
+  uint32_t* dvc_picked_adj,
+  uint32_t* dvc_picked_inv_adj,
+  int* dvc_level,
+  bool* update)
+{
+  // one warp per ende
+  const uint32_t global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t warp_id = global_tid / 32;
+  const uint32_t lane_id = threadIdx.x % 32;
+
+  if (warp_id >= num_ende) return;
+  const uint32_t ende = warp_id;
+  if (dvc_picked_endes[ende]) return;
+
+  bool has_par = false, has_chd = false;
+  int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+  // Find max parent level 
+  uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
+  uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
+  for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
+    uint32_t par_ende = dvc_global_inv_adj_1D[k];
+    if (!dvc_picked_endes[par_ende]) continue;
+    int par_lvl = dvc_level[par_ende];
+    dvc_tmp_picked_inv_adj[k] = true;
+    has_par = true;
+    max_par_lvl = max(max_par_lvl, par_lvl);
+  }
+
+  // reduction to get max parent level across warp
+  max_par_lvl = warpReduceMax(max_par_lvl);
+
+  // warp broadcast: has_par is true if any thread has true
+  unsigned int par_mask = __ballot_sync(0xffffffff, has_par);
+  has_par = par_mask != 0;
+
+  // Find min child level
+  uint32_t c_start = dvc_global_adj_1D_ptr[ende];
+  uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
+  for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
+    uint32_t chd_ende = dvc_global_adj_1D[k];
+    if (!dvc_picked_endes[chd_ende]) continue;
+    int chd_lvl = dvc_level[chd_ende];
+    dvc_tmp_picked_adj[k] = true;
+    has_chd = true;
+    min_chd_lvl = min(min_chd_lvl, chd_lvl);
+  }
+
+  // reduction to get min child level across warp
+  min_chd_lvl = warpReduceMin(min_chd_lvl);
+  unsigned int chd_mask = __ballot_sync(0xffffffff, has_chd);
+  has_chd = chd_mask != 0;
+
+  // --- compute cond and given_lvl (same as before, all lanes do the same)
+  bool cond = (is_td) ? (has_par) : (has_chd);
+  int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+  bool local_overlap = false;
+
+  for (uint32_t k = p_start + lane_id; k < p_end && !local_overlap; k += 32) {
+    if (!dvc_tmp_picked_inv_adj[k]) continue;
+    const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+    for (uint32_t kk = c_start; kk < c_end; kk++) {
+      if (!dvc_tmp_picked_adj[kk]) continue;
+      const uint32_t chd_ende = dvc_global_adj_1D[kk];
+      if (par_ende == chd_ende) {
+        local_overlap = true;
+        break;
+      }
+    }
+  }
+
+  unsigned overlap_mask = __ballot_sync(0xffffffff, local_overlap);
+  bool has_overlap_b = overlap_mask != 0;
+  bool valid = (cond) && (max_par_lvl < min_chd_lvl)
+              && (!has_overlap_b) && (given_lvl >= 0);
+
+  unsigned valid_mask = __ballot_sync(0xffffffff, valid);
+  bool warp_valid = (valid_mask != 0);
+
+  if (warp_valid) {
+    if (lane_id == 0) {
+      dvc_picked_endes[ende] = true;
+      dvc_level[ende] = given_lvl;
+      *update = true;
+    }
+
+    for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
+      if (!dvc_tmp_picked_inv_adj[k]) continue;
+      const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+      dvc_picked_inv_adj[k] = true;
+      uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
+      uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
+      for (uint32_t kk = par_start; kk < par_end; kk++) {
+        const uint32_t tar_ende = dvc_global_adj_1D[kk];
+        if (tar_ende == ende) {
+          dvc_picked_adj[kk] = true;
+          break;
+        }
+      }
+    }
+
+    for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
+      if (!dvc_tmp_picked_adj[k]) continue;
+      const uint32_t chd_ende = dvc_global_adj_1D[k];
+      dvc_picked_adj[k] = true;
+      uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
+      uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
+      for (uint32_t kk = chd_start; kk < chd_end; kk++) {
+        const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
+        if (tar_ende == ende) {
+          dvc_picked_inv_adj[kk] = true;
+          break;
+        }
+      }
+    }
+  }
+}
+
+__inline__ __device__ int blockReduceMax(int val) {
+  static __shared__ int shared[256 / 32]; // one per warp
+  int lane = threadIdx.x % 32;
+  int wid  = threadIdx.x / 32;
+
+  // Warp reduce first
+  for (int offset = 16; offset > 0; offset /= 2)
+    val = max(val, __shfl_down_sync(0xffffffff, val, offset));
+
+  // Write warp results to shared memory
+  if (lane == 0) shared[wid] = val;
+  __syncthreads();
+
+  // Read from first warp only
+  val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : INT_MIN;
+
+  // Final reduction within first warp
+  if (wid == 0) {
+    for (int offset = 16; offset > 0; offset /= 2)
+      val = max(val, __shfl_down_sync(0xffffffff, val, offset));
+  }
+  return val;
+}
+
+__inline__ __device__ int blockReduceMin(int val) {
+  static __shared__ int shared[256 / 32];
+  int lane = threadIdx.x % 32;
+  int wid  = threadIdx.x / 32;
+  for (int offset = 16; offset > 0; offset /= 2)
+    val = min(val, __shfl_down_sync(0xffffffff, val, offset));
+  if (lane == 0) shared[wid] = val;
+  __syncthreads();
+  val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : INT_MAX;
+  if (wid == 0) {
+    for (int offset = 16; offset > 0; offset /= 2)
+      val = min(val, __shfl_down_sync(0xffffffff, val, offset));
+  }
+  return val;
+}
+
+__global__ void _gpu_insertion_kl_block(
+  const bool is_td,
+  const uint32_t num_ende,
+  uint32_t* dvc_picked_endes,
+  const uint32_t* dvc_global_adj_1D_ptr,
+  const uint32_t* dvc_global_adj_1D,
+  const uint32_t* dvc_global_inv_adj_1D_ptr,
+  const uint32_t* dvc_global_inv_adj_1D,
+  uint32_t* dvc_tmp_picked_adj,
+  uint32_t* dvc_tmp_picked_inv_adj,
+  uint32_t* dvc_picked_adj,
+  uint32_t* dvc_picked_inv_adj,
+  int* dvc_level,
+  bool* update)
+{
+  const uint32_t ende = blockIdx.x;
+  if (ende >= num_ende) return;
+  if (dvc_picked_endes[ende]) return;
+
+  int tid = threadIdx.x;
+  bool has_par = false, has_chd = false;
+  int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+
+  // --------------------------
+  // find max parent level
+  // --------------------------
+  uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
+  uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
+  for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
+    uint32_t par_ende = dvc_global_inv_adj_1D[k];
+    if (!dvc_picked_endes[par_ende]) continue;
+    int par_lvl = dvc_level[par_ende];
+    dvc_tmp_picked_inv_adj[k] = true;
+    has_par = true;
+    max_par_lvl = max(max_par_lvl, par_lvl);
+  }
+  max_par_lvl = blockReduceMax(max_par_lvl);
+  unsigned int par_mask = __ballot_sync(0xffffffff, has_par);
+  has_par = par_mask != 0;
+
+  // --------------------------
+  // find min child level
+  // --------------------------
+  uint32_t c_start = dvc_global_adj_1D_ptr[ende];
+  uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
+  for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
+    uint32_t chd_ende = dvc_global_adj_1D[k];
+    if (!dvc_picked_endes[chd_ende]) continue;
+    int chd_lvl = dvc_level[chd_ende];
+    dvc_tmp_picked_adj[k] = true;
+    has_chd = true;
+    min_chd_lvl = min(min_chd_lvl, chd_lvl);
+  }
+  min_chd_lvl = blockReduceMin(min_chd_lvl);
+  unsigned int chd_mask = __ballot_sync(0xffffffff, has_chd);
+  has_chd = chd_mask != 0;
+
+  // --------------------------
+  // cycle check
+  // --------------------------
+  bool cond = (is_td) ? (has_par) : (has_chd);
+  int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+  bool local_overlap = false;
+
+  for (uint32_t k = p_start + tid; k < p_end && !local_overlap; k += blockDim.x) {
+    if (!dvc_tmp_picked_inv_adj[k]) continue;
+    const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+    for (uint32_t kk = c_start; kk < c_end; kk++) {
+      if (!dvc_tmp_picked_adj[kk]) continue;
+      const uint32_t chd_ende = dvc_global_adj_1D[kk];
+      if (par_ende == chd_ende) { local_overlap = true; break; }
+    }
+  }
+
+  unsigned overlap_mask = __ballot_sync(0xffffffff, local_overlap);
+  bool has_overlap_b = overlap_mask != 0;
+
+  bool valid = (cond) && (max_par_lvl < min_chd_lvl)
+              && (!has_overlap_b) && (given_lvl >= 0);
+
+  unsigned valid_mask = __ballot_sync(0xffffffff, valid);
+  bool block_valid = (valid_mask != 0);
+
+  // --------------------------
+  // updates
+  // --------------------------
+  if (block_valid) {
+    if (tid == 0) {
+      dvc_picked_endes[ende] = true;
+      dvc_level[ende] = given_lvl;
+      *update = true;
+    }
+
+    // update inv_adj
+    for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
+      if (!dvc_tmp_picked_inv_adj[k]) continue;
+      const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+      dvc_picked_inv_adj[k] = true;
+      uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
+      uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
+      for (uint32_t kk = par_start; kk < par_end; kk++) {
+        const uint32_t tar_ende = dvc_global_adj_1D[kk];
+        if (tar_ende == ende) {
+          dvc_picked_adj[kk] = true;
+          break;
+        }
+      }
+    }
+
+    // update adj
+    for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
+      if (!dvc_tmp_picked_adj[k]) continue;
+      const uint32_t chd_ende = dvc_global_adj_1D[k];
+      dvc_picked_adj[k] = true;
+      uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
+      uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
+      for (uint32_t kk = chd_start; kk < chd_end; kk++) {
+        const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
+        if (tar_ende == ende) {
+          dvc_picked_inv_adj[kk] = true;
+          break;
+        }
+      }
+    }
+  }
+}
+
 bool G_EXT::_gpu_insertion(const bool is_td)
 {
 #ifdef PRINT_LOG
@@ -2289,21 +2615,59 @@ bool G_EXT::_gpu_insertion(const bool is_td)
   cudaMemset(_dvc_tmp_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
   cudaMemset(_dvc_tmp_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
 
-  int blocks = (_num_ende + threads - 1) / threads;
-  _gpu_insertion_kl<<<blocks,threads>>>(is_td,
-    _num_ende, 
-    _dvc_picked_endes,
-    _dvc_global_adj_1D_ptr,
-    _dvc_global_adj_1D,
-    _dvc_global_inv_adj_1D_ptr,
-    _dvc_global_inv_adj_1D,
-    _dvc_tmp_picked_adj,
-    _dvc_tmp_picked_inv_adj,
-    _dvc_picked_adj,
-    _dvc_picked_inv_adj,    
-    _dvc_level,
-    _dvc_update);
-  cudaCheckErrors("_gpu_insertion_kl failed");
+  if (_graph_density == 0) {
+    // 一個 thread 負責一個 enode
+    int blocks = (_num_ende + threads - 1) / threads;
+    _gpu_insertion_kl<<<blocks,threads>>>(is_td,
+      _num_ende, 
+      _dvc_picked_endes,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_tmp_picked_adj,
+      _dvc_tmp_picked_inv_adj,
+      _dvc_picked_adj,
+      _dvc_picked_inv_adj,    
+      _dvc_level,
+      _dvc_update);
+    cudaCheckErrors("_gpu_insertion_kl failed");
+  } else if (_graph_density == 1) {
+    // 一個 warp 負責一個 enode
+    int blocks = ((_num_ende*32) + threads - 1) / threads;
+    _gpu_insertion_kl_warp<<<blocks,threads>>>(is_td,
+      _num_ende, 
+      _dvc_picked_endes,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_tmp_picked_adj,
+      _dvc_tmp_picked_inv_adj,
+      _dvc_picked_adj,
+      _dvc_picked_inv_adj,    
+      _dvc_level,
+      _dvc_update);
+    cudaCheckErrors("_gpu_insertion_kl_warp failed");  
+  } else { // _graph_density == 2
+    // 一個 block 負責一個 enode
+    _gpu_insertion_kl_block<<<_num_ende, 256>>>(
+      is_td,
+      _num_ende,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_tmp_picked_adj,
+      _dvc_tmp_picked_inv_adj,
+      _dvc_picked_adj,
+      _dvc_picked_inv_adj,
+      _dvc_level,
+      _dvc_update);
+    cudaCheckErrors("_gpu_insertion_kl_block failed");
+  }
+
   cudaMemcpy(&updated, _dvc_update, 1*sizeof(bool), cudaMemcpyDeviceToHost);
 
   return updated;
