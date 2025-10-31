@@ -416,7 +416,7 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   double avg_degree = total_degree / static_cast<double>(_num_ende);
 
   // Simple heuristic for graph density
-  // _graph_density = 2;
+  // TODO: 目前這個 setting 不好，可能要 tune 一下
   if (avg_degree < 32) {
     _graph_density = 0;  // Sparse → per-thread
   } else if (avg_degree < 64) {
@@ -424,6 +424,15 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   } else {
     _graph_density = 2;  // Dense → block
   }
+  // if (avg_degree <= 12 && max_degree <= 1000) {
+  //   _graph_density = 0;  // thread
+  // }
+  // else if (avg_degree <= 100 && max_degree <= 8000) {
+  //   _graph_density = 1;  // warp
+  // }
+  // else {
+  //   _graph_density = 2;  // block
+  // }  
   printf("_num_ende = %u, _num_ecls = %u, max_degree = %u, avg_degree = %.2lf, _graph_density = %u\n", 
     _num_ende, _num_ecls,
     max_degree, avg_degree, _graph_density);
