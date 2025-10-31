@@ -31,8 +31,6 @@
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
 
-#define GPU_VERSION
-
 class G_EXT {
 
 public:
@@ -66,25 +64,14 @@ public:
     std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
-    
-    // if (ILP_solver) {
-    //   _cpsat_solver(ILP_time_limit, 
-    //                 _ecls_its_ende, 
-    //                 _ende_child, 
-    //                 _ende_child_ptr, 
-    //                 _root_eclass_id, 
-    //                 _ende_cost,
-    //                 best_ende_of_ecls, 
-    //                 picked_endes);
-    // }
-    
+
+
     std::vector<bool> picked_endes_tmp = picked_endes;
     start = std::chrono::steady_clock::now();
       _cpu_reconstruct_graph(picked_endes); 
     end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    
     if (ILP_solver) {
       _cpsat_solver(ILP_time_limit, 
                     _ecls_its_ende_newG, 
@@ -96,27 +83,33 @@ public:
                     picked_endes_tmp);
     }
 
-  #ifdef GPU_VERSION
     // GPU version
     // 計時我放在 function 裡面
     auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
     printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
               best_tree_cost_gpu, dag_cost_gpu);
+    _copy_pickedende_back(picked_endes_tmp);
 
-  float gpu_reconst_Time = 0.;
-  cudaEvent_t startGPU, stopGPU;
-  cudaEventCreate(&startGPU);
-  cudaEventCreate(&stopGPU);    
-  cudaEventRecord(startGPU);
-      _gpu_reconstruct_graph(); 
-  cudaEventRecord(stopGPU);
-  cudaEventSynchronize(stopGPU);
-  cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);                                    
-  printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
-
-
-
-    #endif
+    float gpu_reconst_Time = 0.;
+    cudaEvent_t startGPU, stopGPU;
+    cudaEventCreate(&startGPU);
+    cudaEventCreate(&stopGPU);    
+    cudaEventRecord(startGPU);
+        _gpu_reconstruct_graph(); 
+    cudaEventRecord(stopGPU);
+    cudaEventSynchronize(stopGPU);
+    cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
+    printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
+    if (ILP_solver) {
+      _cpsat_solver(ILP_time_limit, 
+                    _ecls_its_ende_newG, 
+                    _ende_child, 
+                    _ende_child_ptr, 
+                    _root_eclass_id, 
+                    _ende_cost,
+                    best_ende_of_ecls, 
+                    picked_endes_tmp);
+    }
   }
 
 private:
@@ -170,7 +163,7 @@ private:
     std::vector<int>& level);
   void _update_picked_adj(const uint32_t fm_ende, const uint32_t to_ende);
   void _clear_redundant_endes(std::vector<bool>& picked_endes);
-    void mark_reachable(const std::vector<uint32_t>& starts,
+    void _mark_reachable(const std::vector<uint32_t>& starts,
       const std::vector<uint32_t>& global_adj_1D,
       const std::vector<uint32_t>& global_adj_1D_ptr,
       const std::vector<bool>& picked_adj,      
@@ -190,7 +183,21 @@ private:
       const uint32_t* global_adj_1D_ptr,
       const uint32_t* picked_adj,
       int* level);
-    bool _gpu_insertion();
+    bool _gpu_insertion(const bool is_td);
+    void _gpu_clear_redundant_endes();
+    void _gpu_mark_reachable(const std::vector<uint32_t>& starts_v,
+      const uint32_t* starts,
+      const uint32_t* global_adj_1D,
+      const uint32_t* global_adj_1D_ptr,
+      const uint32_t* picked_adj,
+      uint32_t* visited);
+    void _gpu_mark_reachable2(const std::vector<uint32_t>& starts_v,
+      const uint32_t* starts,
+      const uint32_t* global_adj_1D,
+      const uint32_t* global_adj_1D_ptr,
+      const uint32_t* picked_adj,
+      uint32_t* visited);      
+    void _copy_pickedende_back(std::vector<bool>& picked_endes_tmp);
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
@@ -237,9 +244,10 @@ private:
   std::vector<uint32_t> _inv_indegree;
   int _max_level = -1;  // init as -1
   std::vector<bool> _in_subgraph;
-
+  std::vector<uint32_t> _roots;
+  std::vector<uint32_t> _leaves;
   std::vector<std::vector<uint32_t>> _ecls_its_ende_newG;
-  // std::queue<uint32_t> _insertion_q;
+  std::vector<std::vector<uint32_t>> _ecls_its_ende_newG_GPU;
 
   // global Device memory 
   uint32_t* _dvc_best_ende_of_ecls;
@@ -266,6 +274,11 @@ private:
   int* _dvc_level;
   uint32_t* _dvc_all_root_ende_1D;
   int* _dvc_max_level;
+  uint32_t* _dvc_in_subgraph;
+  uint32_t* _dvc_roots;
+  uint32_t* _dvc_leaves;
+  uint32_t* _dvc_from_roots; // for final construction
+  uint32_t* _dvc_from_leaves; // for final construction
 
   // Print function
   void _print_input() const;
