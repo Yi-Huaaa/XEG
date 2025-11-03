@@ -22,6 +22,7 @@
 #include <cstdint> // For UINT32_MAX
 #include <cuda_runtime.h>
 #include <limits.h>
+#include <random> // for dump new json
 
 /* ILP Solver */
 #include "ortools/sat/cp_model.h"
@@ -113,6 +114,14 @@ public:
     }
   }
 
+  void pure_ILP(const double ILP_time_limit = 2000) {
+    _cpsat_solver_pure(ILP_time_limit, 
+                  _ecls_its_ende, 
+                  _ende_child, 
+                  _ende_child_ptr, 
+                  _root_eclass_id, 
+                  _ende_cost);    
+  }
 private:
   /* Read */
   void _read_input(const std::string input_path);
@@ -125,6 +134,18 @@ private:
     const std::vector<uint32_t>& tmp_ende_child, 
     const std::vector<uint32_t>& tmp_ende_child_ptr, 
     const std::vector<uint32_t>& tmp_root_eclass_id);
+  void _dump_to_egg_json(
+    const std::string& out_path,
+    uint32_t num_ecls,
+    uint32_t num_ende,
+    const std::vector<std::string>& ende_name,
+    const std::vector<std::string>& ende_op,
+    const std::vector<float>& ende_cost,
+    const std::vector<uint32_t>& ende_ecls,
+    const std::vector<uint32_t>& ende_child,
+    const std::vector<uint32_t>& ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id);
+
   
   /* Run */
   /* Tree Level Relaxation */
@@ -209,7 +230,13 @@ private:
     const std::vector<float>& ende_cost,
     const std::vector<uint32_t>& best_ende_of_ecls,
     const std::vector<bool>& picked_endes);
-
+  void _cpsat_solver_pure(
+    const double time_limit,
+    const std::vector<std::vector<uint32_t>>& ecls_its_ende, 
+    const std::vector<uint32_t>& ende_child,
+    const std::vector<uint32_t>& ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id,
+    const std::vector<float>& ende_cost);
 
   /* Private members */
   // Read in from .json, and prune the dead eclasses/enodes

@@ -4,6 +4,8 @@
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
 #define threads 1024 // num GPU threads
+// #define DUMP_NEW_JSON
+
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -139,6 +141,15 @@ void G_EXT::_read_input(const std::string input_path)
   MY_CHECK(tmp_ende_cost.size() == tmp_num_ende, "!= num_ende 3");
   MY_CHECK(tmp_ende_ecls.size() == tmp_num_ende, "!= num_ende 4");
 
+#ifdef DUMP_NEW_JSON
+  std::string out_path = input_path + ".egg.json";
+  _dump_to_egg_json(out_path, tmp_num_ecls, tmp_num_ende,
+                    tmp_ende_name, tmp_ende_op, tmp_ende_cost,
+                    tmp_ende_ecls, tmp_ende_child, tmp_ende_child_ptr,
+                    tmp_root_eclass_id);
+#endif
+
+
   // printf
 #ifdef PRINT_LOG
   _print_read_in_data(true,
@@ -154,6 +165,7 @@ void G_EXT::_read_input(const std::string input_path)
                       tmp_root_eclass_id); 
   printf("\n"); 
 #endif   
+  printf("Init #eclass = %u, #enodes = %u\n", tmp_num_ecls, tmp_num_ende);
   _prune_dead_nodes(tmp_num_ecls,
                     tmp_num_ende,
                     tmp_ende_name,
@@ -178,6 +190,7 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
 #ifdef PRINT_LOG
   printf("G_EXT::_prune_dead_nodes()\n");
 #endif
+
   // Prune dead nodes 
   std::vector<bool> alive_ecls;
   alive_ecls.resize(tmp_num_ecls, false); // init
@@ -403,17 +416,54 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
       }
     }
   }
-  
+    
+#ifdef SHOW_GRAPH_DEGREE
+  std::vector<uint32_t> all_degrees;
+  all_degrees.reserve(_num_ende);
+
   double total_degree = 0.0;
   uint32_t max_degree = 0;
 
+  // 找出 max、avg、top5 並紀錄所有 degree
+  std::vector<uint32_t> top_degrees;
+  top_degrees.reserve(5);
+
   for (uint32_t ende = 0; ende < _num_ende; ++ende) {
     uint32_t deg = _global_adj[ende].size() + _global_inv_adj[ende].size();
+    all_degrees.push_back(deg);
     total_degree += static_cast<double>(deg);
     if (deg > max_degree) max_degree = deg;
+
+    // 維護 top-5
+    if (top_degrees.size() < 5) {
+      top_degrees.push_back(deg);
+      std::sort(top_degrees.begin(), top_degrees.end(), std::greater<uint32_t>());
+    } else if (deg > top_degrees.back()) {
+      top_degrees.back() = deg;
+      std::sort(top_degrees.begin(), top_degrees.end(), std::greater<uint32_t>());
+    }
   }
 
   double avg_degree = total_degree / static_cast<double>(_num_ende);
+
+  // 印出 summary
+  printf("avg_degree = %.2f, max_degree = %u\n", avg_degree, max_degree);
+  printf("Top 5 degrees: ");
+  for (uint32_t d : top_degrees) printf("%u ", d);
+  printf("\n");
+
+  // 把所有 degree 寫到檔案 (optional)
+  {
+    FILE* fout = fopen("degree_distribution.txt", "w");
+    if (fout) {
+      for (uint32_t d : all_degrees)
+        fprintf(fout, "%u\n", d);
+      fclose(fout);
+      printf("[INFO] Degree distribution written to degree_distribution.txt\n");
+    } else {
+      fprintf(stderr, "[WARN] Failed to open degree_distribution.txt for writing.\n");
+    }
+  }
 
   // Simple heuristic for graph density
   // TODO: 目前這個 setting 不好，可能要 tune 一下
@@ -424,18 +474,26 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   } else {
     _graph_density = 2;  // Dense → block
   }
-  // if (avg_degree <= 12 && max_degree <= 1000) {
-  //   _graph_density = 0;  // thread
+  double skew_ratio = (avg_degree > 0) ? (double)max_degree / avg_degree : 0.0;
+  // if (avg_degree > 32) {
+  //   _graph_density = 2;  // Dense graph → Block kernel
   // }
-  // else if (avg_degree <= 100 && max_degree <= 8000) {
-  //   _graph_density = 1;  // warp
+  // else if (max_degree < 700 && skew_ratio < 100) {
+  //   _graph_density = 0;  // Thread kernel
+  // }
+  // else if (max_degree < 15000 && skew_ratio < 2500) {
+  //   _graph_density = 1;  // Warp kernel
   // }
   // else {
-  //   _graph_density = 2;  // block
-  // }  
+  //   _graph_density = 2;  // Otherwise → Block kernel
+  // }
+  printf("[Heuristic] avg=%.2f, max=%u, skew=%.1f → _graph_density=%u\n",
+        avg_degree, max_degree, skew_ratio, _graph_density);
+ 
   printf("_num_ende = %u, _num_ecls = %u, max_degree = %u, avg_degree = %.2lf, _graph_density = %u\n", 
     _num_ende, _num_ecls,
     max_degree, avg_degree, _graph_density);
+#endif // SHOW_GRAPH_DEGREE
 
   // Compress _global_adj and _global_inv_adj to 1D 
   acc_ptr = 0;
@@ -631,6 +689,7 @@ double G_EXT::_compute_dag_cost(
   for (uint32_t rid : _root_eclass_id) {
     MY_CHECK(rid < _num_ecls, "rid < _num_ecls");
     uint32_t root_ende = best_ende_of_ecls[rid];
+    // printf("root_ende = %u, _num_ende = %u\n\n", root_ende, _num_ende); 
     MY_CHECK(root_ende < _num_ende, "root_ende < _num_ende"); 
     q.push(root_ende);
     picked_endes[root_ende] = true;
@@ -3003,38 +3062,12 @@ void G_EXT::_cpsat_solver(
     }
   }  
 
-
-  // Part 7. 读取 zero_node.mst 文件，将对应节点变量固定为 0
-  // Skip it now, this is the pruning part from e-boost, e-boost prunes more enodes with setting larger alpha
-
-// #ifdef PRINT_LOG
-//   printf("==== Level Variable Allocation (防环层级变量建立) ====\n");
-//   printf("Total e-classes with level vars: %zu\n", level_log.size());
-//   for (uint32_t cid : level_log) {
-//     printf("  eclass=%u, level domain=[0,%d]\n", cid, num_classes);
-//   }
-//   printf("======================================================\n\n");
-
-//   printf("==== Level Constraints (防环约束) ====\n");
-//   printf("Format: parent_ecls -> child_ecls (enode_idx)\n");
-//   for (const auto& [parent_cid, child_cid, ende_idx] : level_constr_log) {
-//     printf("  %u -> %u (enode=%u)\n", parent_cid, child_cid, ende_idx);
-//   }
-//   printf("Total constraints: %zu\n", level_constr_log.size());
-//   printf("======================================\n\n");
-// #endif
-
-  // Part 7. 读取 zero_node.mst 文件，将对应节点变量固定为 0
-  // Skip zero_node.mst pruning
-  // Add warm-start hint from CPU relaxation
-
 #ifdef PRINT_LOG
   uint32_t hint_count_1 = 0;
   uint32_t hint_count_0 = 0;
   printf("==== Warm Start Hints (from CPU best_ende_of_ecls and picked_endes) ====\n");
   printf("%-10s %-10s %-10s %-10s\n", "Eclass", "EnodeIdx", "Hint", "Remark");
 #endif
-
 
   // Part 8. 添加 warm start hint：依據 picked_endes
   for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
@@ -3076,7 +3109,6 @@ void G_EXT::_cpsat_solver(
   Model model;
   int num_solutions = 0;
   auto start = std::chrono::high_resolution_clock::now();
-
   // 可選：觀察者，用來打印目前最好的解
   model.Add(NewFeasibleSolutionObserver([&](const CpSolverResponse& r) {
       auto current_time = std::chrono::high_resolution_clock::now();
@@ -3093,6 +3125,8 @@ void G_EXT::_cpsat_solver(
   if (time_limit > 0.0) {
     SatParameters parameters;
     parameters.set_max_time_in_seconds(time_limit);
+    parameters.set_random_seed(42);
+    parameters.set_randomize_search(true);
     // parameters.set_max_time_in_seconds(3600.0);
     // parameters.set_log_search_progress(true);  // 如果想看完整 solver log 可開
     model.Add(NewSatParameters(parameters));
@@ -3127,6 +3161,138 @@ void G_EXT::_cpsat_solver(
   }
 }
 
+void G_EXT::_cpsat_solver_pure(
+  const double time_limit,
+  const std::vector<std::vector<uint32_t>>& ecls_its_ende, 
+  const std::vector<uint32_t>& ende_child,
+  const std::vector<uint32_t>& ende_child_ptr,
+  const std::vector<uint32_t>& root_eclass_id,
+  const std::vector<float>& ende_cost
+) {
+  printf("Inside G_EXT::_cpsat_solver_pure() Time_limit = %.2lf (sec)\n", time_limit);
+
+  CpModelBuilder cp_model;
+  std::unordered_map<uint32_t, BoolVar> active; // eclass activated or not
+  std::unordered_map<uint32_t, std::unordered_map<uint32_t, BoolVar>> nodes_vars; // [eclass][enode] = BoolVar
+
+  // ====== Step 1. Build variables ======
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+
+    active[cid] = cp_model.NewBoolVar();
+    for (uint32_t ende_idx : enodes) {
+      nodes_vars[cid][ende_idx] = cp_model.NewBoolVar();
+    }
+
+    // 每個 eclass 中至少一個 enode active 才能啟動
+    LinearExpr sum_nodes;
+    for (const auto &v : nodes_vars[cid]) sum_nodes += v.second;
+    cp_model.AddEquality(sum_nodes, active[cid]);
+  }
+
+  // ====== Step 2. Node-child dependency constraints ======
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+
+    const auto& vars = nodes_vars[cid];
+    for (uint32_t ende_idx : enodes) {
+      uint32_t start = ende_child_ptr[ende_idx];
+      uint32_t end   = ende_child_ptr[ende_idx + 1];
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t chd_ecls_idx = ende_child[jj];
+        if (active.find(chd_ecls_idx) == active.end()) {
+          cp_model.AddEquality(vars.at(ende_idx), 0);
+          continue;
+        }
+        cp_model.AddLessOrEqual(vars.at(ende_idx), active[chd_ecls_idx]);
+      }
+    }
+  }
+
+  // ====== Step 3. Objective function ======
+  LinearExpr objective;
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+    const auto& vars = nodes_vars[cid];
+
+    for (uint32_t ende_idx : enodes) {
+      int int_cost = static_cast<int>(ende_cost[ende_idx]);
+      if (int_cost != 0)
+        objective += int_cost * vars.at(ende_idx);
+    }
+  }
+  cp_model.Minimize(objective);
+
+  // ====== Step 4. Force root eclass active ======
+  for (uint32_t rid : root_eclass_id) {
+    if (active.find(rid) != active.end()) {
+      cp_model.AddEquality(active[rid], 1);
+    }
+  }
+
+  // ====== Step 5. Anti-cycle layer constraint ======
+  const int num_classes = ecls_its_ende.size();
+  std::unordered_map<uint32_t, IntVar> level;
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    level[cid] = cp_model.NewIntVar(Domain(0, num_classes));
+  }
+
+  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
+    const auto& enodes = ecls_its_ende[cid];
+    if (enodes.empty()) continue;
+    const auto& vars = nodes_vars[cid];
+    for (uint32_t ende_idx : enodes) {
+      uint32_t start = ende_child_ptr[ende_idx];
+      uint32_t end   = ende_child_ptr[ende_idx + 1];
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t child_cid = ende_child[jj];
+        cp_model.AddGreaterOrEqual(LinearExpr(level[child_cid]) - level[cid], 1)
+                .OnlyEnforceIf(vars.at(ende_idx));
+      }
+    }
+  }
+
+  // ====== Step 6. Build solver model ======
+  Model model;
+  int num_solutions = 0;
+  auto start = std::chrono::high_resolution_clock::now();
+
+  // 觀察者：打印 incumbent solutions
+  model.Add(NewFeasibleSolutionObserver([&](const CpSolverResponse& r) {
+    auto current_time = std::chrono::high_resolution_clock::now();
+    double elapsed_seconds =
+        std::chrono::duration_cast<std::chrono::duration<double>>(current_time - start).count();
+    std::cout << "Incumbent Solution: "
+              << elapsed_seconds << "s; objective = "
+              << r.objective_value() << std::endl;
+    num_solutions++;
+  }));
+
+  // solver 參數設定
+  SatParameters parameters;
+  parameters.set_max_time_in_seconds(time_limit);
+  parameters.set_random_seed(42);
+  parameters.set_randomize_search(true);
+  model.Add(NewSatParameters(parameters));
+
+  // ====== Step 7. Solve ======
+  const CpSolverResponse response = SolveCpModel(cp_model.Build(), &model);
+
+  // ====== Step 8. Print summary ======
+  if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) {
+    std::cout << "=========================================\n";
+    std::cout << "Solver finished.\n";
+    std::cout << "Objective value = " << response.objective_value() << "\n";
+    std::cout << "Runtime = " << response.wall_time() << " (s)\n";
+    std::cout << "Feasible solutions found = " << num_solutions << "\n";
+    std::cout << "=========================================\n";
+  } else {
+    std::cout << "No feasible solution found.\n";
+  }
+}
 
 
 
@@ -3239,3 +3405,78 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
   }
   printf("\n"); 
 }
+
+
+#ifdef DUMP_NEW_JSON
+#include <random>
+#include <fstream>
+#include <iomanip>
+#include <nlohmann/json.hpp>
+
+void G_EXT::_dump_to_egg_json(
+    const std::string& out_path,
+    uint32_t num_ecls,
+    uint32_t num_ende,
+    const std::vector<std::string>& ende_name,
+    const std::vector<std::string>& ende_op,
+    const std::vector<float>& ende_cost,
+    const std::vector<uint32_t>& ende_ecls,
+    const std::vector<uint32_t>& ende_child,
+    const std::vector<uint32_t>& ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id)
+{
+  // 建立 eclass → enode list 對應
+  std::vector<std::vector<uint32_t>> ecls_its_ende(num_ecls);
+  for (uint32_t i = 0; i < num_ende; ++i) {
+    ecls_its_ende[ende_ecls[i]].push_back(i);
+  }
+
+  nlohmann::json j_out;
+  nlohmann::json j_nodes;
+
+  std::mt19937 rng(42);  // 固定 seed，可改成 time(0) 取得隨機性
+
+  for (uint32_t ende = 0; ende < num_ende; ++ende) {
+    // 🟡 保留原始 enode 命名
+    std::string node_name = ende_name[ende];
+
+    nlohmann::json node_json;
+    node_json["op"] = ende_op[ende];
+    node_json["cost"] = ende_cost[ende];
+
+    // eclass 要轉成 string
+    node_json["eclass"] = std::to_string(ende_ecls[ende]);
+
+    // children：從 eclass 改成任意該 eclass 下 enode
+    std::vector<std::string> children;
+    for (uint32_t k = ende_child_ptr[ende]; k < ende_child_ptr[ende + 1]; ++k) {
+      uint32_t child_ecls = ende_child[k];
+
+      if (ecls_its_ende[child_ecls].empty()) continue;
+
+      // 隨機挑一個 representative enode
+      std::uniform_int_distribution<size_t> dist(0, ecls_its_ende[child_ecls].size() - 1);
+      uint32_t rep_ende = ecls_its_ende[child_ecls][dist(rng)];
+
+      // 🟢 保留原本 enode 名稱，不改格式
+      children.push_back(ende_name[rep_ende]);
+    }
+
+    node_json["children"] = children;
+    j_nodes[node_name] = node_json;
+  }
+
+  // root eclasses → string
+  std::vector<std::string> root_eclasses;
+  for (uint32_t r : root_eclass_id) {
+    root_eclasses.push_back(std::to_string(r));
+  }
+
+  j_out["nodes"] = j_nodes;
+  j_out["root_eclasses"] = root_eclasses;
+
+  std::ofstream ofs(out_path);
+  ofs << std::setw(2) << j_out << std::endl;
+  std::cout << "[INFO] Wrote egg-compatible JSON to: " << out_path << std::endl;
+}
+#endif
