@@ -466,14 +466,15 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   }
 
   // Simple heuristic for graph density
-  // TODO: 目前這個 setting 不好，可能要 tune 一下
-  if (avg_degree < 32) {
-    _graph_density = 0;  // Sparse → per-thread
-  } else if (avg_degree < 64) {
-    _graph_density = 1;  // Medium → warp
-  } else {
-    _graph_density = 2;  // Dense → block
-  }
+  // // TODO: 目前這個 setting 不好，可能要 tune 一下
+  // if (avg_degree < 32) {
+  //   _graph_density = 0;  // Sparse → per-thread
+  // } else if (avg_degree < 64) {
+  //   _graph_density = 1;  // Medium → warp
+  // } else {
+  //   _graph_density = 2;  // Dense → block
+  // }
+  _graph_density = 0;
   double skew_ratio = (avg_degree > 0) ? (double)max_degree / avg_degree : 0.0;
   // if (avg_degree > 32) {
   //   _graph_density = 2;  // Dense graph → Block kernel
@@ -2883,6 +2884,11 @@ void G_EXT::_copy_pickedende_back(std::vector<bool>& picked_endes_tmp)
       picked_endes_tmp[i] = true;
     }
   }
+}
+
+void G_EXT::_copy_best_ende_of_ecls_back(std::vector<uint32_t>& best_ende_of_ecls)
+{
+  cudaMemcpy(best_ende_of_ecls.data(), _dvc_best_ende_of_ecls, best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost);
 }
 
 

@@ -33,6 +33,8 @@
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
 
+#define TEST_TREE_ILP
+
 class G_EXT {
 
 public:
@@ -67,60 +69,98 @@ public:
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
-
-    std::vector<bool> picked_endes_tmp = picked_endes;
-    start = std::chrono::steady_clock::now();
-      _cpu_reconstruct_graph(picked_endes); 
-    end = std::chrono::steady_clock::now();
-    duration = end - start;
-    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    if (ILP_solver) {
-      _cpsat_solver(ILP_time_limit, 
-                    _ecls_its_ende_newG, 
-                    _ende_child, 
-                    _ende_child_ptr, 
-                    _root_eclass_id, 
-                    _ende_cost,
-                    best_ende_of_ecls, 
-                    picked_endes_tmp);
-    }
+    #ifdef TEST_TREE_ILP
+      if (ILP_solver) {
+        _cpsat_solver(ILP_time_limit, 
+                      _ecls_its_ende, 
+                      _ende_child, 
+                      _ende_child_ptr, 
+                      _root_eclass_id, 
+                      _ende_cost,
+                      best_ende_of_ecls, 
+                      picked_endes);
+      }
+    #else 
+      std::vector<bool> picked_endes_tmp = picked_endes;
+      start = std::chrono::steady_clock::now();
+        _cpu_reconstruct_graph(picked_endes); 
+      end = std::chrono::steady_clock::now();
+      duration = end - start;
+      std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+      if (ILP_solver) {
+        _cpsat_solver(ILP_time_limit, 
+                      _ecls_its_ende_newG, 
+                      _ende_child, 
+                      _ende_child_ptr, 
+                      _root_eclass_id, 
+                      _ende_cost,
+                      best_ende_of_ecls, 
+                      picked_endes_tmp);
+      }
+    #endif
 
     // GPU version
-    // 計時我放在 function 裡面
     auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
     printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
               best_tree_cost_gpu, dag_cost_gpu);
-    _copy_pickedende_back(picked_endes_tmp);
+    _copy_pickedende_back(picked_endes);
+    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
+    cudaDeviceSynchronize();
 
-    float gpu_reconst_Time = 0.;
-    cudaEvent_t startGPU, stopGPU;
-    cudaEventCreate(&startGPU);
-    cudaEventCreate(&stopGPU);    
-    cudaEventRecord(startGPU);
-        _gpu_reconstruct_graph(); 
-    cudaEventRecord(stopGPU);
-    cudaEventSynchronize(stopGPU);
-    cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
-    printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
-    if (ILP_solver) {
-      _cpsat_solver(ILP_time_limit, 
-                    _ecls_its_ende_newG_GPU, 
-                    _ende_child, 
-                    _ende_child_ptr, 
-                    _root_eclass_id, 
-                    _ende_cost,
-                    best_ende_of_ecls, 
-                    picked_endes_tmp);
-    }
+    #ifdef TEST_TREE_ILP
+      if (ILP_solver) {
+        _cpsat_solver(ILP_time_limit, 
+                      _ecls_its_ende, 
+                      _ende_child, 
+                      _ende_child_ptr, 
+                      _root_eclass_id, 
+                      _ende_cost,
+                      best_ende_of_ecls, 
+                      picked_endes);
+      }
+    #else
+      float gpu_reconst_Time = 0.;
+      cudaEvent_t startGPU, stopGPU;
+      cudaEventCreate(&startGPU);
+      cudaEventCreate(&stopGPU);    
+      cudaEventRecord(startGPU);
+          _gpu_reconstruct_graph(); 
+      cudaEventRecord(stopGPU);
+      cudaEventSynchronize(stopGPU);
+      cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
+      printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
+      if (ILP_solver) {
+        _cpsat_solver(ILP_time_limit, 
+                      _ecls_its_ende_newG_GPU, 
+                      _ende_child, 
+                      _ende_child_ptr, 
+                      _root_eclass_id, 
+                      _ende_cost,
+                      best_ende_of_ecls, 
+                      picked_endes_tmp);
+      }
+    #endif
   }
 
-  void pure_ILP(const double ILP_time_limit = 2000) {
-    _cpsat_solver_pure(ILP_time_limit, 
+  void pure_ILP(const double ILP_time_limit = 3600) 
+  {
+    printf("Hello bibi pure_ILP, ILP_time_limit = %.2lf\n", ILP_time_limit);
+    // CPU version
+    std::vector<double> cost_of_ecls; // Final cost of each eclass
+    std::vector<double> cost_of_ende; // Final cost of each enode
+    std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
+    std::vector<bool> picked_endes;
+      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, 
+                                                              cost_of_ende, best_ende_of_ecls, 
+                                                              picked_endes);
+    _cpsat_solver(ILP_time_limit, 
                   _ecls_its_ende, 
                   _ende_child, 
                   _ende_child_ptr, 
                   _root_eclass_id, 
-                  _ende_cost);    
+                  _ende_cost,
+                  best_ende_of_ecls, 
+                  picked_endes);
   }
 private:
   /* Read */
@@ -220,6 +260,7 @@ private:
       const uint32_t* picked_adj,
       uint32_t* visited);      
     void _copy_pickedende_back(std::vector<bool>& picked_endes_tmp);
+    void _copy_best_ende_of_ecls_back(std::vector<uint32_t>& best_ende_of_ecls);    
 
   /* ILP solver */ 
   void _cpsat_solver(const double time_limit,
