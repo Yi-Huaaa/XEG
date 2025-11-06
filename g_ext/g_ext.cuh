@@ -33,7 +33,7 @@
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
 
-#define TEST_TREE_ILP
+// #define TEST_TREE_ILP
 
 class G_EXT {
 
@@ -162,6 +162,7 @@ public:
                   best_ende_of_ecls, 
                   picked_endes);
   }
+
 private:
   /* Read */
   void _read_input(const std::string input_path);

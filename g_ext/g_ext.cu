@@ -5,6 +5,8 @@
 // #define BIBI_CHECK
 #define threads 1024 // num GPU threads
 // #define DUMP_NEW_JSON
+// #define COMPUTE_AVG_ENODE_DEG
+
 
 
 #define ENABLE_CHECK
@@ -149,6 +151,38 @@ void G_EXT::_read_input(const std::string input_path)
                     tmp_root_eclass_id);
 #endif
 
+#ifdef COMPUTE_AVG_ENODE_DEG
+  // ende -> ende  
+  std::vector<std::unordered_set<uint32_t>> tt;
+  std::vector<std::unordered_set<uint32_t>> eclss_enode; // 該 eclass 下有哪些 enodes
+  eclss_enode.resize(tmp_num_ecls, std::unordered_set<uint32_t>());
+  for (uint32_t i = 0; i < tmp_num_ende; i++) {
+    uint32_t ecls = tmp_ende_ecls[i];
+    MY_CHECK(ecls < tmp_num_ecls, "ecls < tmp_num_ecls");
+    eclss_enode[ecls].insert(i);
+  }
+
+  tt.resize(tmp_num_ende, std::unordered_set<uint32_t>()); 
+  for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
+    uint32_t start = tmp_ende_child_ptr[ende]; 
+    uint32_t end = tmp_ende_child_ptr[ende+1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t chd_ecls = tmp_ende_child[jj];
+      for (uint32_t ende2 : eclss_enode[chd_ecls]) {
+        if (ende != ende2) { // remove self-loop
+          tt[ende].insert(ende2); 
+        }
+      }
+    }
+  }
+
+  double acc_deg = 0; // 下面要四捨五入
+  for (uint32_t i = 0; i < tmp_num_ende; i++) {
+    acc_deg += tt[i].size();
+  }
+  acc_deg /= tmp_num_ende;
+  printf("In this benchmark, avg enode deg = %.1lf\n", acc_deg);
+#endif 
 
   // printf
 #ifdef PRINT_LOG
