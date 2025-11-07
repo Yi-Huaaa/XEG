@@ -202,17 +202,6 @@ private:
     const std::vector<uint32_t>& tmp_ende_child,
     const std::vector<uint32_t>& tmp_ende_child_ptr,
     const std::vector<uint32_t>& root_eclass_id);
-  void _increase_egraph_size(
-    const uint32_t* num_ecls,
-    const uint32_t* num_ende,
-    std::vector<std::string>& ende_name,
-    std::vector<std::string>& ende_op,
-    std::vector<float>& ende_cost,
-    std::vector<uint32_t>& ende_ecls,
-    std::vector<uint32_t>& ende_child,
-    std::vector<uint32_t>& ende_child_ptr,
-    std::vector<uint32_t>& root_eclass_id);
-
   
   /* Run */
   /* Tree Level Relaxation */
@@ -375,7 +364,7 @@ private:
   uint32_t* _dvc_leaves;
   uint32_t* _dvc_from_roots; // for final construction
   uint32_t* _dvc_from_leaves; // for final construction
-  uint32_t _graph_density = 2; // [0,2] 
+  uint32_t _graph_density = 1; // [0,2] 
 
   // Print function
   void _print_input() const;

@@ -1,17 +1,24 @@
 #include "g_ext.cuh"
 
+#define threads 1024 // num GPU threads
+#define FAST_BITMAP_CHECK true // Use bitmap strategy or not
+#define NUM_THREAD_DAG_CONSTR 64
+
+// /* ABALATION EXPERIMENTS -1: ABOUT DEGREE */
+// #define EXTEND_GRAPH_TO_HIGHER_DEGEE
+//   #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
+//     #define EXTEND_MUL 128 // adjust this number to control degree scale-up
+//   #endif
+
+/* DEBUG ONLY */
 // #define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
-#define threads 1024 // num GPU threads
-// #define DUMP_NEW_JSON
 // #define COMPUTE_AVG_ENODE_DEG
-// #define EXTEND_GRAPH_TO_HIGHER_DEGEE
-//   #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
-//     #define EXTEND_MUL 1 // adjust this number to control degree scale-up
-//   #endif
-#define NUM_THREAD_DAG_CONSTR 64
-// #define EXTEND_GRAPH_TO_LARGER_GRAPH
+
+/* GENERATE NEW DBENCHMARK for SmoothE */
+// #define DUMP_NEW_JSON
+
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -347,12 +354,6 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
     }
     printf("\n======================================\n");
 #endif 
-// #ifdef EXTEND_GRAPH_TO_LARGER_GRAPH
-//   _increase_egraph_size(&tmp_num_ecls, &tmp_num_ende,
-//     tmp_ende_name, tmp_ende_op, tmp_ende_cost,
-//     tmp_ende_ecls, tmp_ende_child, tmp_ende_child_ptr,
-//     tmp_root_eclass_id);
-// #endif 
 
 
   // Compress _ecls_its_ende to 1D 
@@ -555,6 +556,11 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
       _leaves.push_back(ende); 
     }
   }  
+  
+  // print the deg
+  printf("Print the avg degree...\n");
+  _calculate_deg(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
+  printf("\n");
 }
 
 // =========================== TREE/DAG functions =========================== // 
@@ -677,7 +683,7 @@ double G_EXT::_compute_dag_cost(
   for (uint32_t rid : _root_eclass_id) {
     MY_CHECK(rid < _num_ecls, "rid < _num_ecls");
     uint32_t root_ende = best_ende_of_ecls[rid];
-    printf("root_ende = %u, _num_ende = %u\n\n", root_ende, _num_ende); 
+    // printf("root_ende = %u, _num_ende = %u\n\n", root_ende, _num_ende); 
     MY_CHECK(root_ende < _num_ende, "root_ende < _num_ende"); 
     q.push(root_ende);
     picked_endes[root_ende] = true;
@@ -2347,140 +2353,288 @@ __global__ void _gpu_insertion_kl(
   } 
 }
 
-__inline__ __device__ int warpReduceMax(int val) {
-  return __reduce_max_sync(0xffffffff, val);
-}
-
-__inline__ __device__ int warpReduceMin(int val) {
-  return __reduce_min_sync(0xffffffff, val);
-}
-
-__global__ void _gpu_insertion_kl_warp(
-  const bool is_td,
-  const uint32_t num_ende, 
-  uint32_t* dvc_picked_endes,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_global_inv_adj_1D_ptr,
-  const uint32_t* dvc_global_inv_adj_1D,
-  uint32_t* dvc_tmp_picked_adj,
-  uint32_t* dvc_tmp_picked_inv_adj,
-  uint32_t* dvc_picked_adj,
-  uint32_t* dvc_picked_inv_adj,
-  int* dvc_level,
-  bool* update)
-{
-  // one warp per ende
-  const uint32_t global_tid = blockIdx.x * blockDim.x + threadIdx.x;
-  const uint32_t warp_id = global_tid / 32;
-  const uint32_t lane_id = threadIdx.x % 32;
-
-  if (warp_id >= num_ende) return;
-  const uint32_t ende = warp_id;
-  if (dvc_picked_endes[ende]) return;
-
-  bool has_par = false, has_chd = false;
-  int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-  // Find max parent level 
-  uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
-  uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
-  for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
-    uint32_t par_ende = dvc_global_inv_adj_1D[k];
-    if (!dvc_picked_endes[par_ende]) continue;
-    int par_lvl = dvc_level[par_ende];
-    dvc_tmp_picked_inv_adj[k] = true;
-    has_par = true;
-    max_par_lvl = max(max_par_lvl, par_lvl);
+ // bitmap 快速方法
+#if FAST_BITMAP_CHECK
+  __inline__ __device__ int warpReduceMax(int val) {
+    return __reduce_max_sync(0xffffffff, val);
   }
 
-  // reduction to get max parent level across warp
-  max_par_lvl = warpReduceMax(max_par_lvl);
-
-  // warp broadcast: has_par is true if any thread has true
-  unsigned int par_mask = __ballot_sync(0xffffffff, has_par);
-  has_par = par_mask != 0;
-
-  // Find min child level
-  uint32_t c_start = dvc_global_adj_1D_ptr[ende];
-  uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
-  for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
-    uint32_t chd_ende = dvc_global_adj_1D[k];
-    if (!dvc_picked_endes[chd_ende]) continue;
-    int chd_lvl = dvc_level[chd_ende];
-    dvc_tmp_picked_adj[k] = true;
-    has_chd = true;
-    min_chd_lvl = min(min_chd_lvl, chd_lvl);
+  __inline__ __device__ int warpReduceMin(int val) {
+    return __reduce_min_sync(0xffffffff, val);
   }
 
-  // reduction to get min child level across warp
-  min_chd_lvl = warpReduceMin(min_chd_lvl);
-  unsigned int chd_mask = __ballot_sync(0xffffffff, has_chd);
-  has_chd = chd_mask != 0;
+  __global__ void _gpu_insertion_kl_warp(
+    const bool is_td,
+    const uint32_t num_ende, 
+    uint32_t* dvc_picked_endes,
+    const uint32_t* dvc_global_adj_1D_ptr,
+    const uint32_t* dvc_global_adj_1D,
+    const uint32_t* dvc_global_inv_adj_1D_ptr,
+    const uint32_t* dvc_global_inv_adj_1D,
+    uint32_t* dvc_tmp_picked_adj,
+    uint32_t* dvc_tmp_picked_inv_adj,
+    uint32_t* dvc_picked_adj,
+    uint32_t* dvc_picked_inv_adj,
+    int* dvc_level,
+    bool* update)
+  {
+    // one warp per ende
+    const uint32_t global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t warp_id = global_tid / 32;
+    const uint32_t lane_id = threadIdx.x % 32;
 
-  // --- compute cond and given_lvl (same as before, all lanes do the same)
-  bool cond = (is_td) ? (has_par) : (has_chd);
-  int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-  bool local_overlap = false;
+    if (warp_id >= num_ende) return;
+    const uint32_t ende = warp_id;
+    if (dvc_picked_endes[ende]) return;
 
-  for (uint32_t k = p_start + lane_id; k < p_end && !local_overlap; k += 32) {
-    if (!dvc_tmp_picked_inv_adj[k]) continue;
-    const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-    for (uint32_t kk = c_start; kk < c_end; kk++) {
-      if (!dvc_tmp_picked_adj[kk]) continue;
-      const uint32_t chd_ende = dvc_global_adj_1D[kk];
-      if (par_ende == chd_ende) {
+    bool has_par = false, has_chd = false;
+    int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+
+    // --------------------------
+    // find max parent level
+    // --------------------------
+    uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
+    uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
+    for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
+      uint32_t par_ende = dvc_global_inv_adj_1D[k];
+      if (!dvc_picked_endes[par_ende]) continue;
+      int par_lvl = dvc_level[par_ende];
+      dvc_tmp_picked_inv_adj[k] = true;
+      has_par = true;
+      max_par_lvl = max(max_par_lvl, par_lvl);
+    }
+    max_par_lvl = warpReduceMax(max_par_lvl);
+    has_par = __any_sync(0xffffffff, has_par);
+
+    // --------------------------
+    // find min child level + build bitmap
+    // --------------------------
+    uint64_t child_bitmap = 0ull;
+    uint32_t c_start = dvc_global_adj_1D_ptr[ende];
+    uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
+    for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
+      uint32_t chd_ende = dvc_global_adj_1D[k];
+      if (!dvc_picked_endes[chd_ende]) continue;
+      int chd_lvl = dvc_level[chd_ende];
+      dvc_tmp_picked_adj[k] = true;
+      has_chd = true;
+      min_chd_lvl = min(min_chd_lvl, chd_lvl);
+
+      // map child e-node to bitmap bit (use hash to compress)
+      uint32_t bit_idx = chd_ende & 63; // mod 64
+      child_bitmap |= (1ull << bit_idx);
+    }
+
+    // combine all warp threads' bitmaps
+    min_chd_lvl = warpReduceMin(min_chd_lvl);
+    has_chd = __any_sync(0xffffffff, has_chd);
+    child_bitmap = __reduce_or_sync(0xffffffff, child_bitmap);
+
+    // --------------------------
+    // cycle check with bitmap
+    // --------------------------
+    bool cond = is_td ? has_par : has_chd;
+    int given_lvl = is_td ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+
+    bool local_overlap = false;
+    for (uint32_t k = p_start + lane_id; k < p_end && !local_overlap; k += 32) {
+      if (!dvc_tmp_picked_inv_adj[k]) continue;
+      const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+      uint32_t bit_idx = par_ende & 63;
+      if (child_bitmap & (1ull << bit_idx)) {
         local_overlap = true;
         break;
       }
     }
+
+    bool has_overlap_b = __any_sync(0xffffffff, local_overlap);
+    bool valid = cond && (max_par_lvl < min_chd_lvl)
+              && !has_overlap_b && (given_lvl >= 0);
+
+    bool warp_valid = __any_sync(0xffffffff, valid);
+
+    // --------------------------
+    // updates
+    // --------------------------
+    if (warp_valid) {
+      if (lane_id == 0) {
+        dvc_picked_endes[ende] = true;
+        dvc_level[ende] = given_lvl;
+        *update = true;
+      }
+
+      // update inv_adj
+      for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
+        if (!dvc_tmp_picked_inv_adj[k]) continue;
+        const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+        dvc_picked_inv_adj[k] = true;
+        uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
+        uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
+        for (uint32_t kk = par_start; kk < par_end; kk++) {
+          const uint32_t tar_ende = dvc_global_adj_1D[kk];
+          if (tar_ende == ende) {
+            dvc_picked_adj[kk] = true;
+            break;
+          }
+        }
+      }
+
+      // update adj
+      for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
+        if (!dvc_tmp_picked_adj[k]) continue;
+        const uint32_t chd_ende = dvc_global_adj_1D[k];
+        dvc_picked_adj[k] = true;
+        uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
+        uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
+        for (uint32_t kk = chd_start; kk < chd_end; kk++) {
+          const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
+          if (tar_ende == ende) {
+            dvc_picked_inv_adj[kk] = true;
+            break;
+          }
+        }
+      }
+    }
   }
 
-  unsigned overlap_mask = __ballot_sync(0xffffffff, local_overlap);
-  bool has_overlap_b = overlap_mask != 0;
-  bool valid = (cond) && (max_par_lvl < min_chd_lvl)
-              && (!has_overlap_b) && (given_lvl >= 0);
+#else // 比較慢的方法，但可以攬入比較多的 #enodes
+  __inline__ __device__ int warpReduceMax(int val) {
+    return __reduce_max_sync(0xffffffff, val);
+  }
 
-  unsigned valid_mask = __ballot_sync(0xffffffff, valid);
-  bool warp_valid = (valid_mask != 0);
+  __inline__ __device__ int warpReduceMin(int val) {
+    return __reduce_min_sync(0xffffffff, val);
+  }
 
-  if (warp_valid) {
-    if (lane_id == 0) {
-      dvc_picked_endes[ende] = true;
-      dvc_level[ende] = given_lvl;
-      *update = true;
+  __global__ void _gpu_insertion_kl_warp(
+    const bool is_td,
+    const uint32_t num_ende, 
+    uint32_t* dvc_picked_endes,
+    const uint32_t* dvc_global_adj_1D_ptr,
+    const uint32_t* dvc_global_adj_1D,
+    const uint32_t* dvc_global_inv_adj_1D_ptr,
+    const uint32_t* dvc_global_inv_adj_1D,
+    uint32_t* dvc_tmp_picked_adj,
+    uint32_t* dvc_tmp_picked_inv_adj,
+    uint32_t* dvc_picked_adj,
+    uint32_t* dvc_picked_inv_adj,
+    int* dvc_level,
+    bool* update)
+  {
+    // one warp per ende
+    const uint32_t global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t warp_id = global_tid / 32;
+    const uint32_t lane_id = threadIdx.x % 32;
+
+    if (warp_id >= num_ende) return;
+    const uint32_t ende = warp_id;
+    if (dvc_picked_endes[ende]) return;
+
+    bool has_par = false, has_chd = false;
+    int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+    // Find max parent level 
+    uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
+    uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
+    for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
+      uint32_t par_ende = dvc_global_inv_adj_1D[k];
+      if (!dvc_picked_endes[par_ende]) continue;
+      int par_lvl = dvc_level[par_ende];
+      dvc_tmp_picked_inv_adj[k] = true;
+      has_par = true;
+      max_par_lvl = max(max_par_lvl, par_lvl);
     }
 
-    for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
+    // reduction to get max parent level across warp
+    max_par_lvl = warpReduceMax(max_par_lvl);
+
+    // warp broadcast: has_par is true if any thread has true
+    unsigned int par_mask = __ballot_sync(0xffffffff, has_par);
+    has_par = par_mask != 0;
+
+    // Find min child level
+    uint32_t c_start = dvc_global_adj_1D_ptr[ende];
+    uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
+    for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
+      uint32_t chd_ende = dvc_global_adj_1D[k];
+      if (!dvc_picked_endes[chd_ende]) continue;
+      int chd_lvl = dvc_level[chd_ende];
+      dvc_tmp_picked_adj[k] = true;
+      has_chd = true;
+      min_chd_lvl = min(min_chd_lvl, chd_lvl);
+    }
+
+    // reduction to get min child level across warp
+    min_chd_lvl = warpReduceMin(min_chd_lvl);
+    unsigned int chd_mask = __ballot_sync(0xffffffff, has_chd);
+    has_chd = chd_mask != 0;
+
+    // --- compute cond and given_lvl (same as before, all lanes do the same)
+    bool cond = (is_td) ? (has_par) : (has_chd);
+    int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+    bool local_overlap = false;
+
+    for (uint32_t k = p_start + lane_id; k < p_end && !local_overlap; k += 32) {
       if (!dvc_tmp_picked_inv_adj[k]) continue;
       const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-      dvc_picked_inv_adj[k] = true;
-      uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
-      uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
-      for (uint32_t kk = par_start; kk < par_end; kk++) {
-        const uint32_t tar_ende = dvc_global_adj_1D[kk];
-        if (tar_ende == ende) {
-          dvc_picked_adj[kk] = true;
+      for (uint32_t kk = c_start; kk < c_end; kk++) {
+        if (!dvc_tmp_picked_adj[kk]) continue;
+        const uint32_t chd_ende = dvc_global_adj_1D[kk];
+        if (par_ende == chd_ende) {
+          local_overlap = true;
           break;
         }
       }
     }
 
-    for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
-      if (!dvc_tmp_picked_adj[k]) continue;
-      const uint32_t chd_ende = dvc_global_adj_1D[k];
-      dvc_picked_adj[k] = true;
-      uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
-      uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
-      for (uint32_t kk = chd_start; kk < chd_end; kk++) {
-        const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
-        if (tar_ende == ende) {
-          dvc_picked_inv_adj[kk] = true;
-          break;
+    unsigned overlap_mask = __ballot_sync(0xffffffff, local_overlap);
+    bool has_overlap_b = overlap_mask != 0;
+    bool valid = (cond) && (max_par_lvl < min_chd_lvl)
+                && (!has_overlap_b) && (given_lvl >= 0);
+
+    unsigned valid_mask = __ballot_sync(0xffffffff, valid);
+    bool warp_valid = (valid_mask != 0);
+
+    if (warp_valid) {
+      if (lane_id == 0) {
+        dvc_picked_endes[ende] = true;
+        dvc_level[ende] = given_lvl;
+        *update = true;
+      }
+
+      for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
+        if (!dvc_tmp_picked_inv_adj[k]) continue;
+        const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+        dvc_picked_inv_adj[k] = true;
+        uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
+        uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
+        for (uint32_t kk = par_start; kk < par_end; kk++) {
+          const uint32_t tar_ende = dvc_global_adj_1D[kk];
+          if (tar_ende == ende) {
+            dvc_picked_adj[kk] = true;
+            break;
+          }
+        }
+      }
+
+      for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
+        if (!dvc_tmp_picked_adj[k]) continue;
+        const uint32_t chd_ende = dvc_global_adj_1D[k];
+        dvc_picked_adj[k] = true;
+        uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
+        uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
+        for (uint32_t kk = chd_start; kk < chd_end; kk++) {
+          const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
+          if (tar_ende == ende) {
+            dvc_picked_inv_adj[kk] = true;
+            break;
+          }
         }
       }
     }
   }
-}
+#endif
+// hahaha
+
 
 // __inline__ __device__ int blockReduceMax(int val) {
 //   static __shared__ int shared[NUM_THREAD_DAG_CONSTR / 32]; // one per warp
@@ -2686,7 +2840,6 @@ __inline__ __device__ void blockReduceMaxMin(int& max_val, int& min_val) {
 // ============================================================
 // === Optimized _gpu_insertion_kl_block_fast =================
 // ============================================================
-#define FAST_OVERLAP_CHECK true
 __global__ void _gpu_insertion_kl_block(
   const bool is_td,
   const uint32_t num_ende,
@@ -2752,7 +2905,7 @@ __global__ void _gpu_insertion_kl_block(
   // === 4. Cycle detection (optional shared bitmap) ============
   // ============================================================
   bool local_overlap = false;
-#if FAST_OVERLAP_CHECK
+#if FAST_BITMAP_CHECK
   // --- Shared bitmap trick (lower bits as hash) ---
   __shared__ uint8_t chd_flags[2048];
   for (int i = tid; i < 2048; i += blockDim.x)
@@ -3579,243 +3732,216 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
 
 
 #ifdef DUMP_NEW_JSON
-#include <random>
-#include <fstream>
-#include <iomanip>
-#include <nlohmann/json.hpp>
+  #include <random>
+  #include <fstream>
+  #include <iomanip>
+  #include <nlohmann/json.hpp>
 
-void G_EXT::_dump_to_egg_json(
-    const std::string& out_path,
-    uint32_t num_ecls,
-    uint32_t num_ende,
+  void G_EXT::_dump_to_egg_json(
+      const std::string& out_path,
+      uint32_t num_ecls,
+      uint32_t num_ende,
+      const std::vector<std::string>& ende_name,
+      const std::vector<std::string>& ende_op,
+      const std::vector<float>& ende_cost,
+      const std::vector<uint32_t>& ende_ecls,
+      const std::vector<uint32_t>& ende_child,
+      const std::vector<uint32_t>& ende_child_ptr,
+      const std::vector<uint32_t>& root_eclass_id)
+  {
+    // 建立 eclass → enode list 對應
+    std::vector<std::vector<uint32_t>> ecls_its_ende(num_ecls);
+    for (uint32_t i = 0; i < num_ende; ++i) {
+      ecls_its_ende[ende_ecls[i]].push_back(i);
+    }
+
+    nlohmann::json j_out;
+    nlohmann::json j_nodes;
+
+    std::mt19937 rng(42);  // 固定 seed，可改成 time(0) 取得隨機性
+
+    for (uint32_t ende = 0; ende < num_ende; ++ende) {
+      // 🟡 保留原始 enode 命名
+      std::string node_name = ende_name[ende];
+
+      nlohmann::json node_json;
+      node_json["op"] = ende_op[ende];
+      node_json["cost"] = ende_cost[ende];
+
+      // eclass 要轉成 string
+      node_json["eclass"] = std::to_string(ende_ecls[ende]);
+
+      // children：從 eclass 改成任意該 eclass 下 enode
+      std::vector<std::string> children;
+      for (uint32_t k = ende_child_ptr[ende]; k < ende_child_ptr[ende + 1]; ++k) {
+        uint32_t child_ecls = ende_child[k];
+
+        if (ecls_its_ende[child_ecls].empty()) continue;
+
+        // 隨機挑一個 representative enode
+        std::uniform_int_distribution<size_t> dist(0, ecls_its_ende[child_ecls].size() - 1);
+        uint32_t rep_ende = ecls_its_ende[child_ecls][dist(rng)];
+
+        // 🟢 保留原本 enode 名稱，不改格式
+        children.push_back(ende_name[rep_ende]);
+      }
+
+      node_json["children"] = children;
+      j_nodes[node_name] = node_json;
+    }
+
+    // root eclasses → string
+    std::vector<std::string> root_eclasses;
+    for (uint32_t r : root_eclass_id) {
+      root_eclasses.push_back(std::to_string(r));
+    }
+
+    j_out["nodes"] = j_nodes;
+    j_out["root_eclasses"] = root_eclasses;
+
+    std::ofstream ofs(out_path);
+    ofs << std::setw(2) << j_out << std::endl;
+    std::cout << "[INFO] Wrote egg-compatible JSON to: " << out_path << std::endl;
+  }
+#endif
+
+void G_EXT::_calculate_deg(const uint32_t tmp_num_ecls, 
+  const uint32_t tmp_num_ende, 
+  const std::vector<uint32_t>& tmp_ende_ecls,
+  const std::vector<uint32_t>& tmp_ende_child,
+  const std::vector<uint32_t>& tmp_ende_child_ptr,
+  const std::vector<uint32_t>& root_eclass_id) 
+{
+  // ende -> ende  
+  std::vector<std::unordered_set<uint32_t>> tt;
+  std::vector<std::unordered_set<uint32_t>> eclss_enode; // 該 eclass 下有哪些 enodes
+  eclss_enode.resize(tmp_num_ecls, std::unordered_set<uint32_t>());
+  for (uint32_t i = 0; i < tmp_num_ende; i++) {
+    uint32_t ecls = tmp_ende_ecls[i];
+    MY_CHECK(ecls < tmp_num_ecls, "ecls < tmp_num_ecls");
+    eclss_enode[ecls].insert(i);
+  }
+
+  tt.resize(tmp_num_ende, std::unordered_set<uint32_t>()); 
+  for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
+    uint32_t start = tmp_ende_child_ptr[ende]; 
+    uint32_t end = tmp_ende_child_ptr[ende+1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t chd_ecls = tmp_ende_child[jj];
+      for (uint32_t ende2 : eclss_enode[chd_ecls]) {
+        if (ende != ende2) { // remove self-loop
+          tt[ende].insert(ende2); 
+        }
+      }
+    }
+  }
+
+  double acc_deg = 0; // 下面要四捨五入
+  for (uint32_t i = 0; i < tmp_num_ende; i++) {
+    acc_deg += tt[i].size();
+  }
+  acc_deg /= tmp_num_ende;
+  printf("_calculate_deg(): In this benchmark, avg enode deg = %.1lf\n", acc_deg);
+  
+  // 檢查有沒有人指到 root enodes
+  for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
+    uint32_t start = tmp_ende_child_ptr[ende]; 
+    uint32_t end = tmp_ende_child_ptr[ende+1];
+    for (uint32_t jj = start; jj < end; jj++) {
+      uint32_t chd_ecls = tmp_ende_child[jj];
+      for (uint32_t r = 0; r < root_eclass_id.size(); r++) {
+        if (chd_ecls == root_eclass_id[r]) {
+          printf("point to roots\n"); 
+          exit(1);
+        }
+        if (chd_ecls >= _num_ecls) {
+          printf("chd_ecls >= _num_ecls\n"); 
+          exit(1);            
+        }
+      }
+    }
+  }
+}
+
+#ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
+  void G_EXT::_increase_egraph_deg(const uint32_t* num_ecls,
+    const uint32_t* num_ende,
     const std::vector<std::string>& ende_name,
     const std::vector<std::string>& ende_op,
     const std::vector<float>& ende_cost,
     const std::vector<uint32_t>& ende_ecls,
-    const std::vector<uint32_t>& ende_child,
-    const std::vector<uint32_t>& ende_child_ptr,
-    const std::vector<uint32_t>& root_eclass_id)
-{
-  // 建立 eclass → enode list 對應
-  std::vector<std::vector<uint32_t>> ecls_its_ende(num_ecls);
-  for (uint32_t i = 0; i < num_ende; ++i) {
-    ecls_its_ende[ende_ecls[i]].push_back(i);
-  }
-
-  nlohmann::json j_out;
-  nlohmann::json j_nodes;
-
-  std::mt19937 rng(42);  // 固定 seed，可改成 time(0) 取得隨機性
-
-  for (uint32_t ende = 0; ende < num_ende; ++ende) {
-    // 🟡 保留原始 enode 命名
-    std::string node_name = ende_name[ende];
-
-    nlohmann::json node_json;
-    node_json["op"] = ende_op[ende];
-    node_json["cost"] = ende_cost[ende];
-
-    // eclass 要轉成 string
-    node_json["eclass"] = std::to_string(ende_ecls[ende]);
-
-    // children：從 eclass 改成任意該 eclass 下 enode
-    std::vector<std::string> children;
-    for (uint32_t k = ende_child_ptr[ende]; k < ende_child_ptr[ende + 1]; ++k) {
-      uint32_t child_ecls = ende_child[k];
-
-      if (ecls_its_ende[child_ecls].empty()) continue;
-
-      // 隨機挑一個 representative enode
-      std::uniform_int_distribution<size_t> dist(0, ecls_its_ende[child_ecls].size() - 1);
-      uint32_t rep_ende = ecls_its_ende[child_ecls][dist(rng)];
-
-      // 🟢 保留原本 enode 名稱，不改格式
-      children.push_back(ende_name[rep_ende]);
-    }
-
-    node_json["children"] = children;
-    j_nodes[node_name] = node_json;
-  }
-
-  // root eclasses → string
-  std::vector<std::string> root_eclasses;
-  for (uint32_t r : root_eclass_id) {
-    root_eclasses.push_back(std::to_string(r));
-  }
-
-  j_out["nodes"] = j_nodes;
-  j_out["root_eclasses"] = root_eclasses;
-
-  std::ofstream ofs(out_path);
-  ofs << std::setw(2) << j_out << std::endl;
-  std::cout << "[INFO] Wrote egg-compatible JSON to: " << out_path << std::endl;
-}
-#endif
-
-
-#ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
-  void G_EXT::_calculate_deg(const uint32_t tmp_num_ecls, 
-    const uint32_t tmp_num_ende, 
-    const std::vector<uint32_t>& tmp_ende_ecls,
-    const std::vector<uint32_t>& tmp_ende_child,
-    const std::vector<uint32_t>& tmp_ende_child_ptr,
-    const std::vector<uint32_t>& root_eclass_id) 
-  {
-    // ende -> ende  
-    std::vector<std::unordered_set<uint32_t>> tt;
-    std::vector<std::unordered_set<uint32_t>> eclss_enode; // 該 eclass 下有哪些 enodes
-    eclss_enode.resize(tmp_num_ecls, std::unordered_set<uint32_t>());
-    for (uint32_t i = 0; i < tmp_num_ende; i++) {
-      uint32_t ecls = tmp_ende_ecls[i];
-      MY_CHECK(ecls < tmp_num_ecls, "ecls < tmp_num_ecls");
-      eclss_enode[ecls].insert(i);
-    }
-
-    tt.resize(tmp_num_ende, std::unordered_set<uint32_t>()); 
-    for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
-      uint32_t start = tmp_ende_child_ptr[ende]; 
-      uint32_t end = tmp_ende_child_ptr[ende+1];
-      for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t chd_ecls = tmp_ende_child[jj];
-        for (uint32_t ende2 : eclss_enode[chd_ecls]) {
-          if (ende != ende2) { // remove self-loop
-            tt[ende].insert(ende2); 
-          }
-        }
-      }
-    }
-
-    double acc_deg = 0; // 下面要四捨五入
-    for (uint32_t i = 0; i < tmp_num_ende; i++) {
-      acc_deg += tt[i].size();
-    }
-    acc_deg /= tmp_num_ende;
-    printf("_calculate_deg(): In this benchmark, avg enode deg = %.1lf\n", acc_deg);
-    
-    // 檢查有沒有人指到 root enodes
-    for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
-      uint32_t start = tmp_ende_child_ptr[ende]; 
-      uint32_t end = tmp_ende_child_ptr[ende+1];
-      for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t chd_ecls = tmp_ende_child[jj];
-        for (uint32_t r = 0; r < root_eclass_id.size(); r++) {
-          if (chd_ecls == root_eclass_id[r]) {
-            printf("point to roots\n"); 
-            exit(1);
-          }
-          if (chd_ecls >= _num_ecls) {
-            printf("chd_ecls >= _num_ecls\n"); 
-            exit(1);            
-          }
-        }
-      }
-    }
-  }
-
-
-void G_EXT::_increase_egraph_deg(const uint32_t* num_ecls,
-  const uint32_t* num_ende,
-  const std::vector<std::string>& ende_name,
-  const std::vector<std::string>& ende_op,
-  const std::vector<float>& ende_cost,
-  const std::vector<uint32_t>& ende_ecls,
-  std::vector<uint32_t>& ende_child,
-  std::vector<uint32_t>& ende_child_ptr,
-  const std::vector<uint32_t>& root_eclass_id)
-{
-  printf("Before extension degree\n");
-  _calculate_deg(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
-
-  std::mt19937 gen(47);  // 固定亂數種子
-
-  std::vector<bool> is_leaf_eclass; is_leaf_eclass.resize(_num_ecls, true); 
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    uint32_t num_child = ende_child_ptr[ende + 1] - ende_child_ptr[ende];
-    if (num_child != 0) {
-      uint32_t ecls = ende_ecls[ende];
-      is_leaf_eclass[ecls] = false;
-    }
-  }
-  std::vector<uint32_t> leaf_eclasses;
-  for (uint32_t ecls = 0; ecls < is_leaf_eclass.size(); ecls++) {
-    if (is_leaf_eclass[ecls]) {
-      leaf_eclasses.push_back(ecls);
-    }
-  }
-  // printf("leaf_eclasses.size() = %u\n\n\n", leaf_eclasses.size());
-
-
-  if (leaf_eclasses.empty()) {
-    printf("[WARN] No leaf eclass found, skip degree extension.\n");
-    return;
-  }
-
-  printf("Found %zu leaf eclasses.\n", leaf_eclasses.size());
-
-  // === Step 2. 生成 leaf eclass 隨機生成器 ===
-  auto gen_leaf_rand = [&]() -> uint32_t {
-    std::uniform_int_distribution<uint32_t> dist(0, leaf_eclasses.size() - 1);
-    return leaf_eclasses[dist(gen)];
-  };
-
-  // === Step 3. 擴張 edge：讓每個 enode 新增連到 leaf 的 edge ===
-  std::vector<uint32_t> ori_child = ende_child;
-  std::vector<uint32_t> ori_ptr   = ende_child_ptr;
-  ende_child.clear();
-  ende_child_ptr.clear();
-
-  uint32_t tmp_acc = 0;
-  ende_child_ptr.push_back(tmp_acc);
-
-  for (uint32_t ende = 0; ende < *num_ende; ende++) {
-    uint32_t start = ori_ptr[ende];
-    uint32_t end   = ori_ptr[ende + 1];
-
-    // 原始 children 保留
-    for (uint32_t jj = start; jj < end; jj++) {
-      ende_child.push_back(ori_child[jj]);
-      tmp_acc++;
-    }
-
-    // 新增 edge 指向 leaf eclass
-    uint32_t orig_deg = end - start;
-    uint32_t num_extra = (EXTEND_MUL - 1) * orig_deg;
-    for (uint32_t t = 0; t < num_extra; t++) {
-      uint32_t leaf_id = gen_leaf_rand();
-      ende_child.push_back(leaf_id);
-      tmp_acc++;
-    }
-
-    ende_child_ptr.push_back(tmp_acc);
-  }
-  
-  // // 從 root 連出去
-  // for (uint32_t r = 0; r < root_eclass_id.size(); r++) {
-  //   for (uint32_t r_ende : root_eclass_id[r]) {
-      
-      
-  //   }
-  // }
-
-  printf("After extension degree\n");
-  _calculate_deg(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
-}
-
-#endif 
-
-
-#ifdef EXTEND_GRAPH_TO_LARGER_GRAPH
-  void G_EXT::_increase_egraph_size(uint32_t* num_ecls,
-    uint32_t* num_ende,
-    std::vector<std::string>& ende_name,
-    std::vector<std::string>& ende_op,
-    std::vector<float>& ende_cost,
-    std::vector<uint32_t>& ende_ecls,
     std::vector<uint32_t>& ende_child,
     std::vector<uint32_t>& ende_child_ptr,
-    std::vector<uint32_t>& root_eclass_id) 
+    const std::vector<uint32_t>& root_eclass_id)
   {
-    
-    // *num_ende = 111; 
-  }  
+    printf("Before extension degree\n");
+    _calculate_deg(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
+
+    std::mt19937 gen(47);  // 固定亂數種子
+
+    std::vector<bool> is_leaf_eclass; is_leaf_eclass.resize(_num_ecls, true); 
+    for (uint32_t ende = 0; ende < _num_ende; ende++) {
+      uint32_t num_child = ende_child_ptr[ende + 1] - ende_child_ptr[ende];
+      if (num_child != 0) {
+        uint32_t ecls = ende_ecls[ende];
+        is_leaf_eclass[ecls] = false;
+      }
+    }
+    std::vector<uint32_t> leaf_eclasses;
+    for (uint32_t ecls = 0; ecls < is_leaf_eclass.size(); ecls++) {
+      if (is_leaf_eclass[ecls]) {
+        leaf_eclasses.push_back(ecls);
+      }
+    }
+
+    if (leaf_eclasses.empty()) {
+      printf("[WARN] No leaf eclass found, skip degree extension.\n");
+      return;
+    }
+
+    printf("Found %zu leaf eclasses.\n", leaf_eclasses.size());
+
+    // === Step 2. 生成 leaf eclass 隨機生成器 ===
+    auto gen_leaf_rand = [&]() -> uint32_t {
+      std::uniform_int_distribution<uint32_t> dist(0, leaf_eclasses.size() - 1);
+      return leaf_eclasses[dist(gen)];
+    };
+
+    // === Step 3. 擴張 edge：讓每個 enode 新增連到 leaf 的 edge ===
+    std::vector<uint32_t> ori_child = ende_child;
+    std::vector<uint32_t> ori_ptr   = ende_child_ptr;
+    ende_child.clear();
+    ende_child_ptr.clear();
+
+    uint32_t tmp_acc = 0;
+    ende_child_ptr.push_back(tmp_acc);
+
+    for (uint32_t ende = 0; ende < *num_ende; ende++) {
+      uint32_t start = ori_ptr[ende];
+      uint32_t end   = ori_ptr[ende + 1];
+
+      // 原始 children 保留
+      for (uint32_t jj = start; jj < end; jj++) {
+        ende_child.push_back(ori_child[jj]);
+        tmp_acc++;
+      }
+
+      // 新增 edge 指向 leaf eclass
+      uint32_t orig_deg = end - start;
+      uint32_t num_extra = (EXTEND_MUL - 1) * orig_deg;
+      for (uint32_t t = 0; t < num_extra; t++) {
+        uint32_t leaf_id = gen_leaf_rand();
+        ende_child.push_back(leaf_id);
+        tmp_acc++;
+      }
+
+      ende_child_ptr.push_back(tmp_acc);
+    }
+
+    printf("After extension degree\n");
+    _calculate_deg(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
+  }
+
 #endif 
+
+
