@@ -557,10 +557,10 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
     }
   }  
   
-  // print the deg
-  printf("Print the avg degree...\n");
-  _calculate_deg(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
-  printf("\n");
+  // // print the deg
+  // printf("Print the avg degree...\n");
+  // _calculate_deg(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
+  // printf("\n");
 }
 
 // =========================== TREE/DAG functions =========================== // 
