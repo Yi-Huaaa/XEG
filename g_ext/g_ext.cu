@@ -6,10 +6,10 @@
 #define threads 1024 // num GPU threads
 // #define DUMP_NEW_JSON
 // #define COMPUTE_AVG_ENODE_DEG
-#define EXTEND_GRAPH_TO_HIGHER_DEGEE
-  #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
-    #define EXTEND_MUL 8 // adjust this number to control degree scale-up
-  #endif
+// #define EXTEND_GRAPH_TO_HIGHER_DEGEE
+//   #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
+//     #define EXTEND_MUL 1 // adjust this number to control degree scale-up
+//   #endif
 #define NUM_THREAD_DAG_CONSTR 64
 // #define EXTEND_GRAPH_TO_LARGER_GRAPH
 

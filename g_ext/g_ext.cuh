@@ -375,7 +375,7 @@ private:
   uint32_t* _dvc_leaves;
   uint32_t* _dvc_from_roots; // for final construction
   uint32_t* _dvc_from_leaves; // for final construction
-  uint32_t _graph_density = 1; // [0,2] 
+  uint32_t _graph_density = 2; // [0,2] 
 
   // Print function
   void _print_input() const;
