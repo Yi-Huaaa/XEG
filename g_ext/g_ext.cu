@@ -6,8 +6,12 @@
 #define threads 1024 // num GPU threads
 // #define DUMP_NEW_JSON
 // #define COMPUTE_AVG_ENODE_DEG
-
-
+#define EXTEND_GRAPH_TO_HIGHER_DEGEE
+  #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
+    #define EXTEND_MUL 8 // adjust this number to control degree scale-up
+  #endif
+#define NUM_THREAD_DAG_CONSTR 64
+// #define EXTEND_GRAPH_TO_LARGER_GRAPH
 
 #define ENABLE_CHECK
 // Error checking macro for CPU 
@@ -315,6 +319,42 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   MY_CHECK((_num_ecls+dead_ecls_idx.size()) == tmp_num_ecls, "_num_ecls+dead_ecls_idx.size()");
   MY_CHECK(_root_eclass_id.size() == tmp_root_eclass_id.size(), "_root_eclass_id.size()");
 
+
+
+
+#ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
+    printf("\n======================================\n");
+    for (uint32_t i = 0; i < _root_eclass_id.size(); i++) {
+      printf("r_eclass %u: ", _root_eclass_id[i]);
+      for (uint32_t r_ende : _ecls_its_ende[_root_eclass_id[i]]) {
+        printf("%u, ", r_ende);
+      }
+      printf("\n");
+    }
+    printf("\n\n");
+
+    _increase_egraph_deg(&_num_ecls, &_num_ende,
+      _ende_name, _ende_op, _ende_cost,
+      _ende_ecls, _ende_child, _ende_child_ptr,
+      _root_eclass_id);
+
+    for (uint32_t i = 0; i < _root_eclass_id.size(); i++) {
+      printf("r_eclass %u: ", _root_eclass_id[i]);
+      for (uint32_t r_ende : _ecls_its_ende[_root_eclass_id[i]]) {
+        printf("%u, ", r_ende);
+      }
+      printf("\n");
+    }
+    printf("\n======================================\n");
+#endif 
+// #ifdef EXTEND_GRAPH_TO_LARGER_GRAPH
+//   _increase_egraph_size(&tmp_num_ecls, &tmp_num_ende,
+//     tmp_ende_name, tmp_ende_op, tmp_ende_cost,
+//     tmp_ende_ecls, tmp_ende_child, tmp_ende_child_ptr,
+//     tmp_root_eclass_id);
+// #endif 
+
+
   // Compress _ecls_its_ende to 1D 
   uint32_t acc_ptr = 0;
   _ecls_its_ende_1D_ptr.push_back(acc_ptr);
@@ -450,85 +490,6 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
       }
     }
   }
-    
-#ifdef SHOW_GRAPH_DEGREE
-  std::vector<uint32_t> all_degrees;
-  all_degrees.reserve(_num_ende);
-
-  double total_degree = 0.0;
-  uint32_t max_degree = 0;
-
-  // 找出 max、avg、top5 並紀錄所有 degree
-  std::vector<uint32_t> top_degrees;
-  top_degrees.reserve(5);
-
-  for (uint32_t ende = 0; ende < _num_ende; ++ende) {
-    uint32_t deg = _global_adj[ende].size() + _global_inv_adj[ende].size();
-    all_degrees.push_back(deg);
-    total_degree += static_cast<double>(deg);
-    if (deg > max_degree) max_degree = deg;
-
-    // 維護 top-5
-    if (top_degrees.size() < 5) {
-      top_degrees.push_back(deg);
-      std::sort(top_degrees.begin(), top_degrees.end(), std::greater<uint32_t>());
-    } else if (deg > top_degrees.back()) {
-      top_degrees.back() = deg;
-      std::sort(top_degrees.begin(), top_degrees.end(), std::greater<uint32_t>());
-    }
-  }
-
-  double avg_degree = total_degree / static_cast<double>(_num_ende);
-
-  // 印出 summary
-  printf("avg_degree = %.2f, max_degree = %u\n", avg_degree, max_degree);
-  printf("Top 5 degrees: ");
-  for (uint32_t d : top_degrees) printf("%u ", d);
-  printf("\n");
-
-  // 把所有 degree 寫到檔案 (optional)
-  {
-    FILE* fout = fopen("degree_distribution.txt", "w");
-    if (fout) {
-      for (uint32_t d : all_degrees)
-        fprintf(fout, "%u\n", d);
-      fclose(fout);
-      printf("[INFO] Degree distribution written to degree_distribution.txt\n");
-    } else {
-      fprintf(stderr, "[WARN] Failed to open degree_distribution.txt for writing.\n");
-    }
-  }
-
-  // Simple heuristic for graph density
-  // // TODO: 目前這個 setting 不好，可能要 tune 一下
-  // if (avg_degree < 32) {
-  //   _graph_density = 0;  // Sparse → per-thread
-  // } else if (avg_degree < 64) {
-  //   _graph_density = 1;  // Medium → warp
-  // } else {
-  //   _graph_density = 2;  // Dense → block
-  // }
-  _graph_density = 0;
-  double skew_ratio = (avg_degree > 0) ? (double)max_degree / avg_degree : 0.0;
-  // if (avg_degree > 32) {
-  //   _graph_density = 2;  // Dense graph → Block kernel
-  // }
-  // else if (max_degree < 700 && skew_ratio < 100) {
-  //   _graph_density = 0;  // Thread kernel
-  // }
-  // else if (max_degree < 15000 && skew_ratio < 2500) {
-  //   _graph_density = 1;  // Warp kernel
-  // }
-  // else {
-  //   _graph_density = 2;  // Otherwise → Block kernel
-  // }
-  printf("[Heuristic] avg=%.2f, max=%u, skew=%.1f → _graph_density=%u\n",
-        avg_degree, max_degree, skew_ratio, _graph_density);
- 
-  printf("_num_ende = %u, _num_ecls = %u, max_degree = %u, avg_degree = %.2lf, _graph_density = %u\n", 
-    _num_ende, _num_ecls,
-    max_degree, avg_degree, _graph_density);
-#endif // SHOW_GRAPH_DEGREE
 
   // Compress _global_adj and _global_inv_adj to 1D 
   acc_ptr = 0;
@@ -593,7 +554,7 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
     if (_global_adj[ende].size() == 0) {
       _leaves.push_back(ende); 
     }
-  }
+  }  
 }
 
 // =========================== TREE/DAG functions =========================== // 
@@ -641,15 +602,6 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
             h_update = true;
           }
         }
-        // #pragma omp critical
-        // {
-        //   if (acc_cost < cost_of_ecls[which_ecls] ||
-        //     (acc_cost == cost_of_ecls[which_ecls] && t_idx < best_ende_of_ecls[which_ecls])) {
-        //     cost_of_ecls[which_ecls] = acc_cost;
-        //     best_ende_of_ecls[which_ecls] = t_idx;
-        //     h_update = true;
-        //   }
-        // }
       }
     }
   }
@@ -703,6 +655,7 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
     tree_ret += cost_of_ecls[_root_eclass_id[r]];
   }
+
   double dag_ret = _compute_dag_cost(best_ende_of_ecls, picked_endes, ende_picked_by_ende); 
   _init_picked_adj(picked_endes);
 
@@ -724,7 +677,7 @@ double G_EXT::_compute_dag_cost(
   for (uint32_t rid : _root_eclass_id) {
     MY_CHECK(rid < _num_ecls, "rid < _num_ecls");
     uint32_t root_ende = best_ende_of_ecls[rid];
-    // printf("root_ende = %u, _num_ende = %u\n\n", root_ende, _num_ende); 
+    printf("root_ende = %u, _num_ende = %u\n\n", root_ende, _num_ende); 
     MY_CHECK(root_ende < _num_ende, "root_ende < _num_ende"); 
     q.push(root_ende);
     picked_endes[root_ende] = true;
@@ -871,6 +824,7 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
   level.resize(_num_ende, -1); // init, needed
   // uint32_t itr = 0;
 
+#ifndef EXTEND_GRAPH_TO_HIGHER_DEGEE
   while(updated) {
     // itr++;
     // bottom-up levelization && top-down insertion
@@ -890,6 +844,7 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
     #endif
   }
   // printf("CPU itr = %u\n", itr);
+#endif
 
 #ifdef BIBI_CHECK
   uint32_t bibi_acc_1 = 0;
@@ -904,15 +859,6 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
 
   // Clear redundant enodes
   _clear_redundant_endes(picked_endes);
-
-  // uint32_t acca = 0;
-  // for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
-  //   if (_in_subgraph[i]) {
-  //     acca++;
-  //   }
-  // }  
-  // printf("CPU final finds %u enodes\n", acca);
-
 
   // Re-constructing data for second times ILP solver
   _ecls_its_ende_newG.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
@@ -2536,46 +2482,211 @@ __global__ void _gpu_insertion_kl_warp(
   }
 }
 
-__inline__ __device__ int blockReduceMax(int val) {
-  static __shared__ int shared[256 / 32]; // one per warp
-  int lane = threadIdx.x % 32;
-  int wid  = threadIdx.x / 32;
+// __inline__ __device__ int blockReduceMax(int val) {
+//   static __shared__ int shared[NUM_THREAD_DAG_CONSTR / 32]; // one per warp
+//   int lane = threadIdx.x % 32;
+//   int wid  = threadIdx.x / 32;
+//   // Warp reduce first
+//   for (int offset = 16; offset > 0; offset /= 2)
+//     val = max(val, __shfl_down_sync(0xffffffff, val, offset));
+//   // Write warp results to shared memory
+//   if (lane == 0) shared[wid] = val;
+//   __syncthreads();
+//   // Read from first warp only
+//   val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : INT_MIN;
+//   // Final reduction within first warp
+//   if (wid == 0) {
+//     for (int offset = 16; offset > 0; offset /= 2)
+//       val = max(val, __shfl_down_sync(0xffffffff, val, offset));
+//   }
+//   return val;
+// }
 
-  // Warp reduce first
-  for (int offset = 16; offset > 0; offset /= 2)
-    val = max(val, __shfl_down_sync(0xffffffff, val, offset));
+// __inline__ __device__ int blockReduceMin(int val) {
+//   static __shared__ int shared[NUM_THREAD_DAG_CONSTR / 32];
+//   int lane = threadIdx.x % 32;
+//   int wid  = threadIdx.x / 32;
+//   for (int offset = 16; offset > 0; offset /= 2)
+//     val = min(val, __shfl_down_sync(0xffffffff, val, offset));
+//   if (lane == 0) shared[wid] = val;
+//   __syncthreads();
+//   val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : INT_MAX;
+//   if (wid == 0) {
+//     for (int offset = 16; offset > 0; offset /= 2)
+//       val = min(val, __shfl_down_sync(0xffffffff, val, offset));
+//   }
+//   return val;
+// }
 
-  // Write warp results to shared memory
-  if (lane == 0) shared[wid] = val;
+// __global__ void _gpu_insertion_kl_block(
+//   const bool is_td,
+//   const uint32_t num_ende,
+//   uint32_t* dvc_picked_endes,
+//   const uint32_t* dvc_global_adj_1D_ptr,
+//   const uint32_t* dvc_global_adj_1D,
+//   const uint32_t* dvc_global_inv_adj_1D_ptr,
+//   const uint32_t* dvc_global_inv_adj_1D,
+//   uint32_t* dvc_tmp_picked_adj,
+//   uint32_t* dvc_tmp_picked_inv_adj,
+//   uint32_t* dvc_picked_adj,
+//   uint32_t* dvc_picked_inv_adj,
+//   int* dvc_level,
+//   bool* update)
+// {
+//   const uint32_t ende = blockIdx.x;
+//   if (ende >= num_ende) return;
+//   if (dvc_picked_endes[ende]) return;
+
+//   int tid = threadIdx.x;
+//   bool has_par = false, has_chd = false;
+//   int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+
+//   // --------------------------
+//   // find max parent level
+//   // --------------------------
+//   uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
+//   uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
+//   for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
+//     uint32_t par_ende = dvc_global_inv_adj_1D[k];
+//     if (!dvc_picked_endes[par_ende]) continue;
+//     int par_lvl = dvc_level[par_ende];
+//     dvc_tmp_picked_inv_adj[k] = true;
+//     has_par = true;
+//     max_par_lvl = max(max_par_lvl, par_lvl);
+//   }
+//   max_par_lvl = blockReduceMax(max_par_lvl);
+//   unsigned int par_mask = __ballot_sync(0xffffffff, has_par);
+//   has_par = par_mask != 0;
+
+//   // --------------------------
+//   // find min child level
+//   // --------------------------
+//   uint32_t c_start = dvc_global_adj_1D_ptr[ende];
+//   uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
+//   for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
+//     uint32_t chd_ende = dvc_global_adj_1D[k];
+//     if (!dvc_picked_endes[chd_ende]) continue;
+//     int chd_lvl = dvc_level[chd_ende];
+//     dvc_tmp_picked_adj[k] = true;
+//     has_chd = true;
+//     min_chd_lvl = min(min_chd_lvl, chd_lvl);
+//   }
+//   min_chd_lvl = blockReduceMin(min_chd_lvl);
+//   unsigned int chd_mask = __ballot_sync(0xffffffff, has_chd);
+//   has_chd = chd_mask != 0;
+
+//   // --------------------------
+//   // cycle check
+//   // --------------------------
+//   bool cond = (is_td) ? (has_par) : (has_chd);
+//   int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+//   bool local_overlap = false;
+//   for (uint32_t k = p_start + tid; k < p_end && !local_overlap; k += blockDim.x) {
+//     if (!dvc_tmp_picked_inv_adj[k]) continue;
+//     const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+//     for (uint32_t kk = c_start; kk < c_end; kk++) {
+//       if (!dvc_tmp_picked_adj[kk]) continue;
+//       const uint32_t chd_ende = dvc_global_adj_1D[kk];
+//       if (par_ende == chd_ende) { local_overlap = true; break; }
+//     }
+//   }
+
+//   unsigned overlap_mask = __ballot_sync(0xffffffff, local_overlap);
+//   bool has_overlap_b = overlap_mask != 0;
+
+//   bool valid = (cond) && (max_par_lvl < min_chd_lvl)
+//               && (!has_overlap_b) && (given_lvl >= 0);
+
+//   // unsigned valid_mask = __ballot_sync(0xffffffff, valid);
+//   // bool block_valid = (valid_mask != 0);
+//   bool block_valid = __any_sync(0xffffffff, valid);
+
+
+//   // --------------------------
+//   // updates
+//   // --------------------------
+//   if (block_valid) {
+//     if (tid == 0) {
+//       dvc_picked_endes[ende] = true;
+//       dvc_level[ende] = given_lvl;
+//       *update = true;
+//     }
+
+//     // update inv_adj
+//     for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
+//       if (!dvc_tmp_picked_inv_adj[k]) continue;
+//       const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+//       dvc_picked_inv_adj[k] = true;
+//       uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
+//       uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
+//       for (uint32_t kk = par_start; kk < par_end; kk++) {
+//         const uint32_t tar_ende = dvc_global_adj_1D[kk];
+//         if (tar_ende == ende) {
+//           dvc_picked_adj[kk] = true;
+//           break;
+//         }
+//       }
+//     }
+
+//     // update adj
+//     for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
+//       if (!dvc_tmp_picked_adj[k]) continue;
+//       const uint32_t chd_ende = dvc_global_adj_1D[k];
+//       dvc_picked_adj[k] = true;
+//       uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
+//       uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
+//       for (uint32_t kk = chd_start; kk < chd_end; kk++) {
+//         const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
+//         if (tar_ende == ende) {
+//           dvc_picked_inv_adj[kk] = true;
+//           break;
+//         }
+//       }
+//     }
+//   }
+// }
+
+// ============================================================
+// === Faster intra-block reductions (merged max+min) =========
+// ============================================================
+
+__inline__ __device__ void blockReduceMaxMin(int& max_val, int& min_val) {
+  int lane = threadIdx.x & 31;
+  int wid  = threadIdx.x >> 5;
+
+  // --- Warp-level reduce ---
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    max_val = max(max_val, __shfl_down_sync(0xffffffff, max_val, offset));
+    min_val = min(min_val, __shfl_down_sync(0xffffffff, min_val, offset));
+  }
+
+  // --- Warp results to shared ---
+  __shared__ int warp_max[32];
+  __shared__ int warp_min[32];
+  if (lane == 0) {
+    warp_max[wid] = max_val;
+    warp_min[wid] = min_val;
+  }
   __syncthreads();
 
-  // Read from first warp only
-  val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : INT_MIN;
-
-  // Final reduction within first warp
+  // --- Final reduction by warp 0 only ---
   if (wid == 0) {
-    for (int offset = 16; offset > 0; offset /= 2)
-      val = max(val, __shfl_down_sync(0xffffffff, val, offset));
+    max_val = (lane < (blockDim.x >> 5)) ? warp_max[lane] : INT_MIN;
+    min_val = (lane < (blockDim.x >> 5)) ? warp_min[lane] : INT_MAX;
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      max_val = max(max_val, __shfl_down_sync(0xffffffff, max_val, offset));
+      min_val = min(min_val, __shfl_down_sync(0xffffffff, min_val, offset));
+    }
   }
-  return val;
+  // Broadcast final values to all threads in block
+  max_val = __shfl_sync(0xffffffff, max_val, 0);
+  min_val = __shfl_sync(0xffffffff, min_val, 0);
 }
 
-__inline__ __device__ int blockReduceMin(int val) {
-  static __shared__ int shared[256 / 32];
-  int lane = threadIdx.x % 32;
-  int wid  = threadIdx.x / 32;
-  for (int offset = 16; offset > 0; offset /= 2)
-    val = min(val, __shfl_down_sync(0xffffffff, val, offset));
-  if (lane == 0) shared[wid] = val;
-  __syncthreads();
-  val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : INT_MAX;
-  if (wid == 0) {
-    for (int offset = 16; offset > 0; offset /= 2)
-      val = min(val, __shfl_down_sync(0xffffffff, val, offset));
-  }
-  return val;
-}
-
+// ============================================================
+// === Optimized _gpu_insertion_kl_block_fast =================
+// ============================================================
+#define FAST_OVERLAP_CHECK true
 __global__ void _gpu_insertion_kl_block(
   const bool is_td,
   const uint32_t num_ende,
@@ -2595,113 +2706,133 @@ __global__ void _gpu_insertion_kl_block(
   if (ende >= num_ende) return;
   if (dvc_picked_endes[ende]) return;
 
-  int tid = threadIdx.x;
+  const int tid = threadIdx.x;
   bool has_par = false, has_chd = false;
   int max_par_lvl = -1, min_chd_lvl = INT_MAX;
 
-  // --------------------------
-  // find max parent level
-  // --------------------------
+  // ============================================================
+  // === 1. Scan parent edges ===================================
+  // ============================================================
   uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
   uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
+
   for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
     uint32_t par_ende = dvc_global_inv_adj_1D[k];
     if (!dvc_picked_endes[par_ende]) continue;
+    has_par = true;
     int par_lvl = dvc_level[par_ende];
     dvc_tmp_picked_inv_adj[k] = true;
-    has_par = true;
     max_par_lvl = max(max_par_lvl, par_lvl);
   }
-  max_par_lvl = blockReduceMax(max_par_lvl);
-  unsigned int par_mask = __ballot_sync(0xffffffff, has_par);
-  has_par = par_mask != 0;
 
-  // --------------------------
-  // find min child level
-  // --------------------------
+  // ============================================================
+  // === 2. Scan child edges ====================================
+  // ============================================================
   uint32_t c_start = dvc_global_adj_1D_ptr[ende];
   uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
+
   for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
     uint32_t chd_ende = dvc_global_adj_1D[k];
     if (!dvc_picked_endes[chd_ende]) continue;
+    has_chd = true;
     int chd_lvl = dvc_level[chd_ende];
     dvc_tmp_picked_adj[k] = true;
-    has_chd = true;
     min_chd_lvl = min(min_chd_lvl, chd_lvl);
   }
-  min_chd_lvl = blockReduceMin(min_chd_lvl);
-  unsigned int chd_mask = __ballot_sync(0xffffffff, has_chd);
-  has_chd = chd_mask != 0;
 
-  // --------------------------
-  // cycle check
-  // --------------------------
-  bool cond = (is_td) ? (has_par) : (has_chd);
-  int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+  // ============================================================
+  // === 3. Combined reduction for max/min ======================
+  // ============================================================
+  blockReduceMaxMin(max_par_lvl, min_chd_lvl);
+
+  has_par = __any_sync(0xffffffff, has_par);
+  has_chd = __any_sync(0xffffffff, has_chd);
+
+  // ============================================================
+  // === 4. Cycle detection (optional shared bitmap) ============
+  // ============================================================
   bool local_overlap = false;
+#if FAST_OVERLAP_CHECK
+  // --- Shared bitmap trick (lower bits as hash) ---
+  __shared__ uint8_t chd_flags[2048];
+  for (int i = tid; i < 2048; i += blockDim.x)
+    chd_flags[i] = 0;
+  __syncthreads();
 
+  for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x)
+    if (dvc_tmp_picked_adj[k])
+      chd_flags[dvc_global_adj_1D[k] & 2047] = 1;
+  __syncthreads();
+
+  for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x)
+    if (dvc_tmp_picked_inv_adj[k] && chd_flags[dvc_global_inv_adj_1D[k] & 2047])
+      local_overlap = true;
+
+#else
+  // --- Default O(deg²) safe check ---
   for (uint32_t k = p_start + tid; k < p_end && !local_overlap; k += blockDim.x) {
     if (!dvc_tmp_picked_inv_adj[k]) continue;
     const uint32_t par_ende = dvc_global_inv_adj_1D[k];
     for (uint32_t kk = c_start; kk < c_end; kk++) {
       if (!dvc_tmp_picked_adj[kk]) continue;
-      const uint32_t chd_ende = dvc_global_adj_1D[kk];
-      if (par_ende == chd_ende) { local_overlap = true; break; }
+      if (par_ende == dvc_global_adj_1D[kk]) { local_overlap = true; break; }
+    }
+  }
+#endif
+
+  bool has_overlap_b = __any_sync(0xffffffff, local_overlap);
+
+  // ============================================================
+  // === 5. Compute validity & early exit =======================
+  // ============================================================
+  bool cond = is_td ? has_par : has_chd;
+  int given_lvl = is_td ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+  bool valid = cond && (max_par_lvl < min_chd_lvl)
+              && !has_overlap_b && (given_lvl >= 0);
+
+  bool block_valid = __any_sync(0xffffffff, valid);
+  if (!block_valid) return;   // ✅ 早期終止，節省多餘掃描
+
+  // ============================================================
+  // === 6. Apply updates =======================================
+  // ============================================================
+  if (tid == 0) {
+    dvc_picked_endes[ende] = true;
+    dvc_level[ende] = given_lvl;
+    *update = true;
+  }
+
+  // --- update inv_adj ---
+  for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
+    if (!dvc_tmp_picked_inv_adj[k]) continue;
+    const uint32_t par_ende = dvc_global_inv_adj_1D[k];
+    dvc_picked_inv_adj[k] = true;
+    uint32_t ps = dvc_global_adj_1D_ptr[par_ende];
+    uint32_t pe = dvc_global_adj_1D_ptr[par_ende + 1];
+    for (uint32_t kk = ps; kk < pe; kk++) {
+      if (dvc_global_adj_1D[kk] == ende) {
+        dvc_picked_adj[kk] = true;
+        break;
+      }
     }
   }
 
-  unsigned overlap_mask = __ballot_sync(0xffffffff, local_overlap);
-  bool has_overlap_b = overlap_mask != 0;
-
-  bool valid = (cond) && (max_par_lvl < min_chd_lvl)
-              && (!has_overlap_b) && (given_lvl >= 0);
-
-  unsigned valid_mask = __ballot_sync(0xffffffff, valid);
-  bool block_valid = (valid_mask != 0);
-
-  // --------------------------
-  // updates
-  // --------------------------
-  if (block_valid) {
-    if (tid == 0) {
-      dvc_picked_endes[ende] = true;
-      dvc_level[ende] = given_lvl;
-      *update = true;
-    }
-
-    // update inv_adj
-    for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
-      if (!dvc_tmp_picked_inv_adj[k]) continue;
-      const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-      dvc_picked_inv_adj[k] = true;
-      uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
-      uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
-      for (uint32_t kk = par_start; kk < par_end; kk++) {
-        const uint32_t tar_ende = dvc_global_adj_1D[kk];
-        if (tar_ende == ende) {
-          dvc_picked_adj[kk] = true;
-          break;
-        }
-      }
-    }
-
-    // update adj
-    for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
-      if (!dvc_tmp_picked_adj[k]) continue;
-      const uint32_t chd_ende = dvc_global_adj_1D[k];
-      dvc_picked_adj[k] = true;
-      uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
-      uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
-      for (uint32_t kk = chd_start; kk < chd_end; kk++) {
-        const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
-        if (tar_ende == ende) {
-          dvc_picked_inv_adj[kk] = true;
-          break;
-        }
+  // --- update adj ---
+  for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
+    if (!dvc_tmp_picked_adj[k]) continue;
+    const uint32_t chd_ende = dvc_global_adj_1D[k];
+    dvc_picked_adj[k] = true;
+    uint32_t cs = dvc_global_inv_adj_1D_ptr[chd_ende];
+    uint32_t ce = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
+    for (uint32_t kk = cs; kk < ce; kk++) {
+      if (dvc_global_inv_adj_1D[kk] == ende) {
+        dvc_picked_inv_adj[kk] = true;
+        break;
       }
     }
   }
 }
+
 
 bool G_EXT::_gpu_insertion(const bool is_td)
 {
@@ -2754,7 +2885,7 @@ bool G_EXT::_gpu_insertion(const bool is_td)
     cudaCheckErrors("_gpu_insertion_kl_warp failed");  
   } else { // _graph_density == 2
     // 一個 block 負責一個 enode
-    _gpu_insertion_kl_block<<<_num_ende, 256>>>(
+    _gpu_insertion_kl_block<<<_num_ende, NUM_THREAD_DAG_CONSTR>>>(
       is_td,
       _num_ende,
       _dvc_picked_endes,
@@ -3520,3 +3651,171 @@ void G_EXT::_dump_to_egg_json(
   std::cout << "[INFO] Wrote egg-compatible JSON to: " << out_path << std::endl;
 }
 #endif
+
+
+#ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
+  void G_EXT::_calculate_deg(const uint32_t tmp_num_ecls, 
+    const uint32_t tmp_num_ende, 
+    const std::vector<uint32_t>& tmp_ende_ecls,
+    const std::vector<uint32_t>& tmp_ende_child,
+    const std::vector<uint32_t>& tmp_ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id) 
+  {
+    // ende -> ende  
+    std::vector<std::unordered_set<uint32_t>> tt;
+    std::vector<std::unordered_set<uint32_t>> eclss_enode; // 該 eclass 下有哪些 enodes
+    eclss_enode.resize(tmp_num_ecls, std::unordered_set<uint32_t>());
+    for (uint32_t i = 0; i < tmp_num_ende; i++) {
+      uint32_t ecls = tmp_ende_ecls[i];
+      MY_CHECK(ecls < tmp_num_ecls, "ecls < tmp_num_ecls");
+      eclss_enode[ecls].insert(i);
+    }
+
+    tt.resize(tmp_num_ende, std::unordered_set<uint32_t>()); 
+    for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
+      uint32_t start = tmp_ende_child_ptr[ende]; 
+      uint32_t end = tmp_ende_child_ptr[ende+1];
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t chd_ecls = tmp_ende_child[jj];
+        for (uint32_t ende2 : eclss_enode[chd_ecls]) {
+          if (ende != ende2) { // remove self-loop
+            tt[ende].insert(ende2); 
+          }
+        }
+      }
+    }
+
+    double acc_deg = 0; // 下面要四捨五入
+    for (uint32_t i = 0; i < tmp_num_ende; i++) {
+      acc_deg += tt[i].size();
+    }
+    acc_deg /= tmp_num_ende;
+    printf("_calculate_deg(): In this benchmark, avg enode deg = %.1lf\n", acc_deg);
+    
+    // 檢查有沒有人指到 root enodes
+    for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
+      uint32_t start = tmp_ende_child_ptr[ende]; 
+      uint32_t end = tmp_ende_child_ptr[ende+1];
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t chd_ecls = tmp_ende_child[jj];
+        for (uint32_t r = 0; r < root_eclass_id.size(); r++) {
+          if (chd_ecls == root_eclass_id[r]) {
+            printf("point to roots\n"); 
+            exit(1);
+          }
+          if (chd_ecls >= _num_ecls) {
+            printf("chd_ecls >= _num_ecls\n"); 
+            exit(1);            
+          }
+        }
+      }
+    }
+  }
+
+
+void G_EXT::_increase_egraph_deg(const uint32_t* num_ecls,
+  const uint32_t* num_ende,
+  const std::vector<std::string>& ende_name,
+  const std::vector<std::string>& ende_op,
+  const std::vector<float>& ende_cost,
+  const std::vector<uint32_t>& ende_ecls,
+  std::vector<uint32_t>& ende_child,
+  std::vector<uint32_t>& ende_child_ptr,
+  const std::vector<uint32_t>& root_eclass_id)
+{
+  printf("Before extension degree\n");
+  _calculate_deg(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
+
+  std::mt19937 gen(47);  // 固定亂數種子
+
+  std::vector<bool> is_leaf_eclass; is_leaf_eclass.resize(_num_ecls, true); 
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    uint32_t num_child = ende_child_ptr[ende + 1] - ende_child_ptr[ende];
+    if (num_child != 0) {
+      uint32_t ecls = ende_ecls[ende];
+      is_leaf_eclass[ecls] = false;
+    }
+  }
+  std::vector<uint32_t> leaf_eclasses;
+  for (uint32_t ecls = 0; ecls < is_leaf_eclass.size(); ecls++) {
+    if (is_leaf_eclass[ecls]) {
+      leaf_eclasses.push_back(ecls);
+    }
+  }
+  // printf("leaf_eclasses.size() = %u\n\n\n", leaf_eclasses.size());
+
+
+  if (leaf_eclasses.empty()) {
+    printf("[WARN] No leaf eclass found, skip degree extension.\n");
+    return;
+  }
+
+  printf("Found %zu leaf eclasses.\n", leaf_eclasses.size());
+
+  // === Step 2. 生成 leaf eclass 隨機生成器 ===
+  auto gen_leaf_rand = [&]() -> uint32_t {
+    std::uniform_int_distribution<uint32_t> dist(0, leaf_eclasses.size() - 1);
+    return leaf_eclasses[dist(gen)];
+  };
+
+  // === Step 3. 擴張 edge：讓每個 enode 新增連到 leaf 的 edge ===
+  std::vector<uint32_t> ori_child = ende_child;
+  std::vector<uint32_t> ori_ptr   = ende_child_ptr;
+  ende_child.clear();
+  ende_child_ptr.clear();
+
+  uint32_t tmp_acc = 0;
+  ende_child_ptr.push_back(tmp_acc);
+
+  for (uint32_t ende = 0; ende < *num_ende; ende++) {
+    uint32_t start = ori_ptr[ende];
+    uint32_t end   = ori_ptr[ende + 1];
+
+    // 原始 children 保留
+    for (uint32_t jj = start; jj < end; jj++) {
+      ende_child.push_back(ori_child[jj]);
+      tmp_acc++;
+    }
+
+    // 新增 edge 指向 leaf eclass
+    uint32_t orig_deg = end - start;
+    uint32_t num_extra = (EXTEND_MUL - 1) * orig_deg;
+    for (uint32_t t = 0; t < num_extra; t++) {
+      uint32_t leaf_id = gen_leaf_rand();
+      ende_child.push_back(leaf_id);
+      tmp_acc++;
+    }
+
+    ende_child_ptr.push_back(tmp_acc);
+  }
+  
+  // // 從 root 連出去
+  // for (uint32_t r = 0; r < root_eclass_id.size(); r++) {
+  //   for (uint32_t r_ende : root_eclass_id[r]) {
+      
+      
+  //   }
+  // }
+
+  printf("After extension degree\n");
+  _calculate_deg(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
+}
+
+#endif 
+
+
+#ifdef EXTEND_GRAPH_TO_LARGER_GRAPH
+  void G_EXT::_increase_egraph_size(uint32_t* num_ecls,
+    uint32_t* num_ende,
+    std::vector<std::string>& ende_name,
+    std::vector<std::string>& ende_op,
+    std::vector<float>& ende_cost,
+    std::vector<uint32_t>& ende_ecls,
+    std::vector<uint32_t>& ende_child,
+    std::vector<uint32_t>& ende_child_ptr,
+    std::vector<uint32_t>& root_eclass_id) 
+  {
+    
+    // *num_ende = 111; 
+  }  
+#endif 
