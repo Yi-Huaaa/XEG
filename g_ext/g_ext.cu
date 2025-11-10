@@ -2,13 +2,14 @@
 
 #define threads 1024 // num GPU threads
 #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
-#define NUM_THREAD_DAG_CONSTR 64
+// #define NUM_THREAD_DAG_CONSTR 64
 
-// /* ABALATION EXPERIMENTS -1: ABOUT DEGREE */
+/* ABALATION EXPERIMENTS -1: ABOUT DEGREE */
 // #define EXTEND_GRAPH_TO_HIGHER_DEGEE
-//   #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
-//     #define EXTEND_MUL 128 // adjust this number to control degree scale-up
-//   #endif
+
+// #define SLENDER_VERSION_EGRAPH // ONLY FOR TEST
+
+// grep "After extension degree" tmp.log && grep "GPU Reconstruct Graph Runtime:" tmp.log 
 
 /* DEBUG ONLY */
 // #define PRINT_LOG
@@ -559,7 +560,8 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   
   // // print the deg
   // printf("Print the avg degree...\n");
-  // _calculate_deg(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
+  // _calculate_deg_ende(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
+  // _calculate_deg_ecls(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
   // printf("\n");
 }
 
@@ -874,6 +876,11 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
       _ecls_its_ende_newG[ecls].push_back(ende);
     }
   }
+
+#ifdef SLENDER_VERSION_EGRAPH
+  printf("!!! _max_level = %d\n\n", _max_level);
+  _calculate_deg_ecls(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
+#endif  
 
 #ifdef BIBI_CHECK
   uint32_t bibi_acc_2 = 0;
@@ -1589,7 +1596,8 @@ __global__ void _init_q(const uint32_t sz,
   const uint32_t* root_eclass_id,
   const uint32_t* best_ende_of_ecls,
   uint32_t* q,
-  uint32_t* q_sz)
+  uint32_t* q_sz,
+  uint32_t* q_num)
 {
   uint32_t pos = 0;
   for (uint32_t i = 0; i < sz; i++) {
@@ -1599,6 +1607,7 @@ __global__ void _init_q(const uint32_t sz,
     pos++;
   }
   *q_sz = pos;
+  *q_num = pos;
 }
 
 __global__ void _get_dag_cost(
@@ -1631,6 +1640,52 @@ __global__ void _get_dag_cost(
       uint32_t pos = atomicAdd(q_sz, 1);
       q[pos] = chd_ende;
     }
+  }
+}
+
+
+__global__ void _get_dag_cost_slender(
+  const float* ende_cost,
+  const uint32_t* ende_child,
+  const uint32_t* ende_child_ptr,
+  const uint32_t* ende_picked_by_ende,
+  const uint32_t* best_ende_of_ecls,
+  uint32_t* q,
+  uint32_t* q_sz,
+  uint32_t* q_sp,
+  uint32_t* q_num,
+  uint32_t* picked_endes, // 不提供 bool atomicCAS
+  double* dag_ret)
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  
+  while(*q_num > 0) {
+    if (t_idx < *q_num) {
+      uint32_t cur = q[*q_sp + t_idx];
+      atomicAdd(dag_ret, static_cast<double>(ende_cost[cur]));
+      picked_endes[cur] = 1; // set as true
+      
+      uint32_t start = ende_child_ptr[cur];
+      uint32_t end   = ende_child_ptr[cur + 1];
+
+      for (uint32_t chd = start; chd < end; chd++) {
+        uint32_t chd_ecls = ende_child[chd];
+        uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
+        // 確保只有一次 push
+        if (atomicCAS(&picked_endes[chd_ende], 0u, 1u) == 0u) {
+          uint32_t pos = atomicAdd(q_sz, 1);
+          q[pos] = chd_ende;
+        }
+      }
+    }    
+
+    // update index 
+    __syncthreads();
+    if (t_idx == 0) {
+      *q_sp += *q_num;
+      *q_num = *q_sz - *q_sp;
+    }
+    __syncthreads();
   }
 }
 
@@ -1808,6 +1863,7 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMalloc(&_dvc_q, _num_ende*sizeof(uint32_t));
   cudaMalloc(&_dvc_q_sz, 1*sizeof(uint32_t));
   cudaMalloc(&_dvc_q_sp, 1*sizeof(uint32_t));
+  cudaMalloc(&_dvc_q_num, 1*sizeof(uint32_t));
   cudaMalloc(&_dvc_indegree, _num_ende*sizeof(uint32_t));
   cudaMalloc(&_dvc_inv_indegree, _num_ende*sizeof(uint32_t));
   // new G
@@ -1848,6 +1904,7 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMemset(_dvc_q, 0, _num_ende*sizeof(uint32_t));
   cudaMemset(_dvc_q_sz, 0, 1*sizeof(uint32_t));
   cudaMemset(_dvc_q_sp, 0, 1*sizeof(uint32_t));
+  cudaMemset(_dvc_q_num, 0, 1*sizeof(uint32_t));
   cudaMemset(_dvc_indegree, 0, _num_ende*sizeof(uint32_t));
   cudaMemset(_dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
   // new G
@@ -1913,10 +1970,12 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   _init_q<<<1,1>>>(_root_eclass_id.size(),
     _dvc_root_eclass_id,
     _dvc_best_ende_of_ecls,
-    _dvc_q, _dvc_q_sz);
+    _dvc_q, _dvc_q_sz, _dvc_q_num);
   cudaCheckErrors("_init_q failed");
 
   double dag_ret = 0.0;
+
+#ifndef SLENDER_VERSION_EGRAPH
   uint32_t q_sz = 0;
   cudaMemcpy(&q_sz, _dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
   uint32_t q_sp = 0;
@@ -1943,10 +2002,31 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
     cudaMemcpy(&q_sz, _dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
     q_sp += num;
     num = q_sz - q_sp;
+    // if (blocks > 1) {
+    //   printf("blocks = %u\n", blocks);
+    // }
   }
   cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
   cudaCheckErrors("DAG cost memcpy failed");
-  
+#else
+  blocks = 1;
+  _get_dag_cost_slender<<<blocks, threads>>>(
+    dvc_ende_cost,
+    dvc_ende_child,
+    dvc_ende_child_ptr,
+    _dvc_ende_picked_by_ende,
+    _dvc_best_ende_of_ecls,
+    _dvc_q,
+    _dvc_q_sz,
+    _dvc_q_sp,
+    _dvc_q_num,
+    _dvc_picked_endes,
+    dvc_dag_ret);
+  cudaCheckErrors("_get_dag_cost_slender failed");
+
+  cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
+  cudaCheckErrors("DAG cost memcpy failed");
+#endif
 
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
@@ -2025,17 +2105,17 @@ void G_EXT::_gpu_reconstruct_graph() {
   }
   // printf("GPU itr = %u\n", itr);
 
-  _gpu_clear_redundant_endes();
+  // _gpu_clear_redundant_endes();
 
   std::vector<uint32_t> in_subgraph_gpu; 
   in_subgraph_gpu.resize(_num_ende, 0);
-  cudaMemcpy(in_subgraph_gpu.data(), _dvc_in_subgraph, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  cudaMemcpy(in_subgraph_gpu.data(), _dvc_picked_endes, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
 
   // Re-constructing data for second times ILP solver
   _ecls_its_ende_newG_GPU.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
   for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
     for (uint32_t ende : _ecls_its_ende[ecls]) {
-      if (!_in_subgraph[ende]) continue;
+      if (!in_subgraph[ende]) continue;
       _ecls_its_ende_newG_GPU[ecls].push_back(ende);
     }
   }
@@ -2129,7 +2209,8 @@ __global__ void _init_q1(const uint32_t num_ende,
   const uint32_t* dvc_indegree,
   const uint32_t* dvc_picked_endes,
   uint32_t* q,
-  uint32_t* q_sz)
+  uint32_t* q_sz,
+  uint32_t* q_num)
 {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_ende) return;
@@ -2138,6 +2219,7 @@ __global__ void _init_q1(const uint32_t num_ende,
     uint32_t pos = atomicAdd(q_sz, 1);
     q[pos] = t_idx; // Note: t_idx is ende
   }
+  *q_num = *q_sz;
 }
 
 __global__ void _gpu_BFS_kl(
@@ -2168,6 +2250,47 @@ __global__ void _gpu_BFS_kl(
   }
 }
 
+
+__global__ void _gpu_BFS_kl_slender(
+  const uint32_t* dvc_global_adj_1D_ptr,
+  const uint32_t* dvc_global_adj_1D,
+  uint32_t* q_sp,
+  uint32_t* q,
+  uint32_t* q_sz,
+  uint32_t* q_num,
+  int* level,
+  int* cur_level,
+  const uint32_t* dvc_picked_adj,
+  uint32_t* deg)
+{
+  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  
+  while (*q_num > 0) {
+    if (t_idx < *q_num) {
+      uint32_t u = q[*q_sp + t_idx];
+      level[u] = *cur_level;
+      for (uint32_t k = dvc_global_adj_1D_ptr[u]; k < dvc_global_adj_1D_ptr[u+1]; k++) {
+        if (!dvc_picked_adj[k]) continue;
+        const uint32_t v = dvc_global_adj_1D[k];
+        uint32_t old_deg = atomicSub(&deg[v], 1);
+        if (old_deg == 1) {
+          uint32_t pos = atomicAdd(q_sz, 1);
+          q[pos] = v;
+        }        
+      }
+    }
+    __syncthreads();
+    if (t_idx == 0) {
+      *cur_level++;
+      *q_sp += *q_num;
+      *q_num = *q_sz - *q_sp;
+    }
+    __syncthreads();
+  }
+}
+
+
+
 __global__ void _reverse_level(  
   const uint32_t num, 
   const int* cur_level,
@@ -2197,7 +2320,7 @@ void G_EXT::_gpu_BFS(const bool is_td,
   _init_q1<<<blocks,threads>>>(_num_ende, 
     deg,
     picked_endes,
-    _dvc_q, _dvc_q_sz);
+    _dvc_q, _dvc_q_sz, _dvc_q_num);
   cudaCheckErrors("_init_q1 failed");
   
   // BFS: top-down levelization 
@@ -2207,6 +2330,7 @@ void G_EXT::_gpu_BFS(const bool is_td,
   uint32_t num = q_sz - q_sp;  
   int cur_level = 0;
 
+#ifndef SLENDER_VERSION_EGRAPH
   while (num > 0) {
     // printf("num = %u\n", num); // used for debug
     cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice); // start point
@@ -2231,6 +2355,22 @@ void G_EXT::_gpu_BFS(const bool is_td,
     cur_level++; 
     cudaMemcpy(_dvc_max_level, &cur_level, sizeof(int), cudaMemcpyHostToDevice);
   }
+#else
+  blocks = 1;
+  _gpu_BFS_kl_slender<<<blocks, threads>>>(
+    global_adj_1D_ptr,
+    global_adj_1D,
+    _dvc_q_sp, 
+    _dvc_q,
+    _dvc_q_sz,
+    _dvc_q_num,
+    level,
+    _dvc_max_level,
+    picked_adj,
+    deg);
+  cudaCheckErrors("_gpu_BFS_kl_slender failed");
+#endif
+
 
   if (!is_td) {
     blocks = (_num_ende + threads - 1) / threads;
@@ -2907,18 +3047,18 @@ __global__ void _gpu_insertion_kl_block(
   bool local_overlap = false;
 #if FAST_BITMAP_CHECK
   // --- Shared bitmap trick (lower bits as hash) ---
-  __shared__ uint8_t chd_flags[2048];
-  for (int i = tid; i < 2048; i += blockDim.x)
+  __shared__ uint8_t chd_flags[256];
+  for (int i = tid; i < 256; i += blockDim.x)
     chd_flags[i] = 0;
   __syncthreads();
 
   for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x)
     if (dvc_tmp_picked_adj[k])
-      chd_flags[dvc_global_adj_1D[k] & 2047] = 1;
+      chd_flags[dvc_global_adj_1D[k] & 255] = 1;
   __syncthreads();
 
   for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x)
-    if (dvc_tmp_picked_inv_adj[k] && chd_flags[dvc_global_inv_adj_1D[k] & 2047])
+    if (dvc_tmp_picked_inv_adj[k] && chd_flags[dvc_global_inv_adj_1D[k] & 255])
       local_overlap = true;
 
 #else
@@ -3002,7 +3142,7 @@ bool G_EXT::_gpu_insertion(const bool is_td)
   cudaMemset(_dvc_tmp_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
   cudaMemset(_dvc_tmp_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
 
-  if (_graph_density == 0) {
+  if (DAG_KERNEL == 0) {
     // 一個 thread 負責一個 enode
     int blocks = (_num_ende + threads - 1) / threads;
     _gpu_insertion_kl<<<blocks,threads>>>(is_td,
@@ -3019,7 +3159,7 @@ bool G_EXT::_gpu_insertion(const bool is_td)
       _dvc_level,
       _dvc_update);
     cudaCheckErrors("_gpu_insertion_kl failed");
-  } else if (_graph_density == 1) {
+  } else if (DAG_KERNEL == 1) {
     // 一個 warp 負責一個 enode
     int blocks = ((_num_ende*32) + threads - 1) / threads;
     _gpu_insertion_kl_warp<<<blocks,threads>>>(is_td,
@@ -3036,7 +3176,7 @@ bool G_EXT::_gpu_insertion(const bool is_td)
       _dvc_level,
       _dvc_update);
     cudaCheckErrors("_gpu_insertion_kl_warp failed");  
-  } else { // _graph_density == 2
+  } else { // DAG_KERNEL == 2
     // 一個 block 負責一個 enode
     _gpu_insertion_kl_block<<<_num_ende, NUM_THREAD_DAG_CONSTR>>>(
       is_td,
@@ -3805,7 +3945,7 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
   }
 #endif
 
-void G_EXT::_calculate_deg(const uint32_t tmp_num_ecls, 
+void G_EXT::_calculate_deg_ende(const uint32_t tmp_num_ecls, 
   const uint32_t tmp_num_ende, 
   const std::vector<uint32_t>& tmp_ende_ecls,
   const std::vector<uint32_t>& tmp_ende_child,
@@ -3841,7 +3981,7 @@ void G_EXT::_calculate_deg(const uint32_t tmp_num_ecls,
     acc_deg += tt[i].size();
   }
   acc_deg /= tmp_num_ende;
-  printf("_calculate_deg(): In this benchmark, avg enode deg = %.1lf\n", acc_deg);
+  printf("_calculate_deg_ende(): In this benchmark, avg enode deg = %.1lf\n", acc_deg);
   
   // 檢查有沒有人指到 root enodes
   for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
@@ -3863,6 +4003,24 @@ void G_EXT::_calculate_deg(const uint32_t tmp_num_ecls,
   }
 }
 
+void G_EXT::_calculate_deg_ecls(const uint32_t tmp_num_ecls, 
+  const uint32_t tmp_num_ende, 
+  const std::vector<uint32_t>& tmp_ende_ecls,
+  const std::vector<uint32_t>& tmp_ende_child,
+  const std::vector<uint32_t>& tmp_ende_child_ptr,
+  const std::vector<uint32_t>& root_eclass_id) 
+{
+  double acc_deg = 0;
+  for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
+    uint32_t start = tmp_ende_child_ptr[ende]; 
+    uint32_t end = tmp_ende_child_ptr[ende+1];
+    acc_deg += (end - start); 
+  }
+
+  acc_deg /= tmp_num_ende;
+  printf("_calculate_deg_ecls(): In this benchmark, avg enode deg = %.8lf\n", acc_deg);
+}
+
 #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
   void G_EXT::_increase_egraph_deg(const uint32_t* num_ecls,
     const uint32_t* num_ende,
@@ -3875,7 +4033,7 @@ void G_EXT::_calculate_deg(const uint32_t tmp_num_ecls,
     const std::vector<uint32_t>& root_eclass_id)
   {
     printf("Before extension degree\n");
-    _calculate_deg(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
+    _calculate_deg_ende(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
 
     std::mt19937 gen(47);  // 固定亂數種子
 
@@ -3938,8 +4096,8 @@ void G_EXT::_calculate_deg(const uint32_t tmp_num_ecls,
       ende_child_ptr.push_back(tmp_acc);
     }
 
-    printf("After extension degree\n");
-    _calculate_deg(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
+    printf("After extension degree: ");
+    _calculate_deg_ende(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
   }
 
 #endif 

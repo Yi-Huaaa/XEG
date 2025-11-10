@@ -39,7 +39,9 @@ class G_EXT {
 
 public:
   // Read input file
-  void read(const std::string input_path) {
+  void read(const std::string input_path,
+    const uint32_t extend_mul_for_degree_exp = 1) {
+    EXTEND_MUL = extend_mul_for_degree_exp;
     // Tempory memory 
     _read_input(input_path); 
   }
@@ -50,8 +52,14 @@ public:
   }
   
   void run(const bool ILP_solver = false, 
-          const double ILP_time_limit = 360) 
+          const double ILP_time_limit = 360,
+          const uint32_t dag_kernel = 2,
+          const uint32_t num_thread_dag_constrution = 64) 
   {
+    // READ IN argv/argc
+    DAG_KERNEL = dag_kernel;
+    NUM_THREAD_DAG_CONSTR = num_thread_dag_constrution;
+
     printf("Hello bibi\n");
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
@@ -196,12 +204,18 @@ private:
     std::vector<uint32_t>& ende_child,
     std::vector<uint32_t>& ende_child_ptr,
     const std::vector<uint32_t>& root_eclass_id);
-  void _calculate_deg(const uint32_t tmp_num_ecls, 
+  void _calculate_deg_ende(const uint32_t tmp_num_ecls, 
     const uint32_t tmp_num_ende, 
     const std::vector<uint32_t>& tmp_ende_ecls,
     const std::vector<uint32_t>& tmp_ende_child,
     const std::vector<uint32_t>& tmp_ende_child_ptr,
     const std::vector<uint32_t>& root_eclass_id);
+  void _calculate_deg_ecls(const uint32_t tmp_num_ecls, 
+    const uint32_t tmp_num_ende, 
+    const std::vector<uint32_t>& tmp_ende_ecls,
+    const std::vector<uint32_t>& tmp_ende_child,
+    const std::vector<uint32_t>& tmp_ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id);    
   
   /* Run */
   /* Tree Level Relaxation */
@@ -345,6 +359,8 @@ private:
   uint32_t* _dvc_q; // queue
   uint32_t* _dvc_q_sz; // size of queue
   uint32_t* _dvc_q_sp; // start point of queue
+  uint32_t* _dvc_q_num; // number elements in q
+  
 
   uint32_t* _dvc_global_adj_1D;
   uint32_t* _dvc_global_adj_1D_ptr;
@@ -364,7 +380,13 @@ private:
   uint32_t* _dvc_leaves;
   uint32_t* _dvc_from_roots; // for final construction
   uint32_t* _dvc_from_leaves; // for final construction
-  uint32_t _graph_density = 2; // [0,2] 
+  
+  
+  // READ IN argv/argc
+  uint32_t DAG_KERNEL = 2; // Default setting
+  uint32_t NUM_THREAD_DAG_CONSTR = 64; // Default setting
+  uint32_t EXTEND_MUL = 1; // Default setting
+
 
   // Print function
   void _print_input() const;
