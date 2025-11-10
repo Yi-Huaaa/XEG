@@ -2105,8 +2105,6 @@ void G_EXT::_gpu_reconstruct_graph() {
   }
   // printf("GPU itr = %u\n", itr);
 
-  // _gpu_clear_redundant_endes();
-
   std::vector<uint32_t> in_subgraph_gpu; 
   in_subgraph_gpu.resize(_num_ende, 0);
   cudaMemcpy(in_subgraph_gpu.data(), _dvc_picked_endes, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
@@ -2115,7 +2113,7 @@ void G_EXT::_gpu_reconstruct_graph() {
   _ecls_its_ende_newG_GPU.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
   for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
     for (uint32_t ende : _ecls_its_ende[ecls]) {
-      if (!in_subgraph[ende]) continue;
+      if (!_in_subgraph[ende]) continue;
       _ecls_its_ende_newG_GPU[ecls].push_back(ende);
     }
   }
