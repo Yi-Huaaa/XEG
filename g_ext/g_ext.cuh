@@ -34,6 +34,7 @@
 #include <cublas_v2.h>
 
 // #define TEST_TREE_ILP
+#define TEST_DAG_ILP
 
 class G_EXT {
 
@@ -54,11 +55,13 @@ public:
   void run(const bool ILP_solver = false, 
           const double ILP_time_limit = 360,
           const uint32_t dag_kernel = 2,
-          const uint32_t num_thread_dag_constrution = 64) 
+          const uint32_t num_thread_dag_constrution = 64,
+          const uint32_t num_cpu_threads = 1) 
   {
     // READ IN argv/argc
     DAG_KERNEL = dag_kernel;
     NUM_THREAD_DAG_CONSTR = num_thread_dag_constrution;
+    NUM_CPU_THREADS = num_cpu_threads;
 
     printf("Hello bibi\n");
     // CPU version
@@ -73,31 +76,89 @@ public:
                                                               picked_endes);
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    std::cout << "CPU threads = " <<  NUM_CPU_THREADS << ", CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
-    #ifdef TEST_TREE_ILP
-      if (ILP_solver) {
-        _cpsat_solver(ILP_time_limit, 
-                      _ecls_its_ende, 
-                      _ende_child, 
-                      _ende_child_ptr, 
-                      _root_eclass_id, 
-                      _ende_cost,
-                      best_ende_of_ecls, 
-                      picked_endes);
-      }
-    #else 
-      std::vector<bool> picked_endes_tmp = picked_endes;
-      start = std::chrono::steady_clock::now();
-        _cpu_reconstruct_graph(picked_endes); 
-      end = std::chrono::steady_clock::now();
-      duration = end - start;
-      std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    // #ifdef TEST_TREE_ILP
+    //   if (ILP_solver) {
+    //     _cpsat_solver(ILP_time_limit, 
+    //                   _ecls_its_ende, 
+    //                   _ende_child, 
+    //                   _ende_child_ptr, 
+    //                   _root_eclass_id, 
+    //                   _ende_cost,
+    //                   best_ende_of_ecls, 
+    //                   picked_endes);
+    //   }   
+    // #else 
+// std::vector<bool> picked_endes_tmp = picked_endes;
+// start = std::chrono::steady_clock::now();
+//   _cpu_reconstruct_graph(picked_endes); 
+// end = std::chrono::steady_clock::now();
+// duration = end - start;
+// std::cout << "CPU threads = " <<  NUM_CPU_THREADS << ", CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+// if (ILP_solver) {
+//   _cpsat_solver(ILP_time_limit, 
+//                 _ecls_its_ende_newG, 
+//                 _ende_child, 
+//                 _ende_child_ptr, 
+//                 _root_eclass_id, 
+//                 _ende_cost,
+//                 best_ende_of_ecls, 
+//                 picked_endes_tmp);
+// }
+    // #endif
+
+    // double VAR = 0., count = 0.;
+    // for (uint32_t ecls = 0; ecls < _ecls_its_ende_newG.size(); ecls++) {
+    //   uint32_t max = 0, min = UINT32_MAX; 
+    //   if (_ecls_its_ende_newG[ecls].empty()) continue;
+    //   for (uint32_t ende : _ecls_its_ende_newG[ecls]) {
+    //     uint32_t c = cost_of_ende[ende];
+    //     max = (max<c) ? (c) : (max);
+    //     min = (min>c) ? (c) : (min);
+    //   }
+    //   uint32_t var = max-min;
+    //   VAR += var;
+    //   count++;
+    //   // printf("ecls ID = %u, max = %u, min = %u, var = %u\n", ecls, max, min, var);
+    // }
+    // printf("VAR = %.2lf, VAR/count = %.2lf\n", VAR, VAR/count); 
+
+    // // GPU version
+    // auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
+    // printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
+    //           best_tree_cost_gpu, dag_cost_gpu);
+    // _copy_pickedende_back(picked_endes);
+    // _copy_best_ende_of_ecls_back(best_ende_of_ecls);
+    // cudaDeviceSynchronize();
+
+    // #ifdef TEST_TREE_ILP
+    //   if (ILP_solver) {
+    //     _cpsat_solver(ILP_time_limit, 
+    //                   _ecls_its_ende, 
+    //                   _ende_child, 
+    //                   _ende_child_ptr, 
+    //                   _root_eclass_id, 
+    //                   _ende_cost,
+    //                   best_ende_of_ecls, 
+    //                   picked_endes);
+    //   }   
+    // #else
+      // float gpu_reconst_Time = 0.;
+      // cudaEvent_t startGPU, stopGPU;
+      // cudaEventCreate(&startGPU);
+      // cudaEventCreate(&stopGPU);    
+      // cudaEventRecord(startGPU);
+      //     _gpu_reconstruct_graph(); 
+      // cudaEventRecord(stopGPU);
+      // cudaEventSynchronize(stopGPU);
+      // cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
+      // printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
       // if (ILP_solver) {
       //   _cpsat_solver(ILP_time_limit, 
-      //                 _ecls_its_ende_newG, 
+      //                 _ecls_its_ende_newG_GPU, 
       //                 _ende_child, 
       //                 _ende_child_ptr, 
       //                 _root_eclass_id, 
@@ -105,49 +166,39 @@ public:
       //                 best_ende_of_ecls, 
       //                 picked_endes_tmp);
       // }
-    #endif
+    // #endif
 
-    // GPU version
-    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
-    printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
-              best_tree_cost_gpu, dag_cost_gpu);
-    _copy_pickedende_back(picked_endes);
-    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
-    cudaDeviceSynchronize();
+    // // // // TEST_DAG_ILP
+    // // std::vector<bool> picked_endes_tmp;
+    // picked_endes_tmp.resize(_num_ende, false); // re-init
+    // best_ende_of_ecls.resize(_num_ecls, UINT32_MAX);
 
-    #ifdef TEST_TREE_ILP
-      if (ILP_solver) {
-        _cpsat_solver(ILP_time_limit, 
-                      _ecls_its_ende, 
-                      _ende_child, 
-                      _ende_child_ptr, 
-                      _root_eclass_id, 
-                      _ende_cost,
-                      best_ende_of_ecls, 
-                      picked_endes);
-      }
-    #else
-      float gpu_reconst_Time = 0.;
-      cudaEvent_t startGPU, stopGPU;
-      cudaEventCreate(&startGPU);
-      cudaEventCreate(&stopGPU);    
-      cudaEventRecord(startGPU);
-          _gpu_reconstruct_graph(); 
-      cudaEventRecord(stopGPU);
-      cudaEventSynchronize(stopGPU);
-      cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
-      printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
-      if (ILP_solver) {
-        _cpsat_solver(ILP_time_limit, 
-                      _ecls_its_ende_newG_GPU, 
-                      _ende_child, 
-                      _ende_child_ptr, 
-                      _root_eclass_id, 
-                      _ende_cost,
-                      best_ende_of_ecls, 
-                      picked_endes_tmp);
-      }
-    #endif
+    // static std::mt19937 rng(777);
+    // for (uint32_t ecls = 0; ecls < _ecls_its_ende_newG.size(); ecls++) {
+    //   uint32_t tmpp = 0;
+    //   std::vector<uint32_t>& tmp = _ecls_its_ende_newG[ecls];
+    //   if (!tmp.empty()) {
+    //     std::uniform_int_distribution<size_t> dist(0, tmp.size() - 1);
+    //     tmpp = tmp[dist(rng)];  // 隨機挑一個元素
+    //     best_ende_of_ecls[ecls] = tmpp;
+    //     // printf("ecls = %u, tmpp = %u\n", ecls, tmpp);
+    //   } 
+    //   picked_endes_tmp[tmpp] = true;
+    // }
+
+    // // 隨便給出一個 initial solution
+    // if (ILP_solver) {
+    //   _cpsat_solver(ILP_time_limit, 
+    //                 _ecls_its_ende_newG, 
+    //                 _ende_child, 
+    //                 _ende_child_ptr, 
+    //                 _root_eclass_id, 
+    //                 _ende_cost,
+    //                 best_ende_of_ecls, 
+    //                 picked_endes_tmp);
+    // } 
+
+
   }
 
   void pure_ILP(const double ILP_time_limit = 3600) 
@@ -386,6 +437,7 @@ private:
   uint32_t DAG_KERNEL = 2; // Default setting
   uint32_t NUM_THREAD_DAG_CONSTR = 64; // Default setting
   uint32_t EXTEND_MUL = 1; // Default setting
+  uint32_t NUM_CPU_THREADS = 1; // Default setting
 
 
   // Print function
