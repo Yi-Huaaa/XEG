@@ -490,22 +490,14 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
                                                 std::vector<uint32_t>& best_ende_of_ecls, 
                                                 std::vector<bool>& picked_endes)
 {
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_cpu_best_tree()\n"); 
-#endif
-  // CPU relaxation 
   bool h_update = true;
   cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
   cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
   best_ende_of_ecls.resize(_num_ecls, UINT32_MAX);
-  // omp_set_num_threads(8); // 8 threads 比較快
 
   while (h_update) {
     h_update = false;
-
-    // #pragma omp parallel
     {
-      // #pragma omp for
       for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
         double acc_cost = tmp_ende_cost[t_idx];
         uint32_t start = _ende_child_ptr[t_idx];
@@ -513,13 +505,10 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
         for (uint32_t jj = start; jj < end; jj++) {
           acc_cost += cost_of_ecls[_ende_child[jj]];
         }
-
         cost_of_ende[t_idx] = (acc_cost < cost_of_ende[t_idx]) ? (acc_cost) : (cost_of_ende[t_idx]);
-
         const uint32_t which_ecls = _ende_ecls[t_idx];
 
-        // #pragma omp critical
-        {
+        { // #pragma omp critical
           if (acc_cost < cost_of_ecls[which_ecls]) {
             cost_of_ecls[which_ecls] = acc_cost;
             best_ende_of_ecls[which_ecls] = t_idx;
@@ -3380,139 +3369,6 @@ void G_EXT::_cpsat_solver(
     std::cout << "No feasible solution found.\n";
   }
 }
-
-void G_EXT::_cpsat_solver_pure(
-  const double time_limit,
-  const std::vector<std::vector<uint32_t>>& ecls_its_ende, 
-  const std::vector<uint32_t>& ende_child,
-  const std::vector<uint32_t>& ende_child_ptr,
-  const std::vector<uint32_t>& root_eclass_id,
-  const std::vector<float>& ende_cost
-) {
-  printf("Inside G_EXT::_cpsat_solver_pure() Time_limit = %.2lf (sec)\n", time_limit);
-
-  CpModelBuilder cp_model;
-  std::unordered_map<uint32_t, BoolVar> active; // eclass activated or not
-  std::unordered_map<uint32_t, std::unordered_map<uint32_t, BoolVar>> nodes_vars; // [eclass][enode] = BoolVar
-
-  // ====== Step 1. Build variables ======
-  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
-    const auto& enodes = ecls_its_ende[cid];
-    if (enodes.empty()) continue;
-
-    active[cid] = cp_model.NewBoolVar();
-    for (uint32_t ende_idx : enodes) {
-      nodes_vars[cid][ende_idx] = cp_model.NewBoolVar();
-    }
-
-    LinearExpr sum_nodes;
-    for (const auto &v : nodes_vars[cid]) sum_nodes += v.second;
-    cp_model.AddEquality(sum_nodes, active[cid]);
-  }
-
-  // ====== Step 2. Node-child dependency constraints ======
-  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
-    const auto& enodes = ecls_its_ende[cid];
-    if (enodes.empty()) continue;
-
-    const auto& vars = nodes_vars[cid];
-    for (uint32_t ende_idx : enodes) {
-      uint32_t start = ende_child_ptr[ende_idx];
-      uint32_t end   = ende_child_ptr[ende_idx + 1];
-      for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t chd_ecls_idx = ende_child[jj];
-        if (active.find(chd_ecls_idx) == active.end()) {
-          cp_model.AddEquality(vars.at(ende_idx), 0);
-          continue;
-        }
-        cp_model.AddLessOrEqual(vars.at(ende_idx), active[chd_ecls_idx]);
-      }
-    }
-  }
-
-  // ====== Step 3. Objective function ======
-  LinearExpr objective;
-  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
-    const auto& enodes = ecls_its_ende[cid];
-    if (enodes.empty()) continue;
-    const auto& vars = nodes_vars[cid];
-
-    for (uint32_t ende_idx : enodes) {
-      int int_cost = static_cast<int>(ende_cost[ende_idx]);
-      if (int_cost != 0)
-        objective += int_cost * vars.at(ende_idx);
-    }
-  }
-  cp_model.Minimize(objective);
-
-  // ====== Step 4. Force root eclass active ======
-  for (uint32_t rid : root_eclass_id) {
-    if (active.find(rid) != active.end()) {
-      cp_model.AddEquality(active[rid], 1);
-    }
-  }
-
-  // ====== Step 5. Anti-cycle layer constraint ======
-  const int num_classes = ecls_its_ende.size();
-  std::unordered_map<uint32_t, IntVar> level;
-  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
-    level[cid] = cp_model.NewIntVar(Domain(0, num_classes));
-  }
-
-  for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
-    const auto& enodes = ecls_its_ende[cid];
-    if (enodes.empty()) continue;
-    const auto& vars = nodes_vars[cid];
-    for (uint32_t ende_idx : enodes) {
-      uint32_t start = ende_child_ptr[ende_idx];
-      uint32_t end   = ende_child_ptr[ende_idx + 1];
-      for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t child_cid = ende_child[jj];
-        cp_model.AddGreaterOrEqual(LinearExpr(level[child_cid]) - level[cid], 1)
-                .OnlyEnforceIf(vars.at(ende_idx));
-      }
-    }
-  }
-
-  // ====== Step 6. Build solver model ======
-  Model model;
-  int num_solutions = 0;
-  auto start = std::chrono::high_resolution_clock::now();
-
-  // printf incumbent solutions
-  model.Add(NewFeasibleSolutionObserver([&](const CpSolverResponse& r) {
-    auto current_time = std::chrono::high_resolution_clock::now();
-    double elapsed_seconds =
-        std::chrono::duration_cast<std::chrono::duration<double>>(current_time - start).count();
-    std::cout << "Incumbent Solution: "
-              << elapsed_seconds << "s; objective = "
-              << r.objective_value() << std::endl;
-    num_solutions++;
-  }));
-
-  SatParameters parameters;
-  parameters.set_max_time_in_seconds(time_limit);
-  parameters.set_random_seed(42);
-  parameters.set_randomize_search(true);
-  model.Add(NewSatParameters(parameters));
-
-  // ====== Step 7. Solve ======
-  const CpSolverResponse response = SolveCpModel(cp_model.Build(), &model);
-
-  // ====== Step 8. Print summary ======
-  if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) {
-    std::cout << "=========================================\n";
-    std::cout << "Solver finished.\n";
-    std::cout << "Objective value = " << response.objective_value() << "\n";
-    std::cout << "Runtime = " << response.wall_time() << " (s)\n";
-    std::cout << "Feasible solutions found = " << num_solutions << "\n";
-    std::cout << "=========================================\n";
-  } else {
-    std::cout << "No feasible solution found.\n";
-  }
-}
-
-
 
 // =========================== Print functions =========================== // 
 void G_EXT::_print_adj(const std::vector<std::unordered_set<uint32_t>>& adj) const 

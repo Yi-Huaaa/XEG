@@ -37,9 +37,7 @@ class G_EXT {
 
 public:
   // Read input file
-  void read(const std::string input_path,
-    const uint32_t extend_mul_for_degree_exp = 1) {
-    EXTEND_MUL = extend_mul_for_degree_exp;
+  void read(const std::string input_path) {
     // Tempory memory 
     _read_input(input_path); 
   }
@@ -119,27 +117,6 @@ public:
                     best_ende_of_ecls, 
                     picked_endes_tmp);
     }
-  }
-
-  void pure_ILP(const double ILP_time_limit = 3600) 
-  {
-    printf("Hello bibi pure_ILP, ILP_time_limit = %.2lf\n", ILP_time_limit);
-    // CPU version
-    std::vector<double> cost_of_ecls; // Final cost of each eclass
-    std::vector<double> cost_of_ende; // Final cost of each enode
-    std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
-    std::vector<bool> picked_endes;
-      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, 
-                                                              cost_of_ende, best_ende_of_ecls, 
-                                                              picked_endes);
-    _cpsat_solver(ILP_time_limit, 
-                  _ecls_its_ende, 
-                  _ende_child, 
-                  _ende_child_ptr, 
-                  _root_eclass_id, 
-                  _ende_cost,
-                  best_ende_of_ecls, 
-                  picked_endes);
   }
 
 private:
@@ -251,13 +228,6 @@ private:
     const std::vector<float>& ende_cost,
     const std::vector<uint32_t>& best_ende_of_ecls,
     const std::vector<bool>& picked_endes);
-  void _cpsat_solver_pure(
-    const double time_limit,
-    const std::vector<std::vector<uint32_t>>& ecls_its_ende, 
-    const std::vector<uint32_t>& ende_child,
-    const std::vector<uint32_t>& ende_child_ptr,
-    const std::vector<uint32_t>& root_eclass_id,
-    const std::vector<float>& ende_cost);
 
   /* Private members */
   // Read in from .json, and prune the dead eclasses/enodes
@@ -310,7 +280,6 @@ private:
   uint32_t* _dvc_q_sz; // size of queue
   uint32_t* _dvc_q_sp; // start point of queue
   uint32_t* _dvc_q_num; // number elements in q
-  
 
   uint32_t* _dvc_global_adj_1D;
   uint32_t* _dvc_global_adj_1D_ptr;
@@ -331,11 +300,9 @@ private:
   uint32_t* _dvc_from_roots; // for final construction
   uint32_t* _dvc_from_leaves; // for final construction
   
-  
   // READ IN argv/argc
   uint32_t DAG_KERNEL = 2; // Default setting
   uint32_t NUM_THREAD_DAG_CONSTR = 64; // Default setting
-  uint32_t EXTEND_MUL = 1; // Default setting
 
 
   // Print function
