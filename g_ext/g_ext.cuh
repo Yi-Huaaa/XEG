@@ -68,8 +68,8 @@ public:
                                                               picked_endes);
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU Relaxation Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
+    std::cout << "CPU tree construction runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    printf("CPU version cost: under tree code model = %.2lf, under DAG cost model = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
     std::vector<bool> picked_endes_tmp = picked_endes;
@@ -77,7 +77,7 @@ public:
       _cpu_reconstruct_graph(picked_endes); 
     end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    std::cout << "CPU DAG construction runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     if (ILP_solver) {
       _cpsat_solver(ILP_time_limit, 
                     _ecls_its_ende_newG, 
@@ -91,7 +91,7 @@ public:
 
     // GPU version
     auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
-    printf("GPU RESULTS: best_tree_cost_gpu = %.2lf, dag_cost_gpu = %.2lf\n", 
+    printf("GPU version cost: under tree code model = %.2lf, under DAG cost model = %.2lf\n", 
               best_tree_cost_gpu, dag_cost_gpu);
     _copy_pickedende_back(picked_endes);
     _copy_best_ende_of_ecls_back(best_ende_of_ecls);
@@ -102,11 +102,11 @@ public:
     cudaEventCreate(&startGPU);
     cudaEventCreate(&stopGPU);    
     cudaEventRecord(startGPU);
-        _gpu_reconstruct_graph(); 
+        _DAG_construction(); 
     cudaEventRecord(stopGPU);
     cudaEventSynchronize(stopGPU);
     cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
-    printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
+    printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);
     if (ILP_solver) {
       _cpsat_solver(ILP_time_limit, 
                     _ecls_its_ende_newG_GPU, 
@@ -193,7 +193,7 @@ private:
       const std::vector<uint32_t>& leaves,
       const std::vector<bool>& picked_endes);
   // GPU version
-  void _gpu_reconstruct_graph();
+  void _DAG_construction();
     void _gpu_update_deg_init_level(const bool need_to_update);
     void _gpu_BFS(const bool is_td, 
       uint32_t* deg, 
@@ -303,7 +303,6 @@ private:
   // READ IN argv/argc
   uint32_t DAG_KERNEL = 2; // Default setting
   uint32_t NUM_THREAD_DAG_CONSTR = 64; // Default setting
-
 
   // Print function
   void _print_input() const;

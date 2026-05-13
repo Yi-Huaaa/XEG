@@ -197,7 +197,7 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   for (uint32_t ende_idx = 0; ende_idx < tmp_num_ende; ++ende_idx) {
     uint32_t start = tmp_ende_child_ptr[ende_idx];
     uint32_t end   = tmp_ende_child_ptr[ende_idx+1];
-    uint32_t ecls = tmp_ende_ecls[ende_idx];
+    // uint32_t ecls = tmp_ende_ecls[ende_idx];
     for (uint32_t j = start; j < end; j++) {
       alive_ecls[tmp_ende_child[j]] = true;
     }
@@ -1655,9 +1655,6 @@ __global__ void _gpu_warm_up(const uint32_t num_ende, int* dvc_level)
 
 std::pair<double, double> G_EXT::_gpu_best_tree() 
 {
-#ifdef PRINT_LOG
-  printf("Inside G_EXT::_gpu_best_tree()\n"); 
-#endif
   int blocks = (_num_ende + threads - 1) / threads;
 
   // Local memory 
@@ -1750,7 +1747,6 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaMemset(_dvc_tmp_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
   cudaMemset(_dvc_tmp_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
   _gpu_warm_up<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: place this GPU kernel here as the warm-up for GPU; w/o this, the kernel runtime below will be extremely long. Need to remrmber!
-  // cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int));
   cudaMemcpy(_dvc_all_root_ende_1D, _all_root_ende_1D.data(), _all_root_ende_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemset(_dvc_max_level, 0, 1*sizeof(int));
   cudaMemset(_dvc_in_subgraph, 0, _num_ende*sizeof(uint32_t)); // false
@@ -1840,14 +1836,14 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-  printf("GPU Relaxation Runtime: %.2f (ms)\n", gpuTime);
+  printf("GPU tree construction runtime: %.2f (ms)\n", gpuTime);
 
   return std::make_pair(tree_ret, dag_ret);
 }
 
-void G_EXT::_gpu_reconstruct_graph() {
+void G_EXT::_DAG_construction() {
 #ifdef PRINT_LOG
-  printf("\nInside _gpu_reconstruct_graph()\n");
+  printf("\nInside _DAG_construction()\n");
 #endif
 
   int blocks = (_num_ende + threads - 1) / threads;
@@ -2018,45 +2014,6 @@ __global__ void _gpu_BFS_kl(
   }
 }
 
-
-__global__ void _gpu_BFS_kl_slender(
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  uint32_t* q_sp,
-  uint32_t* q,
-  uint32_t* q_sz,
-  uint32_t* q_num,
-  int* level,
-  int* cur_level,
-  const uint32_t* dvc_picked_adj,
-  uint32_t* deg)
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  
-  while (*q_num > 0) {
-    if (t_idx < *q_num) {
-      uint32_t u = q[*q_sp + t_idx];
-      level[u] = *cur_level;
-      for (uint32_t k = dvc_global_adj_1D_ptr[u]; k < dvc_global_adj_1D_ptr[u+1]; k++) {
-        if (!dvc_picked_adj[k]) continue;
-        const uint32_t v = dvc_global_adj_1D[k];
-        uint32_t old_deg = atomicSub(&deg[v], 1);
-        if (old_deg == 1) {
-          uint32_t pos = atomicAdd(q_sz, 1);
-          q[pos] = v;
-        }        
-      }
-    }
-    __syncthreads();
-    if (t_idx == 0) {
-      *cur_level++;
-      *q_sp += *q_num;
-      *q_num = *q_sz - *q_sp;
-    }
-    __syncthreads();
-  }
-}
-
 __global__ void _reverse_level(  
   const uint32_t num, 
   const int* cur_level,
@@ -2097,7 +2054,6 @@ void G_EXT::_gpu_BFS(const bool is_td,
   int cur_level = 0;
 
   while (num > 0) {
-    // printf("num = %u\n", num); // used for debug
     cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice); // start point
     blocks = (num + threads - 1) / threads;
 
@@ -2279,9 +2235,7 @@ __global__ void _gpu_insertion_kl(
     bool has_par = false, has_chd = false;
     int max_par_lvl = -1, min_chd_lvl = INT_MAX;
 
-    // --------------------------
     // find max parent level
-    // --------------------------
     uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
     uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
     for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
@@ -2295,9 +2249,7 @@ __global__ void _gpu_insertion_kl(
     max_par_lvl = warpReduceMax(max_par_lvl);
     has_par = __any_sync(0xffffffff, has_par);
 
-    // --------------------------
     // find min child level + build bitmap
-    // --------------------------
     uint64_t child_bitmap = 0ull;
     uint32_t c_start = dvc_global_adj_1D_ptr[ende];
     uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
@@ -2319,9 +2271,7 @@ __global__ void _gpu_insertion_kl(
     has_chd = __any_sync(0xffffffff, has_chd);
     child_bitmap = __reduce_or_sync(0xffffffff, child_bitmap);
 
-    // --------------------------
     // cycle check with bitmap
-    // --------------------------
     bool cond = is_td ? has_par : has_chd;
     int given_lvl = is_td ? (max_par_lvl + 1) : (min_chd_lvl - 1);
 
@@ -2342,9 +2292,7 @@ __global__ void _gpu_insertion_kl(
 
     bool warp_valid = __any_sync(0xffffffff, valid);
 
-    // --------------------------
     // updates
-    // --------------------------
     if (warp_valid) {
       if (lane_id == 0) {
         dvc_picked_endes[ende] = true;
@@ -2386,7 +2334,7 @@ __global__ void _gpu_insertion_kl(
     }
   }
 
-#else // 比較慢的方法，但可以攬入比較多的 #enodes
+#else // slower original version
   __inline__ __device__ int warpReduceMax(int val) {
     return __reduce_max_sync(0xffffffff, val);
   }
@@ -2810,7 +2758,7 @@ __global__ void _gpu_insertion_kl_block(
       local_overlap = true;
 
 #else
-  // --- Default O(deg²) safe check ---
+  // --- Default O(deg^2) safe check ---
   for (uint32_t k = p_start + tid; k < p_end && !local_overlap; k += blockDim.x) {
     if (!dvc_tmp_picked_inv_adj[k]) continue;
     const uint32_t par_ende = dvc_global_inv_adj_1D[k];
@@ -2832,7 +2780,7 @@ __global__ void _gpu_insertion_kl_block(
               && !has_overlap_b && (given_lvl >= 0);
 
   bool block_valid = __any_sync(0xffffffff, valid);
-  if (!block_valid) return;   // ✅ 早期終止，節省多餘掃描
+  if (!block_valid) return;   // early break
 
   // ============================================================
   // === 6. Apply updates =======================================
