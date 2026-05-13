@@ -9,13 +9,10 @@
 
 // #define SLENDER_VERSION_EGRAPH // ONLY FOR TEST
 
-// grep "After extension degree" tmp.log && grep "GPU Reconstruct Graph Runtime:" tmp.log 
-
 /* DEBUG ONLY */
 // #define PRINT_LOG
 // #define CHECK_CYCLE
 // #define BIBI_CHECK
-// #define COMPUTE_AVG_ENODE_DEG
 
 /* GENERATE NEW DBENCHMARK for SmoothE */
 // #define DUMP_NEW_JSON
@@ -163,40 +160,6 @@ void G_EXT::_read_input(const std::string input_path)
                     tmp_root_eclass_id);
 #endif
 
-#ifdef COMPUTE_AVG_ENODE_DEG
-  // ende -> ende  
-  std::vector<std::unordered_set<uint32_t>> tt;
-  std::vector<std::unordered_set<uint32_t>> eclss_enode; // 該 eclass 下有哪些 enodes
-  eclss_enode.resize(tmp_num_ecls, std::unordered_set<uint32_t>());
-  for (uint32_t i = 0; i < tmp_num_ende; i++) {
-    uint32_t ecls = tmp_ende_ecls[i];
-    MY_CHECK(ecls < tmp_num_ecls, "ecls < tmp_num_ecls");
-    eclss_enode[ecls].insert(i);
-  }
-
-  tt.resize(tmp_num_ende, std::unordered_set<uint32_t>()); 
-  for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
-    uint32_t start = tmp_ende_child_ptr[ende]; 
-    uint32_t end = tmp_ende_child_ptr[ende+1];
-    for (uint32_t jj = start; jj < end; jj++) {
-      uint32_t chd_ecls = tmp_ende_child[jj];
-      for (uint32_t ende2 : eclss_enode[chd_ecls]) {
-        if (ende != ende2) { // remove self-loop
-          tt[ende].insert(ende2); 
-        }
-      }
-    }
-  }
-
-  double acc_deg = 0; // 下面要四捨五入
-  for (uint32_t i = 0; i < tmp_num_ende; i++) {
-    acc_deg += tt[i].size();
-  }
-  acc_deg /= tmp_num_ende;
-  printf("In this benchmark, avg enode deg = %.1lf\n", acc_deg);
-#endif 
-
-  // printf
 #ifdef PRINT_LOG
   _print_read_in_data(true,
                       tmp_num_ecls,
@@ -330,31 +293,31 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
 
 
 
-#ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
-    printf("\n======================================\n");
-    for (uint32_t i = 0; i < _root_eclass_id.size(); i++) {
-      printf("r_eclass %u: ", _root_eclass_id[i]);
-      for (uint32_t r_ende : _ecls_its_ende[_root_eclass_id[i]]) {
-        printf("%u, ", r_ende);
-      }
-      printf("\n");
-    }
-    printf("\n\n");
+// #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
+//     printf("\n======================================\n");
+//     for (uint32_t i = 0; i < _root_eclass_id.size(); i++) {
+//       printf("r_eclass %u: ", _root_eclass_id[i]);
+//       for (uint32_t r_ende : _ecls_its_ende[_root_eclass_id[i]]) {
+//         printf("%u, ", r_ende);
+//       }
+//       printf("\n");
+//     }
+//     printf("\n\n");
 
-    _increase_egraph_deg(&_num_ecls, &_num_ende,
-      _ende_name, _ende_op, _ende_cost,
-      _ende_ecls, _ende_child, _ende_child_ptr,
-      _root_eclass_id);
+//     _increase_egraph_deg(&_num_ecls, &_num_ende,
+//       _ende_name, _ende_op, _ende_cost,
+//       _ende_ecls, _ende_child, _ende_child_ptr,
+//       _root_eclass_id);
 
-    for (uint32_t i = 0; i < _root_eclass_id.size(); i++) {
-      printf("r_eclass %u: ", _root_eclass_id[i]);
-      for (uint32_t r_ende : _ecls_its_ende[_root_eclass_id[i]]) {
-        printf("%u, ", r_ende);
-      }
-      printf("\n");
-    }
-    printf("\n======================================\n");
-#endif 
+//     for (uint32_t i = 0; i < _root_eclass_id.size(); i++) {
+//       printf("r_eclass %u: ", _root_eclass_id[i]);
+//       for (uint32_t r_ende : _ecls_its_ende[_root_eclass_id[i]]) {
+//         printf("%u, ", r_ende);
+//       }
+//       printf("\n");
+//     }
+//     printf("\n======================================\n");
+// #endif 
 
 
   // Compress _ecls_its_ende to 1D 
@@ -557,116 +520,10 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
       _leaves.push_back(ende); 
     }
   }  
-  
-  // // print the deg
-  // printf("Print the avg degree...\n");
-  // _calculate_deg_ende(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
-  // _calculate_deg_ecls(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
-  // printf("\n");
 }
 
 // =========================== TREE/DAG functions =========================== // 
 
-
-// std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_ende_cost,
-//                                                 std::vector<double>& cost_of_ecls,
-//                                                 std::vector<double>& cost_of_ende,
-//                                                 std::vector<uint32_t>& best_ende_of_ecls, 
-//                                                 std::vector<bool>& picked_endes)
-// {
-// #ifdef PRINT_LOG
-//   printf("Inside G_EXT::_cpu_best_tree()\n"); 
-// #endif
-//   // CPU relaxation 
-//   bool h_update = true;
-//   cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
-//   cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
-//   best_ende_of_ecls.resize(_num_ecls, UINT32_MAX);
-//   omp_set_num_threads(NUM_CPU_THREADS); // 8 threads 比較快
-
-//   while (h_update) {
-//     h_update = false;
-
-//     #pragma omp parallel
-//     {
-//       #pragma omp for
-//       for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
-//         double acc_cost = tmp_ende_cost[t_idx];
-//         uint32_t start = _ende_child_ptr[t_idx];
-//         uint32_t end   = _ende_child_ptr[t_idx+1];
-//         for (uint32_t jj = start; jj < end; jj++) {
-//           acc_cost += cost_of_ecls[_ende_child[jj]];
-//         }
-
-//         cost_of_ende[t_idx] = (acc_cost < cost_of_ende[t_idx]) ? (acc_cost) : (cost_of_ende[t_idx]);
-
-//         const uint32_t which_ecls = _ende_ecls[t_idx];
-//         #pragma omp critical
-//         {
-//           if (acc_cost < cost_of_ecls[which_ecls]) {
-//             cost_of_ecls[which_ecls] = acc_cost;
-//             best_ende_of_ecls[which_ecls] = t_idx;
-//             h_update = true;
-//           }
-//         }
-//       }
-//     }
-//   }
-
-//   // === Phase 2: reconstruct best picks ===
-//   std::vector<std::vector<uint32_t>> ende_picked_by_ende(_num_ende);
-//   for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
-//     std::vector<uint32_t> picks;
-//     uint32_t start = _ende_child_ptr[t_idx];
-//     uint32_t end   = _ende_child_ptr[t_idx + 1];
-//     picks.reserve(end - start);
-//     for (uint32_t jj = start; jj < end; jj++) {
-//       uint32_t chd_ecls = _ende_child[jj];
-//       picks.push_back(best_ende_of_ecls[chd_ecls]);
-//     }
-//     ende_picked_by_ende[t_idx] = std::move(picks);
-//   }
-
-// #ifdef PRINT_LOG
-//   printf("\ncost_of_ecls:\n");
-//   for (size_t i = 0; i < cost_of_ecls.size(); i++) {
-//     printf("  [%zu] = %.1f\n", i, cost_of_ecls[i]);
-//   }
-
-//   printf("\ncost_of_ende:\n");
-//   for (size_t i = 0; i < cost_of_ende.size(); i++) {
-//     printf("  [%zu] = %.1f\n", i, cost_of_ende[i]);
-//   }
-//   printf("\n");  
-
-//   printf("\nbest_ende_of_ecls:\n");
-//   for (size_t i = 0; i < best_ende_of_ecls.size(); i++) {
-//     printf("  [%zu] = %u\n", i, best_ende_of_ecls[i]);
-//   }
-//   printf("\n");
-
-//   printf("\nende_picked_by_ende:\n");
-//   for (size_t i = 0; i < ende_picked_by_ende.size(); i++) {
-//     printf("  [%zu]: ", i);
-//     for (size_t j = 0; j < ende_picked_by_ende[i].size(); j++) {
-//       printf("%u, ", ende_picked_by_ende[i][j]);
-//     }
-//     printf("\n");  
-//   }
-//   printf("\n");  
-// #endif
-
-//   // Get best tree cost 
-//   double tree_ret = 0.0; 
-//   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
-//     tree_ret += cost_of_ecls[_root_eclass_id[r]];
-//   }
-
-//   double dag_ret = _compute_dag_cost(best_ende_of_ecls, picked_endes, ende_picked_by_ende); 
-//   _init_picked_adj(picked_endes);
-
-//   return std::make_pair(tree_ret, dag_ret);
-// }
 
 std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_ende_cost,
                                                 std::vector<double>& cost_of_ecls,
@@ -677,92 +534,43 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_cpu_best_tree()\n"); 
 #endif
-
-  // Initialization
+  // CPU relaxation 
   bool h_update = true;
-  cost_of_ecls.assign(_num_ecls, std::numeric_limits<double>::infinity());
-  cost_of_ende.assign(_num_ende, std::numeric_limits<double>::infinity());
-  best_ende_of_ecls.assign(_num_ecls, UINT32_MAX);
+  cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
+  cost_of_ende.resize(_num_ende, std::numeric_limits<double>::infinity());
+  best_ende_of_ecls.resize(_num_ecls, UINT32_MAX);
+  // omp_set_num_threads(8); // 8 threads 比較快
 
-  // 設定線程數 (建議由外部環境變數 OMP_NUM_THREADS 控制，若固定可留著)
-  // omp_set_num_threads(8); 
-
-  // === Phase 1: Fixed-Point Iteration (CAS Version) ===
   while (h_update) {
     h_update = false;
 
-    #pragma omp parallel
+    // #pragma omp parallel
     {
-      // 使用 dynamic schedule 處理負載不平衡 (有些 node children 多，有些少)
-      #pragma omp for schedule(dynamic, NUM_CPU_THREADS)
+      // #pragma omp for
       for (uint32_t t_idx = 0; t_idx < _num_ende; t_idx++) {
         double acc_cost = tmp_ende_cost[t_idx];
         uint32_t start = _ende_child_ptr[t_idx];
         uint32_t end   = _ende_child_ptr[t_idx+1];
-        
         for (uint32_t jj = start; jj < end; jj++) {
           acc_cost += cost_of_ecls[_ende_child[jj]];
         }
 
-        // 更新 local node cost (無 race condition)
-        if (acc_cost < cost_of_ende[t_idx]) {
-             cost_of_ende[t_idx] = acc_cost;
-        }
+        cost_of_ende[t_idx] = (acc_cost < cost_of_ende[t_idx]) ? (acc_cost) : (cost_of_ende[t_idx]);
 
-        // 準備更新 parent e-class cost
         const uint32_t which_ecls = _ende_ecls[t_idx];
-        
-        // 優化：先做一次非原子讀取，確定有機會更新再進入 CAS 迴圈，減少匯流排流量
-        if (acc_cost < cost_of_ecls[which_ecls]) {
-            double* dist_addr = &cost_of_ecls[which_ecls];
-            
-            // --- CAS LOOP START ---
-            // 將 double 指標轉型為 uint64_t 指標以使用硬體 atomic 指令
-            uint64_t* dist_u64_ptr = reinterpret_cast<uint64_t*>(dist_addr);
-            uint64_t old_val_u64 = *dist_u64_ptr;
-            double old_val;
 
-            while (true) {
-                // 將 uint64 轉回 double 進行數值比較
-                std::memcpy(&old_val, &old_val_u64, sizeof(double));
-
-                // 如果現在記憶體裡的值已經比我不好了，就不用搶了
-                if (acc_cost >= old_val) {
-                    break; 
-                }
-
-                // 準備要寫入的新值
-                uint64_t new_val_u64;
-                std::memcpy(&new_val_u64, &acc_cost, sizeof(double));
-
-                // CAS 指令: 嘗試將 dist_u64_ptr 的值從 old_val_u64 改為 new_val_u64
-                // 回傳值是記憶體中 "原本" 的值
-                uint64_t prev_u64 = __sync_val_compare_and_swap(dist_u64_ptr, old_val_u64, new_val_u64);
-
-                if (prev_u64 == old_val_u64) {
-                    // === 更新成功 ===
-                    // 因為 cost 已經原子更新了，我們現在更新 index
-                    // 注意：極端情況下這裡有微小的 race (cost 更新了但 index 還沒)，但 iterative 會收斂修復
-                    best_ende_of_ecls[which_ecls] = t_idx;
-                    
-                    // 標記全域有更新
-                    if (!h_update) { // 簡單的 double-check 減少寫入
-                         #pragma omp atomic write
-                         h_update = true;
-                    }
-                    break;
-                } else {
-                    // === 更新失敗 ===
-                    // 被別人搶先改掉了，prev_u64 是別人改過的新值
-                    // 更新 old_val_u64，迴圈重跑一次再比較看看
-                    old_val_u64 = prev_u64;
-                }
-            }
-            // --- CAS LOOP END ---
+        // #pragma omp critical
+        {
+          if (acc_cost < cost_of_ecls[which_ecls]) {
+            cost_of_ecls[which_ecls] = acc_cost;
+            best_ende_of_ecls[which_ecls] = t_idx;
+            h_update = true;
+          }
         }
       }
     }
   }
+
 
   // === Phase 2: reconstruct best picks ===
   std::vector<std::vector<uint32_t>> ende_picked_by_ende(_num_ende);
@@ -981,7 +789,6 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
   level.resize(_num_ende, -1); // init, needed
   // uint32_t itr = 0;
 
-#ifndef EXTEND_GRAPH_TO_HIGHER_DEGEE
   while(updated) {
     // itr++;
     // bottom-up levelization && top-down insertion
@@ -1000,7 +807,6 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
       std::cout << "Get into while loop again? " << updated << "\n==========================================\n"; 
     #endif
   }
-#endif
 
 #ifdef BIBI_CHECK
   uint32_t bibi_acc_1 = 0;
@@ -1025,11 +831,6 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
     }
   }
 
-#ifdef SLENDER_VERSION_EGRAPH
-  printf("!!! _max_level = %d\n\n", _max_level);
-  _calculate_deg_ecls(_num_ecls, _num_ende, _ende_ecls, _ende_child, _ende_child_ptr, _root_eclass_id);
-#endif  
-
 #ifdef BIBI_CHECK
   uint32_t bibi_acc_2 = 0;
   for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
@@ -1052,34 +853,6 @@ void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
 
 void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes) 
 {
-// #ifdef PRINT_LOG 
-//   printf("\nInside G_EXT::_update_deg()\n");
-//   printf("Pre:\n"); 
-//   _print_degree(true, picked_endes);
-//   _print_degree(false, picked_endes);
-// #endif
-
-//   if (!need_to_update) return; 
-
-//   _indegree.assign(_num_ende, 0);
-//   _inv_indegree.assign(_num_ende, 0);
-
-//   for (uint32_t fm_ende = 0; fm_ende < _num_ende; fm_ende++) {
-//     if (!picked_endes[fm_ende]) continue; 
-//     for (uint32_t k = _global_adj_1D_ptr[fm_ende]; k < _global_adj_1D_ptr[fm_ende+1]; k++) {
-//       if (!_picked_adj[k]) continue;
-      
-//       const uint32_t to_ende = _global_adj_1D[k];
-//       _indegree[to_ende]++;
-//       _inv_indegree[fm_ende]++;
-//     }
-//   }
-
-// #ifdef PRINT_LOG
-//   printf("Post:\n"); 
-//   _print_degree(true, picked_endes);
-//   _print_degree(false, picked_endes);
-// #endif  
 #ifdef PRINT_LOG 
   printf("\nInside G_EXT::_update_deg()\n");
   printf("Pre:\n"); 
@@ -1092,17 +865,13 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
   _indegree.assign(_num_ende, 0);
   _inv_indegree.assign(_num_ende, 0);
 
-  #pragma omp parallel for schedule(dynamic, NUM_CPU_THREADS)
   for (uint32_t fm_ende = 0; fm_ende < _num_ende; fm_ende++) {
     if (!picked_endes[fm_ende]) continue; 
     for (uint32_t k = _global_adj_1D_ptr[fm_ende]; k < _global_adj_1D_ptr[fm_ende+1]; k++) {
+      // if (!picked_endes[to_ende]) continue;
       if (!_picked_adj[k]) continue;
-      
       const uint32_t to_ende = _global_adj_1D[k];
-      #pragma omp atomic
       _indegree[to_ende]++;
-      
-      #pragma omp atomic
       _inv_indegree[fm_ende]++;
     }
   }
@@ -1114,62 +883,6 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
 #endif  
 }
 
-// void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg, 
-//                 const std::vector<bool>& picked_endes,
-//                 const std::vector<uint32_t>& global_adj_1D,
-//                 const std::vector<uint32_t>& global_adj_1D_ptr,
-//                 const std::vector<bool>& picked_adj,
-//                 std::vector<int>& level)
-// {
-// #ifdef PRINT_LOG
-//   printf("\nInside G_EXT::_BFS()\n");
-// #endif 
-//   // lambda
-//   auto get_rev_level = [&](const uint32_t LEVEL, uint32_t a) -> uint32_t {
-//     return LEVEL - a - 1;
-//   };
-
-//   // init queue (roots || leaves)
-//   std::queue<uint32_t> q;
-//   for (uint32_t ende = 0; ende < _num_ende; ende++) {
-//     if ((deg[ende] == 0) && picked_endes[ende]) {
-//       q.push(ende);
-//     }
-//   } 
-
-//   // BFS: top-down levelization 
-//   int cur_level = 0;
-//   while (!q.empty()) {
-//     size_t layer = q.size();
-//     for (size_t t = 0; t < layer; ++t) {
-//       uint32_t u = q.front(); q.pop();
-//       level[u] = cur_level;
-//       for (uint32_t k = global_adj_1D_ptr[u]; k < global_adj_1D_ptr[u+1]; k++) {
-//         if (!picked_adj[k]) continue;
-//         const uint32_t v = global_adj_1D[k];
-//         if (deg[v] > 0 && --deg[v] == 0) {
-//           q.push(v);
-//         }        
-//       }
-//     }
-//     ++cur_level;
-//   }
-
-//   // update _max_level
-//   _max_level = cur_level; 
-
-//   if (!is_td) {
-//     for (uint32_t i = 0; i < level.size(); i++) {
-//       level[i] = get_rev_level(_max_level, level[i]);
-//       MY_CHECK(level[i] >= 0, "level[i] >= 0,");
-//     }
-//   }
-
-// #ifdef PRINT_LOG
-//   printf("_max_level = %d, cur_level = %d\n", _max_level, cur_level); 
-// #endif
-// }
-
 void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg, 
                 const std::vector<bool>& picked_endes,
                 const std::vector<uint32_t>& global_adj_1D,
@@ -1178,92 +891,68 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
                 std::vector<int>& level)
 {
 #ifdef PRINT_LOG
-  printf("\nInside G_EXT::_BFS() with OpenMP\n");
+  printf("\nInside G_EXT::_BFS()\n");
 #endif 
+  // lambda
+  auto get_rev_level = [&](const uint32_t LEVEL, uint32_t a) -> uint32_t {
+    return LEVEL - a - 1;
+  };
 
-  // init frontier (Roots)
-  std::vector<uint32_t> frontier;
-  // 簡單的平行化找 Roots
-  #pragma omp parallel
-  {
-      std::vector<uint32_t> local_roots;
-      #pragma omp for nowait
-      for (uint32_t ende = 0; ende < _num_ende; ende++) {
-        if ((deg[ende] == 0) && picked_endes[ende]) {
-          local_roots.push_back(ende);
-        }
-      }
-      // 合併 roots
-      #pragma omp critical
-      frontier.insert(frontier.end(), local_roots.begin(), local_roots.end());
-  }
+  // init queue (roots || leaves)
+  std::queue<uint32_t> q;
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if ((deg[ende] == 0) && picked_endes[ende]) {
+      q.push(ende);
+      // #ifdef PRINT_LOG  
+      //   printf("  Queue init push in enode %u\n", ende);
+      // #endif
+    }
+  } 
+  // #ifdef PRINT_LOG  
+  //   printf("\n");
+  // #endif
 
   // BFS: top-down levelization 
   int cur_level = 0;
-  
-  while (!frontier.empty()) {
-    std::vector<uint32_t> next_frontier;
-
-    #pragma omp parallel
-    {
-      std::vector<uint32_t> local_next;
-      
-      // 平行處理當前層的所有節點
-      #pragma omp for schedule(dynamic, 64)
-      for (size_t i = 0; i < frontier.size(); ++i) {
-        uint32_t u = frontier[i];
-        level[u] = cur_level; // 設定層級，因為 u 是唯一的，無 Race
-
-        uint32_t start = global_adj_1D_ptr[u];
-        uint32_t end   = global_adj_1D_ptr[u+1];
-
-        for (uint32_t k = start; k < end; k++) {
-          if (!picked_adj[k]) continue;
-          
-          const uint32_t v = global_adj_1D[k];
-          
-          // --- 關鍵原子操作 ---
-          // 我們需要原子地 "減 1" 並 "取得減完後的值"
-          // 只有當減完變成 0 的那個人，才有資格把 v 加入下一層
-          uint32_t old_deg;
-          #pragma omp atomic capture
-          {
-              old_deg = deg[v];
-              deg[v]--; 
-          }
-
-          // 如果舊的是 1，減完就是 0 -> 加入 next layer
-          if (old_deg == 1) {
-            local_next.push_back(v);
-          }
-        }
+  while (!q.empty()) {
+    size_t layer = q.size();
+    for (size_t t = 0; t < layer; ++t) {
+      uint32_t u = q.front(); q.pop();
+      level[u] = cur_level;
+      // #ifdef PRINT_LOG
+      //   printf("  Processing enode %u\n", u);
+      // #endif
+      // for (uint32_t v : adj[u]) {
+      //   if (!picked_endes[v]) continue;
+      //   // #ifdef PRINT_LOG
+      //   //   printf("   child enode %u, with deg[%u] = %u\n", v, v, deg[v]); 
+      //   // #endif
+      //   if (deg[v] > 0 && --deg[v] == 0) {
+      //     q.push(v);
+      //     // #ifdef PRINT_LOG
+      //     //   printf("    Push enode %u (indegree->0)\n", v);
+      //     // #endif
+      //   }
+      // }
+      // new version 
+      for (uint32_t k = global_adj_1D_ptr[u]; k < global_adj_1D_ptr[u+1]; k++) {
+        if (!picked_adj[k]) continue;
+        const uint32_t v = global_adj_1D[k];
+        if (deg[v] > 0 && --deg[v] == 0) {
+          q.push(v);
+        }        
       }
-
-      // 合併下一層的節點
-      if (!local_next.empty()) {
-          #pragma omp critical
-          next_frontier.insert(next_frontier.end(), local_next.begin(), local_next.end());
-      }
-    } // end parallel
-
-    // 換到下一層
-    frontier = std::move(next_frontier);
+    }
     ++cur_level;
   }
 
   // update _max_level
   _max_level = cur_level; 
 
-  // Post-processing: Reverse Levels if needed
   if (!is_td) {
-    // 這是一個完全獨立的資料平行迴圈
-    #pragma omp parallel for schedule(static)
     for (uint32_t i = 0; i < level.size(); i++) {
-        // 為了安全，level[i] 是 int，檢查有沒有被設過值 (通常沒被走到的點 level 可能是預設值)
-        // 這裡假設所有點都在 component 內，或者 level[i] 初始值處理得當
-        // if (level[i] != -1) ... 
-        level[i] = _max_level - level[i] - 1;
-        // MY_CHECK(level[i] >= 0, "level[i] >= 0");
+      level[i] = get_rev_level(_max_level, level[i]);
+      MY_CHECK(level[i] >= 0, "level[i] >= 0,");
     }
   }
 
@@ -1318,16 +1007,6 @@ bool G_EXT::_insertion(const bool is_td,
     printf("\nG_EXT::_bottom_up_insertion()\n");
   }
 #endif
-  // // Lambda
-  // auto has_overlap = [&](const std::vector<uint32_t>& a,
-  //                       const std::vector<uint32_t>& b) -> bool {
-  //   for (uint32_t x : a)
-  //     for (uint32_t y : b)
-  //       if (x == y)
-  //         return true;
-  //   return false;
-  // };
-
   bool update = false;
   _tmp_picked_adj.assign(_global_adj_1D.size(), false);
   _tmp_picked_inv_adj.assign(_global_inv_adj_1D.size(), false);
@@ -1392,11 +1071,8 @@ bool G_EXT::_insertion(const bool is_td,
       printf("Find min child level\n"); 
     #endif
     for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
-      uint32_t chd_ende = _global_adj_1D[k];    
+      uint32_t chd_ende = _global_adj_1D[k];      
       if (!picked_endes[chd_ende]) continue;
-      #ifdef PRINT_LOG
-        printf("\tchd_ende = %u\n", chd_ende); 
-      #endif
       int chd_lvl = level[chd_ende];
       // if (chd_lvl < 0) {
       //   printf("WTF: \n");
@@ -1803,13 +1479,6 @@ __global__ void _relax_enodes_kernel(const uint32_t num_endes,
   cost_of_ende[t_idx] = fmin(cost_of_ende[t_idx], acc_cost);
   const uint32_t which_ecls = ende_ecls[t_idx];
 
-  // // // float old = atomicMinFloat(&cost_of_ecls[which_ecls], acc_cost);
-  // double old = atomicMinDouble(&cost_of_ecls[which_ecls], acc_cost);
-  // if (acc_cost < old) {
-  //   *update = true; // No need to be atomic
-  //   best_ende_of_ecls[]
-  // }  
-
   double old = atomicMinDouble(&cost_of_ecls[which_ecls], acc_cost);
   if (acc_cost < old) {
     cost_of_ecls[which_ecls] = acc_cost;
@@ -1883,7 +1552,7 @@ __global__ void _get_dag_cost(
   uint32_t* q,
   uint32_t* q_sz,
   const uint32_t* q_sp,
-  uint32_t* picked_endes, // 不提供 bool atomicCAS
+  uint32_t* picked_endes, // No bool atomicCAS
   double* dag_ret)
 {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1906,51 +1575,6 @@ __global__ void _get_dag_cost(
   }
 }
 
-
-__global__ void _get_dag_cost_slender(
-  const float* ende_cost,
-  const uint32_t* ende_child,
-  const uint32_t* ende_child_ptr,
-  const uint32_t* ende_picked_by_ende,
-  const uint32_t* best_ende_of_ecls,
-  uint32_t* q,
-  uint32_t* q_sz,
-  uint32_t* q_sp,
-  uint32_t* q_num,
-  uint32_t* picked_endes, // 不提供 bool atomicCAS
-  double* dag_ret)
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  
-  while(*q_num > 0) {
-    if (t_idx < *q_num) {
-      uint32_t cur = q[*q_sp + t_idx];
-      atomicAdd(dag_ret, static_cast<double>(ende_cost[cur]));
-      picked_endes[cur] = 1; // set as true
-      
-      uint32_t start = ende_child_ptr[cur];
-      uint32_t end   = ende_child_ptr[cur + 1];
-
-      for (uint32_t chd = start; chd < end; chd++) {
-        uint32_t chd_ecls = ende_child[chd];
-        uint32_t chd_ende = best_ende_of_ecls[chd_ecls];
-        // 確保只有一次 push
-        if (atomicCAS(&picked_endes[chd_ende], 0u, 1u) == 0u) {
-          uint32_t pos = atomicAdd(q_sz, 1);
-          q[pos] = chd_ende;
-        }
-      }
-    }    
-
-    // update index 
-    __syncthreads();
-    if (t_idx == 0) {
-      *q_sp += *q_num;
-      *q_num = *q_sz - *q_sp;
-    }
-    __syncthreads();
-  }
-}
 
 __global__ void _gpu_init_picked_adj (const uint32_t num_endes, 
   const uint32_t* dvc_global_adj_1D,
@@ -2071,7 +1695,6 @@ __global__ void _gpu_add_more_roots(const uint32_t num_root_ecls,
   // Add more roots enodes
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_root_ecls) return;
-  // printf("num_root_ecls = %u, %u, %u\n", num_root_ecls, _dvc_all_root_ende_1D[t_idx], dvc_picked_endes[_dvc_all_root_ende_1D[t_idx]]);
   dvc_picked_endes[_dvc_all_root_ende_1D[t_idx]] = 1;
 }
 
@@ -2229,7 +1852,6 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
     _dvc_ende_picked_by_ende);
 
   // Get the best dag cost on GPU
-  // init queue
   _init_q<<<1,1>>>(_root_eclass_id.size(),
     _dvc_root_eclass_id,
     _dvc_best_ende_of_ecls,
@@ -2238,14 +1860,13 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
 
   double dag_ret = 0.0;
 
-#ifndef SLENDER_VERSION_EGRAPH
+// #ifndef SLENDER_VERSION_EGRAPH
   uint32_t q_sz = 0;
   cudaMemcpy(&q_sz, _dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
   uint32_t q_sp = 0;
   uint32_t num = q_sz - q_sp;
 
   while (num > 0) {
-    // printf("num = %u\n", num); // used for debug
     cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice);
     blocks = (num + threads - 1) / threads;
 
@@ -2265,31 +1886,10 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
     cudaMemcpy(&q_sz, _dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
     q_sp += num;
     num = q_sz - q_sp;
-    // if (blocks > 1) {
-    //   printf("blocks = %u\n", blocks);
-    // }
   }
   cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
   cudaCheckErrors("DAG cost memcpy failed");
-#else
-  blocks = 1;
-  _get_dag_cost_slender<<<blocks, threads>>>(
-    dvc_ende_cost,
-    dvc_ende_child,
-    dvc_ende_child_ptr,
-    _dvc_ende_picked_by_ende,
-    _dvc_best_ende_of_ecls,
-    _dvc_q,
-    _dvc_q_sz,
-    _dvc_q_sp,
-    _dvc_q_num,
-    _dvc_picked_endes,
-    dvc_dag_ret);
-  cudaCheckErrors("_get_dag_cost_slender failed");
 
-  cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
-  cudaCheckErrors("DAG cost memcpy failed");
-#endif
 
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
@@ -2343,7 +1943,6 @@ void G_EXT::_gpu_reconstruct_graph() {
 #endif
   
   bool updated = true;
-  // uint32_t itr = 0; 
 
   while (updated) {
     updated = false;
@@ -2364,9 +1963,7 @@ void G_EXT::_gpu_reconstruct_graph() {
     bool bu = _gpu_insertion(false);
 
     updated = tp || bu; 
-    // itr++;
   }
-  // printf("GPU itr = %u\n", itr);
 
   std::vector<uint32_t> in_subgraph_gpu; 
   in_subgraph_gpu.resize(_num_ende, 0);
@@ -2380,42 +1977,6 @@ void G_EXT::_gpu_reconstruct_graph() {
       _ecls_its_ende_newG_GPU[ecls].push_back(ende);
     }
   }
-
-// // CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK
-// #ifdef PRINT_LOG
-//   cudaDeviceSynchronize();
-//   std::vector<uint32_t> in_subgraph_gpu; 
-//   in_subgraph_gpu.resize(_num_ende, 0);
-//   cudaMemcpy(in_subgraph_gpu.data(), _dvc_from_roots, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-//   uint32_t acc = 0;
-//   for (uint32_t i = 0; i < in_subgraph_gpu.size(); i++) {
-//     if (in_subgraph_gpu[i] == true) {
-//       acc++;
-//     }
-//   }  
-//   printf("GPU final finds (roots) %u enodes\n", acc);
-
-//   in_subgraph_gpu.resize(_num_ende, 0);
-//   cudaMemcpy(in_subgraph_gpu.data(), _dvc_from_leaves, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-//   acc = 0;
-//   for (uint32_t i = 0; i < in_subgraph_gpu.size(); i++) {
-//     if (in_subgraph_gpu[i] == true) {
-//       acc++;
-//     }
-//   }  
-//   printf("GPU final finds (leaves) %u enodes\n", acc);
-
-//   in_subgraph_gpu.resize(_num_ende, 0);
-//   cudaMemcpy(in_subgraph_gpu.data(), _dvc_in_subgraph, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-//   acc = 0;
-//   for (uint32_t i = 0; i < in_subgraph_gpu.size(); i++) {
-//     if (in_subgraph_gpu[i] == true) {
-//       acc++;
-//     }
-//   }  
-//   printf("GPU final finds %u enodes\n", acc);
-// #endif
-// // CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK CHECK
 }
 
 __global__ void _update_deg_kl (const uint32_t num_endes, 
@@ -2549,8 +2110,6 @@ __global__ void _gpu_BFS_kl_slender(
     __syncthreads();
   }
 }
-
-
 
 __global__ void _reverse_level(  
   const uint32_t num, 
@@ -2754,7 +2313,7 @@ __global__ void _gpu_insertion_kl(
   } 
 }
 
- // bitmap 快速方法
+// bitmap version
 #if FAST_BITMAP_CHECK
   __inline__ __device__ int warpReduceMax(int val) {
     return __reduce_max_sync(0xffffffff, val);
@@ -3034,7 +2593,6 @@ __global__ void _gpu_insertion_kl(
     }
   }
 #endif
-// hahaha
 
 
 // __inline__ __device__ int blockReduceMax(int val) {
@@ -3680,7 +3238,6 @@ void G_EXT::_cpsat_solver(
   }
 #endif
   
-  // 对于每个节点，如果其被选中，则要求所有其子 e-class 也必须被激活
   for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
     const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;
@@ -3713,7 +3270,7 @@ void G_EXT::_cpsat_solver(
   printf("======================================================\n\n");
 #endif
 
-  // Part 3. 目标函数：最小化所有选中节点的成本
+  // Part 3. objective function
   LinearExpr objective;
   for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
     const auto& enodes = ecls_its_ende[cid];
@@ -3738,7 +3295,7 @@ void G_EXT::_cpsat_solver(
   }
   cp_model.Minimize(objective);
 
-  // Part 4. 强制根 e-class 激活
+  // Part 4. active root e-classes
   for (uint32_t r = 0; r < root_eclass_id.size(); r++) {
     uint32_t root_idx = root_eclass_id[r];
     cp_model.AddEquality(active[root_idx], 1);
@@ -3763,14 +3320,14 @@ void G_EXT::_cpsat_solver(
   printf("=============================================\n\n");
 #endif
 
-  // Part 5. 为每个 e-class 创建层次变量，用于防止环路（范围 [0, num_classes]）
+  // Part 5. 
   int num_classes = ecls_its_ende.size();
   std::unordered_map<uint32_t, IntVar, std::hash<uint32_t>> level;
   for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
     level[cid] = cp_model.NewIntVar(Domain(0, num_classes));
   }
 
-  // Part 6. 添加约束：如果一个节点被选中，则其所有子 e-class 的层次至少比当前 e-class 高 1
+  // Part 6. constraints
   for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
     const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;
@@ -3794,7 +3351,7 @@ void G_EXT::_cpsat_solver(
   printf("%-10s %-10s %-10s %-10s\n", "Eclass", "EnodeIdx", "Hint", "Remark");
 #endif
 
-  // Part 8. 添加 warm start hint：依據 picked_endes
+  // Part 8. warm start hint
   for (uint32_t cid = 0; cid < ecls_its_ende.size(); ++cid) {
     const auto& enodes = ecls_its_ende[cid];
     if (enodes.empty()) continue;
@@ -3803,7 +3360,6 @@ void G_EXT::_cpsat_solver(
     uint32_t best_idx = best_ende_of_ecls[cid];
     if (vars.find(best_idx) == vars.end()) continue;
 
-    // 為該 eclass 的所有 enode 設 hint (picked = 1, 其他 = 0)
     for (uint32_t ende_idx : enodes) {
       if (vars.find(ende_idx) == vars.end()) continue;
 
@@ -3830,11 +3386,10 @@ void G_EXT::_cpsat_solver(
   printf("=========================================================\n\n");
 #endif
 
-  // Part 9. 设置求解器观察器、参数并求解
+  // Part 9. 
   Model model;
   int num_solutions = 0;
   auto start = std::chrono::high_resolution_clock::now();
-  // 可選：觀察者，用來打印目前最好的解
   model.Add(NewFeasibleSolutionObserver([&](const CpSolverResponse& r) {
       auto current_time = std::chrono::high_resolution_clock::now();
       double elapsed_seconds =
@@ -3846,21 +3401,21 @@ void G_EXT::_cpsat_solver(
       num_solutions++;
   })); // model.Add
 
-  // 設定求解時間上限
+  // set time limit
   if (time_limit > 0.0) {
     SatParameters parameters;
     parameters.set_max_time_in_seconds(time_limit);
     parameters.set_random_seed(42);
     parameters.set_randomize_search(true);
     // parameters.set_max_time_in_seconds(3600.0);
-    // parameters.set_log_search_progress(true);  // 如果想看完整 solver log 可開
+    // parameters.set_log_search_progress(true);  // for full log
     model.Add(NewSatParameters(parameters));
   }
 
-  // 真正開始求解
+  // start solving ILP
   const CpSolverResponse response = SolveCpModel(cp_model.Build(), &model);
 
-  // 結果輸出
+  // print results
   if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) {
     std::cout << "=========================================\n";
     std::cout << "Solver finished.\n";
@@ -3868,7 +3423,7 @@ void G_EXT::_cpsat_solver(
     std::cout << "Runtime = " << response.wall_time() << " (s)\n";
     std::cout << "Feasible solutions found = " << num_solutions << "\n";
 
-    // // Optional: 印出所有 active 節點
+    // // Optional: print all active e-nodes
     // std::cout << "==== Active enodes (solution) ====\n";
     // for (const auto& [cid, node_map] : nodes_vars) {
     //   for (const auto& [node_id, var] : node_map) {
@@ -3880,7 +3435,7 @@ void G_EXT::_cpsat_solver(
     //     }
     //   }
     // }
-    // std::cout << "=========================================\n";
+    std::cout << "=========================================\n";
   } else {
     std::cout << "No feasible solution found.\n";
   }
@@ -3910,7 +3465,6 @@ void G_EXT::_cpsat_solver_pure(
       nodes_vars[cid][ende_idx] = cp_model.NewBoolVar();
     }
 
-    // 每個 eclass 中至少一個 enode active 才能啟動
     LinearExpr sum_nodes;
     for (const auto &v : nodes_vars[cid]) sum_nodes += v.second;
     cp_model.AddEquality(sum_nodes, active[cid]);
@@ -3985,7 +3539,7 @@ void G_EXT::_cpsat_solver_pure(
   int num_solutions = 0;
   auto start = std::chrono::high_resolution_clock::now();
 
-  // 觀察者：打印 incumbent solutions
+  // printf incumbent solutions
   model.Add(NewFeasibleSolutionObserver([&](const CpSolverResponse& r) {
     auto current_time = std::chrono::high_resolution_clock::now();
     double elapsed_seconds =
@@ -3996,7 +3550,6 @@ void G_EXT::_cpsat_solver_pure(
     num_solutions++;
   }));
 
-  // solver 參數設定
   SatParameters parameters;
   parameters.set_max_time_in_seconds(time_limit);
   parameters.set_random_seed(42);
@@ -4018,11 +3571,6 @@ void G_EXT::_cpsat_solver_pure(
     std::cout << "No feasible solution found.\n";
   }
 }
-
-
-
-
-
 
 
 
@@ -4109,10 +3657,6 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
   
   std::cout << "G_EXT::_print_levelization(): " << a ;
   printf("=== Levelization result ===\n");
-  // for (uint32_t ende = 0; ende < _num_ende; ende++) {
-  //   if (level[ende] >= 0)
-  //     printf("ENode %u -> Level %d\n", ende, level[ende]);
-  // }
  
    // Construct ende_in_level
   std::vector<std::vector<uint32_t>> ende_in_level;
@@ -4205,162 +3749,5 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
     std::cout << "[INFO] Wrote egg-compatible JSON to: " << out_path << std::endl;
   }
 #endif
-
-void G_EXT::_calculate_deg_ende(const uint32_t tmp_num_ecls, 
-  const uint32_t tmp_num_ende, 
-  const std::vector<uint32_t>& tmp_ende_ecls,
-  const std::vector<uint32_t>& tmp_ende_child,
-  const std::vector<uint32_t>& tmp_ende_child_ptr,
-  const std::vector<uint32_t>& root_eclass_id) 
-{
-  // ende -> ende  
-  std::vector<std::unordered_set<uint32_t>> tt;
-  std::vector<std::unordered_set<uint32_t>> eclss_enode; // 該 eclass 下有哪些 enodes
-  eclss_enode.resize(tmp_num_ecls, std::unordered_set<uint32_t>());
-  for (uint32_t i = 0; i < tmp_num_ende; i++) {
-    uint32_t ecls = tmp_ende_ecls[i];
-    MY_CHECK(ecls < tmp_num_ecls, "ecls < tmp_num_ecls");
-    eclss_enode[ecls].insert(i);
-  }
-
-  tt.resize(tmp_num_ende, std::unordered_set<uint32_t>()); 
-  for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
-    uint32_t start = tmp_ende_child_ptr[ende]; 
-    uint32_t end = tmp_ende_child_ptr[ende+1];
-    for (uint32_t jj = start; jj < end; jj++) {
-      uint32_t chd_ecls = tmp_ende_child[jj];
-      for (uint32_t ende2 : eclss_enode[chd_ecls]) {
-        if (ende != ende2) { // remove self-loop
-          tt[ende].insert(ende2); 
-        }
-      }
-    }
-  }
-
-  double acc_deg = 0; // 下面要四捨五入
-  for (uint32_t i = 0; i < tmp_num_ende; i++) {
-    acc_deg += tt[i].size();
-  }
-  acc_deg /= tmp_num_ende;
-  printf("_calculate_deg_ende(): In this benchmark, avg enode deg = %.1lf\n", acc_deg);
-  
-  // 檢查有沒有人指到 root enodes
-  for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
-    uint32_t start = tmp_ende_child_ptr[ende]; 
-    uint32_t end = tmp_ende_child_ptr[ende+1];
-    for (uint32_t jj = start; jj < end; jj++) {
-      uint32_t chd_ecls = tmp_ende_child[jj];
-      for (uint32_t r = 0; r < root_eclass_id.size(); r++) {
-        if (chd_ecls == root_eclass_id[r]) {
-          printf("point to roots\n"); 
-          exit(1);
-        }
-        if (chd_ecls >= _num_ecls) {
-          printf("chd_ecls >= _num_ecls\n"); 
-          exit(1);            
-        }
-      }
-    }
-  }
-}
-
-void G_EXT::_calculate_deg_ecls(const uint32_t tmp_num_ecls, 
-  const uint32_t tmp_num_ende, 
-  const std::vector<uint32_t>& tmp_ende_ecls,
-  const std::vector<uint32_t>& tmp_ende_child,
-  const std::vector<uint32_t>& tmp_ende_child_ptr,
-  const std::vector<uint32_t>& root_eclass_id) 
-{
-  double acc_deg = 0;
-  for (uint32_t ende = 0; ende < tmp_num_ende; ende++) {
-    uint32_t start = tmp_ende_child_ptr[ende]; 
-    uint32_t end = tmp_ende_child_ptr[ende+1];
-    acc_deg += (end - start); 
-  }
-
-  acc_deg /= tmp_num_ende;
-  printf("_calculate_deg_ecls(): In this benchmark, avg enode deg = %.8lf\n", acc_deg);
-}
-
-#ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
-  void G_EXT::_increase_egraph_deg(const uint32_t* num_ecls,
-    const uint32_t* num_ende,
-    const std::vector<std::string>& ende_name,
-    const std::vector<std::string>& ende_op,
-    const std::vector<float>& ende_cost,
-    const std::vector<uint32_t>& ende_ecls,
-    std::vector<uint32_t>& ende_child,
-    std::vector<uint32_t>& ende_child_ptr,
-    const std::vector<uint32_t>& root_eclass_id)
-  {
-    printf("Before extension degree\n");
-    _calculate_deg_ende(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
-
-    std::mt19937 gen(47);  // 固定亂數種子
-
-    std::vector<bool> is_leaf_eclass; is_leaf_eclass.resize(_num_ecls, true); 
-    for (uint32_t ende = 0; ende < _num_ende; ende++) {
-      uint32_t num_child = ende_child_ptr[ende + 1] - ende_child_ptr[ende];
-      if (num_child != 0) {
-        uint32_t ecls = ende_ecls[ende];
-        is_leaf_eclass[ecls] = false;
-      }
-    }
-    std::vector<uint32_t> leaf_eclasses;
-    for (uint32_t ecls = 0; ecls < is_leaf_eclass.size(); ecls++) {
-      if (is_leaf_eclass[ecls]) {
-        leaf_eclasses.push_back(ecls);
-      }
-    }
-
-    if (leaf_eclasses.empty()) {
-      printf("[WARN] No leaf eclass found, skip degree extension.\n");
-      return;
-    }
-
-    printf("Found %zu leaf eclasses.\n", leaf_eclasses.size());
-
-    // === Step 2. 生成 leaf eclass 隨機生成器 ===
-    auto gen_leaf_rand = [&]() -> uint32_t {
-      std::uniform_int_distribution<uint32_t> dist(0, leaf_eclasses.size() - 1);
-      return leaf_eclasses[dist(gen)];
-    };
-
-    // === Step 3. 擴張 edge：讓每個 enode 新增連到 leaf 的 edge ===
-    std::vector<uint32_t> ori_child = ende_child;
-    std::vector<uint32_t> ori_ptr   = ende_child_ptr;
-    ende_child.clear();
-    ende_child_ptr.clear();
-
-    uint32_t tmp_acc = 0;
-    ende_child_ptr.push_back(tmp_acc);
-
-    for (uint32_t ende = 0; ende < *num_ende; ende++) {
-      uint32_t start = ori_ptr[ende];
-      uint32_t end   = ori_ptr[ende + 1];
-
-      // 原始 children 保留
-      for (uint32_t jj = start; jj < end; jj++) {
-        ende_child.push_back(ori_child[jj]);
-        tmp_acc++;
-      }
-
-      // 新增 edge 指向 leaf eclass
-      uint32_t orig_deg = end - start;
-      uint32_t num_extra = (EXTEND_MUL - 1) * orig_deg;
-      for (uint32_t t = 0; t < num_extra; t++) {
-        uint32_t leaf_id = gen_leaf_rand();
-        ende_child.push_back(leaf_id);
-        tmp_acc++;
-      }
-
-      ende_child_ptr.push_back(tmp_acc);
-    }
-
-    printf("After extension degree: ");
-    _calculate_deg_ende(*num_ecls, *num_ende, ende_ecls, ende_child, ende_child_ptr, root_eclass_id);
-  }
-
-#endif 
 
 
