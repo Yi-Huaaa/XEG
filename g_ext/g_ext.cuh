@@ -33,8 +33,6 @@
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
 
-// #define TEST_TREE_ILP
-
 class G_EXT {
 
 public:
@@ -60,7 +58,6 @@ public:
     DAG_KERNEL = dag_kernel;
     NUM_THREAD_DAG_CONSTR = num_thread_dag_constrution;
 
-    printf("Hello bibi\n");
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
     std::vector<double> cost_of_ende; // Final cost of each enode
@@ -77,35 +74,22 @@ public:
     printf("CPU RESULTS: best_tree_cost_cpu = %.2lf, dag_cost_cpu = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
-    #ifdef TEST_TREE_ILP
-      if (ILP_solver) {
-        _cpsat_solver(ILP_time_limit, 
-                      _ecls_its_ende, 
-                      _ende_child, 
-                      _ende_child_ptr, 
-                      _root_eclass_id, 
-                      _ende_cost,
-                      best_ende_of_ecls, 
-                      picked_endes);
-      }
-    #else 
-      std::vector<bool> picked_endes_tmp = picked_endes;
-      start = std::chrono::steady_clock::now();
-        _cpu_reconstruct_graph(picked_endes); 
-      end = std::chrono::steady_clock::now();
-      duration = end - start;
-      std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-      if (ILP_solver) {
-        _cpsat_solver(ILP_time_limit, 
-                      _ecls_its_ende_newG, 
-                      _ende_child, 
-                      _ende_child_ptr, 
-                      _root_eclass_id, 
-                      _ende_cost,
-                      best_ende_of_ecls, 
-                      picked_endes_tmp);
-      }
-    #endif
+    std::vector<bool> picked_endes_tmp = picked_endes;
+    start = std::chrono::steady_clock::now();
+      _cpu_reconstruct_graph(picked_endes); 
+    end = std::chrono::steady_clock::now();
+    duration = end - start;
+    std::cout << "CPU Reconstruct Graph Runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    if (ILP_solver) {
+      _cpsat_solver(ILP_time_limit, 
+                    _ecls_its_ende_newG, 
+                    _ende_child, 
+                    _ende_child_ptr, 
+                    _root_eclass_id, 
+                    _ende_cost,
+                    best_ende_of_ecls, 
+                    picked_endes_tmp);
+    }
 
     // GPU version
     auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
@@ -115,39 +99,26 @@ public:
     _copy_best_ende_of_ecls_back(best_ende_of_ecls);
     cudaDeviceSynchronize();
 
-    #ifdef TEST_TREE_ILP
-      if (ILP_solver) {
-        _cpsat_solver(ILP_time_limit, 
-                      _ecls_its_ende, 
-                      _ende_child, 
-                      _ende_child_ptr, 
-                      _root_eclass_id, 
-                      _ende_cost,
-                      best_ende_of_ecls, 
-                      picked_endes);
-      }
-    #else
-      float gpu_reconst_Time = 0.;
-      cudaEvent_t startGPU, stopGPU;
-      cudaEventCreate(&startGPU);
-      cudaEventCreate(&stopGPU);    
-      cudaEventRecord(startGPU);
-          _gpu_reconstruct_graph(); 
-      cudaEventRecord(stopGPU);
-      cudaEventSynchronize(stopGPU);
-      cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
-      printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
-      if (ILP_solver) {
-        _cpsat_solver(ILP_time_limit, 
-                      _ecls_its_ende_newG_GPU, 
-                      _ende_child, 
-                      _ende_child_ptr, 
-                      _root_eclass_id, 
-                      _ende_cost,
-                      best_ende_of_ecls, 
-                      picked_endes_tmp);
-      }
-    #endif
+    float gpu_reconst_Time = 0.;
+    cudaEvent_t startGPU, stopGPU;
+    cudaEventCreate(&startGPU);
+    cudaEventCreate(&stopGPU);    
+    cudaEventRecord(startGPU);
+        _gpu_reconstruct_graph(); 
+    cudaEventRecord(stopGPU);
+    cudaEventSynchronize(stopGPU);
+    cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
+    printf("GPU Reconstruct Graph Runtime: %.2f (ms)\n", gpu_reconst_Time);
+    if (ILP_solver) {
+      _cpsat_solver(ILP_time_limit, 
+                    _ecls_its_ende_newG_GPU, 
+                    _ende_child, 
+                    _ende_child_ptr, 
+                    _root_eclass_id, 
+                    _ende_cost,
+                    best_ende_of_ecls, 
+                    picked_endes_tmp);
+    }
   }
 
   void pure_ILP(const double ILP_time_limit = 3600) 

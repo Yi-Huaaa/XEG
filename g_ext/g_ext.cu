@@ -2,24 +2,16 @@
 
 #define threads 1024 // num GPU threads
 #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
-// #define NUM_THREAD_DAG_CONSTR 64
 
-/* ABALATION EXPERIMENTS -1: ABOUT DEGREE */
-// #define EXTEND_GRAPH_TO_HIGHER_DEGEE
-
-// #define SLENDER_VERSION_EGRAPH // ONLY FOR TEST
-
-/* DEBUG ONLY */
+/* DEBUG */
 // #define PRINT_LOG
-// #define CHECK_CYCLE
+// #define CHECK_CYCLE // check for read input
 // #define BIBI_CHECK
 
 /* GENERATE NEW DBENCHMARK for SmoothE */
 // #define DUMP_NEW_JSON
 
-
 #define ENABLE_CHECK
-// Error checking macro for CPU 
 #ifdef ENABLE_CHECK
   #define MY_CHECK(cond, msg) \
     do { \
@@ -57,8 +49,7 @@ void G_EXT::_read_input(const std::string input_path)
   }
 
   // Parse JSON
-  nlohmann::json j;
-  ifs >> j;
+  nlohmann::json j; ifs >> j;
 
   // Read in from .json
   uint32_t tmp_num_ecls; // nuber of eclasses 
@@ -106,7 +97,7 @@ void G_EXT::_read_input(const std::string input_path)
     }
     uint32_t ecls_id = get_ecls_id(ecls_name, tmp_ecls_name_to_id);
 
-    tmp_ende_name.push_back(ename);     // enode 的 id (e.g., "0__0")
+    tmp_ende_name.push_back(ename);     // enode's id (e.g., "0__0")
     tmp_ende_op.push_back(op);          // operator string
     tmp_ende_cost.push_back(cost);      // cost
     tmp_ende_ecls.push_back(ecls_id);   // enode's eclass
@@ -125,7 +116,7 @@ void G_EXT::_read_input(const std::string input_path)
         uint32_t child_ecls_id = get_ecls_id(child_ecls, tmp_ecls_name_to_id);
         tmp_ende_child.push_back(child_ecls_id);
       } else {
-        throw std::runtime_error("Unsupported child type in JSON (must be string or int)");
+        throw std::runtime_error("Unsupported child type in JSON (must be string or int; format please ref github: extraction_gym)");
       }
     }
 
@@ -173,8 +164,8 @@ void G_EXT::_read_input(const std::string input_path)
                       tmp_ende_child_ptr,
                       tmp_root_eclass_id); 
   printf("\n"); 
-#endif   
   printf("Init #eclass = %u, #enodes = %u\n", tmp_num_ecls, tmp_num_ende);
+#endif   
   _prune_dead_nodes(tmp_num_ecls,
                     tmp_num_ende,
                     tmp_ende_name,
@@ -290,36 +281,6 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   MY_CHECK((_num_ecls+dead_ecls_idx.size()) == tmp_num_ecls, "_num_ecls+dead_ecls_idx.size()");
   MY_CHECK(_root_eclass_id.size() == tmp_root_eclass_id.size(), "_root_eclass_id.size()");
 
-
-
-
-// #ifdef EXTEND_GRAPH_TO_HIGHER_DEGEE
-//     printf("\n======================================\n");
-//     for (uint32_t i = 0; i < _root_eclass_id.size(); i++) {
-//       printf("r_eclass %u: ", _root_eclass_id[i]);
-//       for (uint32_t r_ende : _ecls_its_ende[_root_eclass_id[i]]) {
-//         printf("%u, ", r_ende);
-//       }
-//       printf("\n");
-//     }
-//     printf("\n\n");
-
-//     _increase_egraph_deg(&_num_ecls, &_num_ende,
-//       _ende_name, _ende_op, _ende_cost,
-//       _ende_ecls, _ende_child, _ende_child_ptr,
-//       _root_eclass_id);
-
-//     for (uint32_t i = 0; i < _root_eclass_id.size(); i++) {
-//       printf("r_eclass %u: ", _root_eclass_id[i]);
-//       for (uint32_t r_ende : _ecls_its_ende[_root_eclass_id[i]]) {
-//         printf("%u, ", r_ende);
-//       }
-//       printf("\n");
-//     }
-//     printf("\n======================================\n");
-// #endif 
-
-
   // Compress _ecls_its_ende to 1D 
   uint32_t acc_ptr = 0;
   _ecls_its_ende_1D_ptr.push_back(acc_ptr);
@@ -368,11 +329,11 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
   
 #ifdef CHECK_CYCLE
   // ======================================
-  // SCC 檢查：確認 prune 後的 e-graph 是否仍有 cycle
+  // SCC check
   // ======================================
   {
     std::vector<std::vector<uint32_t>> adj(_num_ecls);
-    // 建立 eclass-level adjacency
+    // construct eclass-level adjacency
     for (uint32_t ende = 0; ende < _num_ende; ++ende) {
       uint32_t start = _ende_child_ptr[ende];
       uint32_t end   = _ende_child_ptr[ende + 1];
@@ -424,14 +385,14 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
     }
 
     if (!scc_list.empty()) {
-      std::cout << "⚠️  Found " << scc_list.size() << " strongly connected components (cycles) after pruning.\n";
+      std::cout << "Found " << scc_list.size() << " strongly connected components (cycles) after pruning.\n";
       for (size_t i = 0; i < scc_list.size(); ++i) {
         std::cout << "  SCC " << i << " (size=" << scc_list[i].size() << "): ";
         for (uint32_t e : scc_list[i]) std::cout << e << " ";
         std::cout << "\n";
       }
     } else {
-      std::cout << "✅  Graph is acyclic (no SCC found after pruning).\n";
+      std::cout << "Graph is acyclic (no SCC found after pruning).\n";
     }
   }
 #endif
@@ -447,10 +408,8 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
       for (uint32_t ende2 : _ecls_its_ende[chd_ecls]) {
         // remove self-loop
         if (ende != ende2) {
-          // update _global_adj 
-          _global_adj[ende].insert(ende2); 
-          // update inv_adjs
-          _global_inv_adj[ende2].insert(ende);
+          _global_adj[ende].insert(ende2); // update _global_adj 
+          _global_inv_adj[ende2].insert(ende); // update inv_adjs
         }
       }
     }
@@ -570,7 +529,6 @@ std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_en
       }
     }
   }
-
 
   // === Phase 2: reconstruct best picks ===
   std::vector<std::vector<uint32_t>> ende_picked_by_ende(_num_ende);
@@ -1860,7 +1818,6 @@ std::pair<double, double> G_EXT::_gpu_best_tree()
 
   double dag_ret = 0.0;
 
-// #ifndef SLENDER_VERSION_EGRAPH
   uint32_t q_sz = 0;
   cudaMemcpy(&q_sz, _dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
   uint32_t q_sp = 0;
@@ -2150,7 +2107,6 @@ void G_EXT::_gpu_BFS(const bool is_td,
   uint32_t num = q_sz - q_sp;  
   int cur_level = 0;
 
-#ifndef SLENDER_VERSION_EGRAPH
   while (num > 0) {
     // printf("num = %u\n", num); // used for debug
     cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice); // start point
@@ -2175,22 +2131,6 @@ void G_EXT::_gpu_BFS(const bool is_td,
     cur_level++; 
     cudaMemcpy(_dvc_max_level, &cur_level, sizeof(int), cudaMemcpyHostToDevice);
   }
-#else
-  blocks = 1;
-  _gpu_BFS_kl_slender<<<blocks, threads>>>(
-    global_adj_1D_ptr,
-    global_adj_1D,
-    _dvc_q_sp, 
-    _dvc_q,
-    _dvc_q_sz,
-    _dvc_q_num,
-    level,
-    _dvc_max_level,
-    picked_adj,
-    deg);
-  cudaCheckErrors("_gpu_BFS_kl_slender failed");
-#endif
-
 
   if (!is_td) {
     blocks = (_num_ende + threads - 1) / threads;
@@ -3575,7 +3515,6 @@ void G_EXT::_cpsat_solver_pure(
 
 
 // =========================== Print functions =========================== // 
-
 void G_EXT::_print_adj(const std::vector<std::unordered_set<uint32_t>>& adj) const 
 {
   for (uint32_t fm = 0; fm < adj.size(); fm++) {
@@ -3694,40 +3633,31 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
       const std::vector<uint32_t>& ende_child_ptr,
       const std::vector<uint32_t>& root_eclass_id)
   {
-    // 建立 eclass → enode list 對應
     std::vector<std::vector<uint32_t>> ecls_its_ende(num_ecls);
     for (uint32_t i = 0; i < num_ende; ++i) {
       ecls_its_ende[ende_ecls[i]].push_back(i);
     }
 
-    nlohmann::json j_out;
-    nlohmann::json j_nodes;
-
-    std::mt19937 rng(42);  // 固定 seed，可改成 time(0) 取得隨機性
+    nlohmann::json j_out; nlohmann::json j_nodes; std::mt19937 rng(42); 
 
     for (uint32_t ende = 0; ende < num_ende; ++ende) {
-      // 🟡 保留原始 enode 命名
       std::string node_name = ende_name[ende];
 
       nlohmann::json node_json;
       node_json["op"] = ende_op[ende];
       node_json["cost"] = ende_cost[ende];
 
-      // eclass 要轉成 string
       node_json["eclass"] = std::to_string(ende_ecls[ende]);
 
-      // children：從 eclass 改成任意該 eclass 下 enode
       std::vector<std::string> children;
       for (uint32_t k = ende_child_ptr[ende]; k < ende_child_ptr[ende + 1]; ++k) {
         uint32_t child_ecls = ende_child[k];
 
         if (ecls_its_ende[child_ecls].empty()) continue;
 
-        // 隨機挑一個 representative enode
         std::uniform_int_distribution<size_t> dist(0, ecls_its_ende[child_ecls].size() - 1);
         uint32_t rep_ende = ecls_its_ende[child_ecls][dist(rng)];
 
-        // 🟢 保留原本 enode 名稱，不改格式
         children.push_back(ende_name[rep_ende]);
       }
 
@@ -3735,7 +3665,6 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
       j_nodes[node_name] = node_json;
     }
 
-    // root eclasses → string
     std::vector<std::string> root_eclasses;
     for (uint32_t r : root_eclass_id) {
       root_eclasses.push_back(std::to_string(r));
@@ -3749,5 +3678,3 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
     std::cout << "[INFO] Wrote egg-compatible JSON to: " << out_path << std::endl;
   }
 #endif
-
-
