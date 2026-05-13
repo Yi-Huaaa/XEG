@@ -90,7 +90,7 @@ public:
     }
 
     // GPU version
-    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_best_tree();
+    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
     printf("GPU version cost: under tree code model = %.2lf, under DAG cost model = %.2lf\n", 
               best_tree_cost_gpu, dag_cost_gpu);
     _copy_pickedende_back(picked_endes);
@@ -157,7 +157,7 @@ private:
     std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
   void _init_picked_adj(const std::vector<bool>& picked_endes);
   // GPU version
-  std::pair<double, double> _gpu_best_tree();
+  std::pair<double, double> _gpu_tree_construction(); 
 
 
   /* DAG Construction */

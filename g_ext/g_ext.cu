@@ -1653,7 +1653,7 @@ __global__ void _gpu_warm_up(const uint32_t num_ende, int* dvc_level)
 }
 
 
-std::pair<double, double> G_EXT::_gpu_best_tree() 
+std::pair<double, double> G_EXT::_gpu_tree_construction() 
 {
   int blocks = (_num_ende + threads - 1) / threads;
 
