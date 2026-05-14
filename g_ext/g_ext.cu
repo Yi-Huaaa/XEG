@@ -484,11 +484,11 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
 // =========================== TREE/DAG functions =========================== // 
 
 
-std::pair<double, double> G_EXT::_cpu_best_tree(const std::vector<float>& tmp_ende_cost,
-                                                std::vector<double>& cost_of_ecls,
-                                                std::vector<double>& cost_of_ende,
-                                                std::vector<uint32_t>& best_ende_of_ecls, 
-                                                std::vector<bool>& picked_endes)
+std::pair<double, double> G_EXT::_cpu_tree_construction(const std::vector<float>& tmp_ende_cost,
+  std::vector<double>& cost_of_ecls,
+  std::vector<double>& cost_of_ende,
+  std::vector<uint32_t>& best_ende_of_ecls, 
+  std::vector<bool>& picked_endes)
 {
   bool h_update = true;
   cost_of_ecls.resize(_num_ecls, std::numeric_limits<double>::infinity());
@@ -589,7 +589,6 @@ double G_EXT::_compute_dag_cost(
   for (uint32_t rid : _root_eclass_id) {
     MY_CHECK(rid < _num_ecls, "rid < _num_ecls");
     uint32_t root_ende = best_ende_of_ecls[rid];
-    // printf("root_ende = %u, _num_ende = %u\n\n", root_ende, _num_ende); 
     MY_CHECK(root_ende < _num_ende, "root_ende < _num_ende"); 
     q.push(root_ende);
     picked_endes[root_ende] = true;
@@ -696,10 +695,10 @@ void G_EXT::_init_picked_adj(const std::vector<bool>& picked_endes)
 
 
 
-void G_EXT::_cpu_reconstruct_graph(std::vector<bool>& picked_endes)
+void G_EXT::_cpu_DAG_construction(std::vector<bool>& picked_endes)
 {
 #ifdef PRINT_LOG
-  printf("\nInside G_EXT::_cpu_reconstruct_graph()\n"); 
+  printf("\nInside G_EXT::_cpu_DAG_construction()\n"); 
   // Reconstruct graph that can be levelization
   printf("picked_endes\n");
   for (uint32_t i = 0; i < picked_endes.size(); i++) {
@@ -1841,9 +1840,9 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   return std::make_pair(tree_ret, dag_ret);
 }
 
-void G_EXT::_DAG_construction() {
+void G_EXT::_gpu_DAG_construction() {
 #ifdef PRINT_LOG
-  printf("\nInside _DAG_construction()\n");
+  printf("\nInside _gpu_DAG_construction()\n");
 #endif
 
   int blocks = (_num_ende + threads - 1) / threads;

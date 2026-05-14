@@ -38,7 +38,6 @@ class G_EXT {
 public:
   // Read input file
   void read(const std::string input_path) {
-    // Tempory memory 
     _read_input(input_path); 
   }
 
@@ -62,8 +61,8 @@ public:
     std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
     std::vector<bool> picked_endes;
     std::chrono::duration<double> duration;
-    auto start = std::chrono::steady_clock::now();
-      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_best_tree(_ende_cost, cost_of_ecls, 
+    auto start = std::chrono::steady_clock::now(); 
+      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_tree_construction(_ende_cost, cost_of_ecls, 
                                                               cost_of_ende, best_ende_of_ecls, 
                                                               picked_endes);
     auto end = std::chrono::steady_clock::now();
@@ -74,7 +73,7 @@ public:
 
     std::vector<bool> picked_endes_tmp = picked_endes;
     start = std::chrono::steady_clock::now();
-      _cpu_reconstruct_graph(picked_endes); 
+      _cpu_DAG_construction(picked_endes);  
     end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU DAG construction runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
@@ -102,7 +101,7 @@ public:
     cudaEventCreate(&startGPU);
     cudaEventCreate(&stopGPU);    
     cudaEventRecord(startGPU);
-        _DAG_construction(); 
+      _gpu_DAG_construction(); 
     cudaEventRecord(stopGPU);
     cudaEventSynchronize(stopGPU);
     cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
@@ -143,11 +142,10 @@ private:
     const std::vector<uint32_t>& ende_child_ptr,
     const std::vector<uint32_t>& root_eclass_id);
 
-    
   /* Run */
   /* Tree Level Relaxation */
   // CPU version
-  std::pair<double, double> _cpu_best_tree(const std::vector<float>& tmp_ende_cost,
+  std::pair<double, double> _cpu_tree_construction(const std::vector<float>& tmp_ende_cost,
     std::vector<double>& cost_of_ecls,
     std::vector<double>& cost_of_ende,
     std::vector<uint32_t>& best_ende_of_ecls,
@@ -159,10 +157,9 @@ private:
   // GPU version
   std::pair<double, double> _gpu_tree_construction(); 
 
-
   /* DAG Construction */
-  // CPU version
-  void _cpu_reconstruct_graph(std::vector<bool>& picked_endes);
+  // CPU version 
+  void _cpu_DAG_construction(std::vector<bool>& picked_endes);
   void _construct_deg(const std::vector<bool>& picked_endes,
     const std::vector<double>& cost_of_ende); 
   void _top_down_levelize(const std::vector<bool>& picked_endes,
@@ -193,7 +190,7 @@ private:
       const std::vector<uint32_t>& leaves,
       const std::vector<bool>& picked_endes);
   // GPU version
-  void _DAG_construction();
+  void _gpu_DAG_construction();
     void _gpu_update_deg_init_level(const bool need_to_update);
     void _gpu_BFS(const bool is_td, 
       uint32_t* deg, 
@@ -301,7 +298,7 @@ private:
   uint32_t* _dvc_from_leaves; // for final construction
   
   // READ IN argv/argc
-  uint32_t DAG_KERNEL = 2; // Default setting
+  uint32_t DAG_KERNEL = 2; // Default setting = 2, (0, 1, 2) = (thread, warp, block) version
   uint32_t NUM_THREAD_DAG_CONSTR = 64; // Default setting
 
   // Print function
