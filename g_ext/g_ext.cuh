@@ -69,7 +69,7 @@ public:
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU tree construction runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    printf("CPU version cost: under tree code model = %.2lf, under DAG cost model = %.2lf\n", 
+    printf("CPU version cost: under tree code model = %.2lf,\n\tunder DAG cost model = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
     std::vector<bool> picked_endes_tmp = picked_endes;
@@ -86,37 +86,38 @@ public:
                     _root_eclass_id, 
                     _ende_cost,
                     best_ende_of_ecls, 
-                    picked_endes_tmp);
+                    picked_endes_tmp); 
     }
 
-    // GPU version
-    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
-    printf("GPU version cost: under tree code model = %.2lf, under DAG cost model = %.2lf\n", 
-              best_tree_cost_gpu, dag_cost_gpu);
-    _copy_pickedende_back(picked_endes);
-    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
-    cudaDeviceSynchronize();
+    // // GPU version starts
+    // auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
+    // printf("GPU version cost: under tree code model = %.2lf,\n\tunder DAG cost model = %.2lf\n", 
+    //           best_tree_cost_gpu, dag_cost_gpu);
+    // _copy_pickedende_back(picked_endes);
+    // _copy_best_ende_of_ecls_back(best_ende_of_ecls);
+    // cudaDeviceSynchronize();
 
-    float gpu_reconst_Time = 0.;
-    cudaEvent_t startGPU, stopGPU;
-    cudaEventCreate(&startGPU);
-    cudaEventCreate(&stopGPU);    
-    cudaEventRecord(startGPU);
-      _gpu_DAG_construction(); 
-    cudaEventRecord(stopGPU);
-    cudaEventSynchronize(stopGPU);
-    cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
-    printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);
-    if (ILP_solver && !bibi_testing) {
-      _cpsat_solver(ILP_time_limit, 
-                    _ecls_its_ende_newG_GPU, 
-                    _ende_child, 
-                    _ende_child_ptr, 
-                    _root_eclass_id, 
-                    _ende_cost,
-                    best_ende_of_ecls, 
-                    picked_endes_tmp);
-    }
+    // float gpu_reconst_Time = 0.;
+    // cudaEvent_t startGPU, stopGPU;
+    // cudaEventCreate(&startGPU);
+    // cudaEventCreate(&stopGPU);    
+    // cudaEventRecord(startGPU);
+    //   _gpu_DAG_construction(); 
+    // cudaEventRecord(stopGPU);
+    // cudaEventSynchronize(stopGPU);
+    // cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
+    // printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);
+    // if (ILP_solver && !bibi_testing) {
+    //   _cpsat_solver(ILP_time_limit, 
+    //                 _ecls_its_ende_newG_GPU, 
+    //                 _ende_child, 
+    //                 _ende_child_ptr, 
+    //                 _root_eclass_id, 
+    //                 _ende_cost,
+    //                 best_ende_of_ecls, 
+    //                 picked_endes_tmp);
+    // }
+    // // GPU version ends
   }
 
 private:

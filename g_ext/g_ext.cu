@@ -6,7 +6,6 @@
 /* DEBUG */
 // #define PRINT_LOG
 // #define CHECK_CYCLE // check for read input
-// #define BIBI_CHECK
 
 /* GENERATE NEW DBENCHMARK for SmoothE */
 // #define DUMP_NEW_JSON
@@ -40,11 +39,13 @@
 
 
 // G_EXT fucntions
-void G_EXT::_read_input(const std::string input_path) 
+void G_EXT::_read_input(
+  const std::string input_path) 
 {
   std::ifstream ifs(input_path);
   if (!ifs.is_open()) {
-    std::cerr << "Error: cannot open file " << input_path << std::endl;
+    std::cerr << "Error: cannot open file " 
+      << input_path << std::endl;
     return;
   }
 
@@ -146,46 +147,47 @@ void G_EXT::_read_input(const std::string input_path)
 #ifdef DUMP_NEW_JSON
   std::string out_path = input_path + ".egg.json";
   _dump_to_egg_json(out_path, tmp_num_ecls, tmp_num_ende,
-                    tmp_ende_name, tmp_ende_op, tmp_ende_cost,
-                    tmp_ende_ecls, tmp_ende_child, tmp_ende_child_ptr,
-                    tmp_root_eclass_id);
+    tmp_ende_name, tmp_ende_op, tmp_ende_cost,
+    tmp_ende_ecls, tmp_ende_child, tmp_ende_child_ptr,
+    tmp_root_eclass_id);
 #endif
 
 #ifdef PRINT_LOG
   _print_read_in_data(true,
-                      tmp_num_ecls,
-                      tmp_num_ende,
-                      tmp_ende_name,
-                      tmp_ende_op,
-                      tmp_ende_cost,
-                      tmp_ecls_name_to_id,
-                      tmp_ende_ecls,
-                      tmp_ende_child,
-                      tmp_ende_child_ptr,
-                      tmp_root_eclass_id); 
+    tmp_num_ecls,
+    tmp_num_ende,
+    tmp_ende_name,
+    tmp_ende_op,
+    tmp_ende_cost,
+    tmp_ecls_name_to_id,
+    tmp_ende_ecls,
+    tmp_ende_child,
+    tmp_ende_child_ptr,
+    tmp_root_eclass_id); 
   printf("\n"); 
   printf("Init #eclass = %u, #enodes = %u\n", tmp_num_ecls, tmp_num_ende);
 #endif   
   _prune_dead_nodes(tmp_num_ecls,
-                    tmp_num_ende,
-                    tmp_ende_name,
-                    tmp_ende_op,
-                    tmp_ende_cost,
-                    tmp_ende_ecls,
-                    tmp_ende_child,
-                    tmp_ende_child_ptr,
-                    tmp_root_eclass_id);
+    tmp_num_ende,
+    tmp_ende_name,
+    tmp_ende_op,
+    tmp_ende_cost,
+    tmp_ende_ecls,
+    tmp_ende_child,
+    tmp_ende_child_ptr,
+    tmp_root_eclass_id);
 }
 
-void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
-                              const uint32_t tmp_num_ende,
-                              const std::vector<std::string>& tmp_ende_name, 
-                              const std::vector<std::string>& tmp_ende_op, 
-                              const std::vector<float>& tmp_ende_cost, 
-                              const std::vector<uint32_t>& tmp_ende_ecls,
-                              const std::vector<uint32_t>& tmp_ende_child, 
-                              const std::vector<uint32_t>& tmp_ende_child_ptr, 
-                              const std::vector<uint32_t>& tmp_root_eclass_id) 
+void G_EXT::_prune_dead_nodes(
+  const uint32_t tmp_num_ecls,
+  const uint32_t tmp_num_ende,
+  const std::vector<std::string>& tmp_ende_name, 
+  const std::vector<std::string>& tmp_ende_op, 
+  const std::vector<float>& tmp_ende_cost, 
+  const std::vector<uint32_t>& tmp_ende_ecls,
+  const std::vector<uint32_t>& tmp_ende_child, 
+  const std::vector<uint32_t>& tmp_ende_child_ptr, 
+  const std::vector<uint32_t>& tmp_root_eclass_id) 
 {
 #ifdef PRINT_LOG
   printf("G_EXT::_prune_dead_nodes()\n");
@@ -244,11 +246,11 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
     if (alive_ecls[old_ecls]) {
       #ifdef PRINT_LOG
         std::cout << "  enode[" << old_ende << "]: "
-                  << "name=" << tmp_ende_name[old_ende] 
-                  << ", op=" << tmp_ende_op[old_ende] 
-                  << ", cost=" << tmp_ende_cost[old_ende]
-                  << ", eclass=" << tmp_ende_ecls[old_ende]
-                  << "\n";
+          << "name=" << tmp_ende_name[old_ende] 
+          << ", op=" << tmp_ende_op[old_ende] 
+          << ", cost=" << tmp_ende_cost[old_ende]
+          << ", eclass=" << tmp_ende_ecls[old_ende]
+          << "\n";
       #endif
       uint32_t new_ende_idx = new_ende_idx_mapping[old_ende];
       _ende_name[new_ende_idx] = tmp_ende_name[old_ende];
@@ -315,16 +317,16 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
 
   std::unordered_map<std::string, uint32_t> _ecls_name_to_id;
   _print_read_in_data(false, 
-                      _num_ecls,
-                      _num_ende,
-                      _ende_name,
-                      _ende_op,
-                      _ende_cost,
-                      _ecls_name_to_id,
-                      _ende_ecls,
-                      _ende_child,
-                      _ende_child_ptr,
-                      _root_eclass_id);   
+    _num_ecls,
+    _num_ende,
+    _ende_name,
+    _ende_op,
+    _ende_cost,
+    _ecls_name_to_id,
+    _ende_ecls,
+    _ende_child,
+    _ende_child_ptr,
+    _root_eclass_id);   
 #endif 
   
 #ifdef CHECK_CYCLE
@@ -484,7 +486,8 @@ void G_EXT::_prune_dead_nodes(const uint32_t tmp_num_ecls,
 // =========================== TREE/DAG functions =========================== // 
 
 
-std::pair<double, double> G_EXT::_cpu_tree_construction(const std::vector<float>& tmp_ende_cost,
+std::pair<double, double> G_EXT::_cpu_tree_construction(
+  const std::vector<float>& tmp_ende_cost,
   std::vector<double>& cost_of_ecls,
   std::vector<double>& cost_of_ende,
   std::vector<uint32_t>& best_ende_of_ecls, 
@@ -568,6 +571,8 @@ std::pair<double, double> G_EXT::_cpu_tree_construction(const std::vector<float>
   }
 
   double dag_ret = _compute_dag_cost(best_ende_of_ecls, picked_endes, ende_picked_by_ende); 
+  
+  // construct the masks of adj and in_adj based on picked e-nodes
   _init_picked_adj(picked_endes);
 
   return std::make_pair(tree_ret, dag_ret);
@@ -617,11 +622,11 @@ double G_EXT::_compute_dag_cost(
     }
   }
 #endif
-
   return dag_ret;
 }
 
-void G_EXT::_init_picked_adj(const std::vector<bool>& picked_endes) 
+void G_EXT::_init_picked_adj(
+  const std::vector<bool>& picked_endes) 
 {
   _indegree.resize(_num_ende, 0);
   _inv_indegree.resize(_num_ende, 0);
@@ -692,13 +697,10 @@ void G_EXT::_init_picked_adj(const std::vector<bool>& picked_endes)
 #endif
 }
 
-
-
-void G_EXT::_cpu_DAG_construction(std::vector<bool>& picked_endes)
+void G_EXT::_cpu_DAG_construction(
+  std::vector<bool>& picked_endes)
 {
 #ifdef PRINT_LOG
-  printf("\nInside G_EXT::_cpu_DAG_construction()\n"); 
-  // Reconstruct graph that can be levelization
   printf("picked_endes\n");
   for (uint32_t i = 0; i < picked_endes.size(); i++) {
     if (picked_endes[i]) {
@@ -711,31 +713,11 @@ void G_EXT::_cpu_DAG_construction(std::vector<bool>& picked_endes)
     }
   }
 #endif
-
-#ifdef BIBI_CHECK
-  std::vector<bool> bibi_picked_endes_0 = picked_endes;
-  uint32_t bibi_acc_0 = 0;
-  for (uint32_t i = 0; i < picked_endes.size(); i++) {
-    if (picked_endes[i]) {
-      bibi_acc_0++;
-    }
-  }
-#endif
-
-  // Add more roots enodes
-  for (uint32_t r_ecls : _root_eclass_id) {
-    for (uint32_t r : _ecls_its_ende[r_ecls]) {
-      picked_endes[r] = true;  // 把所有 roots enode 都拉成 true
-    }
-  }
-
   bool updated = true; 
   std::vector<int> level;
   level.resize(_num_ende, -1); // init, needed
-  // uint32_t itr = 0;
 
   while(updated) {
-    // itr++;
     // bottom-up levelization && top-down insertion
     _update_deg(updated, picked_endes); 
     _bottom_up_levelize(picked_endes, level);
@@ -753,17 +735,6 @@ void G_EXT::_cpu_DAG_construction(std::vector<bool>& picked_endes)
     #endif
   }
 
-#ifdef BIBI_CHECK
-  uint32_t bibi_acc_1 = 0;
-  for (uint32_t i = 0; i < picked_endes.size(); i++) {
-    if (picked_endes[i]) {
-      bibi_acc_1++;
-    }
-  }
-  printf("Successfully ends, _max_level = %d, acc = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
-          _max_level, bibi_acc_1, _num_ende, ((double)bibi_acc_1/(double)_num_ende)*100); 
-#endif  
-
   // Clear redundant enodes
   _clear_redundant_endes(picked_endes);
 
@@ -775,28 +746,11 @@ void G_EXT::_cpu_DAG_construction(std::vector<bool>& picked_endes)
       _ecls_its_ende_newG[ecls].push_back(ende);
     }
   }
-
-#ifdef BIBI_CHECK
-  uint32_t bibi_acc_2 = 0;
-  for (uint32_t i = 0; i < _in_subgraph.size(); i++) {
-    if (_in_subgraph[i]) {
-      bibi_acc_2++;
-    }
-  }
-  printf("After removing redundant enodes: _max_level = %d, acc = %u, _num_ende = %u, (acc/_num_ende) = %.3lf%\n", 
-          _max_level, bibi_acc_2, _num_ende, ((double)bibi_acc_2/(double)_num_ende)*100); 
-  MY_CHECK(bibi_acc_0 <= bibi_acc_1, "bibi_acc_0 <= bibi_acc_1");
-  MY_CHECK(bibi_acc_2 <= bibi_acc_1, "bibi_acc_2 <= bibi_acc_1");
-  MY_CHECK(bibi_acc_0 <= bibi_acc_2, "bibi_acc_0 <= bibi_acc_2");
-  for (uint32_t i = 0; i < bibi_picked_endes_0.size(); i++) {
-    if (bibi_picked_endes_0[i]) {
-      MY_CHECK(_in_subgraph[i] == bibi_picked_endes_0[i], "_in_subgraph[i] == bibi_picked_endes_0[i]");
-    }
-  }
-#endif
 }
 
-void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& picked_endes) 
+void G_EXT::_update_deg(
+  const bool need_to_update, 
+  const std::vector<bool>& picked_endes) 
 {
 #ifdef PRINT_LOG 
   printf("\nInside G_EXT::_update_deg()\n");
@@ -804,7 +758,6 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
   _print_degree(true, picked_endes);
   _print_degree(false, picked_endes);
 #endif
-
   if (!need_to_update) return; 
 
   _indegree.assign(_num_ende, 0);
@@ -813,7 +766,6 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
   for (uint32_t fm_ende = 0; fm_ende < _num_ende; fm_ende++) {
     if (!picked_endes[fm_ende]) continue; 
     for (uint32_t k = _global_adj_1D_ptr[fm_ende]; k < _global_adj_1D_ptr[fm_ende+1]; k++) {
-      // if (!picked_endes[to_ende]) continue;
       if (!_picked_adj[k]) continue;
       const uint32_t to_ende = _global_adj_1D[k];
       _indegree[to_ende]++;
@@ -828,16 +780,14 @@ void G_EXT::_update_deg(const bool need_to_update, const std::vector<bool>& pick
 #endif  
 }
 
-void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg, 
-                const std::vector<bool>& picked_endes,
-                const std::vector<uint32_t>& global_adj_1D,
-                const std::vector<uint32_t>& global_adj_1D_ptr,
-                const std::vector<bool>& picked_adj,
-                std::vector<int>& level)
+void G_EXT::_BFS(
+  const bool is_td, std::vector<uint32_t>& deg, 
+  const std::vector<bool>& picked_endes,
+  const std::vector<uint32_t>& global_adj_1D,
+  const std::vector<uint32_t>& global_adj_1D_ptr,
+  const std::vector<bool>& picked_adj,
+  std::vector<int>& level)
 {
-#ifdef PRINT_LOG
-  printf("\nInside G_EXT::_BFS()\n");
-#endif 
   // lambda
   auto get_rev_level = [&](const uint32_t LEVEL, uint32_t a) -> uint32_t {
     return LEVEL - a - 1;
@@ -848,14 +798,8 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if ((deg[ende] == 0) && picked_endes[ende]) {
       q.push(ende);
-      // #ifdef PRINT_LOG  
-      //   printf("  Queue init push in enode %u\n", ende);
-      // #endif
     }
   } 
-  // #ifdef PRINT_LOG  
-  //   printf("\n");
-  // #endif
 
   // BFS: top-down levelization 
   int cur_level = 0;
@@ -864,22 +808,6 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
     for (size_t t = 0; t < layer; ++t) {
       uint32_t u = q.front(); q.pop();
       level[u] = cur_level;
-      // #ifdef PRINT_LOG
-      //   printf("  Processing enode %u\n", u);
-      // #endif
-      // for (uint32_t v : adj[u]) {
-      //   if (!picked_endes[v]) continue;
-      //   // #ifdef PRINT_LOG
-      //   //   printf("   child enode %u, with deg[%u] = %u\n", v, v, deg[v]); 
-      //   // #endif
-      //   if (deg[v] > 0 && --deg[v] == 0) {
-      //     q.push(v);
-      //     // #ifdef PRINT_LOG
-      //     //   printf("    Push enode %u (indegree->0)\n", v);
-      //     // #endif
-      //   }
-      // }
-      // new version 
       for (uint32_t k = global_adj_1D_ptr[u]; k < global_adj_1D_ptr[u+1]; k++) {
         if (!picked_adj[k]) continue;
         const uint32_t v = global_adj_1D[k];
@@ -896,8 +824,9 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
 
   if (!is_td) {
     for (uint32_t i = 0; i < level.size(); i++) {
-      level[i] = get_rev_level(_max_level, level[i]);
-      MY_CHECK(level[i] >= 0, "level[i] >= 0,");
+      if (level[i] != -1) {
+        level[i] = get_rev_level(_max_level, level[i]);
+      }
     }
   }
 
@@ -906,8 +835,9 @@ void G_EXT::_BFS(const bool is_td, std::vector<uint32_t>& deg,
 #endif
 }
 
-void G_EXT::_top_down_levelize(const std::vector<bool>& picked_endes,
-                              std::vector<int>& level) 
+void G_EXT::_top_down_levelize(
+  const std::vector<bool>& picked_endes,
+  std::vector<int>& level) 
 {
 #ifdef PRINT_LOG
   printf("\nG_EXT::_top_down_levelize()\n");
@@ -923,8 +853,9 @@ void G_EXT::_top_down_levelize(const std::vector<bool>& picked_endes,
 #endif 
 }
 
-void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
-                                std::vector<int>& level) 
+void G_EXT::_bottom_up_levelize(
+  const std::vector<bool>& picked_endes,
+  std::vector<int>& level) 
 {
 #ifdef PRINT_LOG
   printf("\nG_EXT::_bottom_up_levelize()\n");
@@ -942,8 +873,8 @@ void G_EXT::_bottom_up_levelize(const std::vector<bool>& picked_endes,
 
 
 bool G_EXT::_insertion(const bool is_td, 
-                      std::vector<bool>& picked_endes,
-                      std::vector<int>& level) 
+  std::vector<bool>& picked_endes,
+  std::vector<int>& level) 
 {
 #ifdef PRINT_LOG
   if (is_td) {
@@ -3357,7 +3288,8 @@ void G_EXT::_cpsat_solver(
 }
 
 // =========================== Print functions =========================== // 
-void G_EXT::_print_adj(const std::vector<std::unordered_set<uint32_t>>& adj) const 
+void G_EXT::_print_adj(
+  const std::vector<std::unordered_set<uint32_t>>& adj) const 
 {
   for (uint32_t fm = 0; fm < adj.size(); fm++) {
     printf("fm_node = %u, to nodes = [", fm); 
@@ -3368,17 +3300,18 @@ void G_EXT::_print_adj(const std::vector<std::unordered_set<uint32_t>>& adj) con
   }
 }
 
-void G_EXT::_print_read_in_data(const bool init,
-                                const uint32_t tmp_num_ecls,
-                                const uint32_t tmp_num_ende,
-                                const std::vector<std::string>& tmp_ende_name, 
-                                const std::vector<std::string>& tmp_ende_op, 
-                                const std::vector<float>& tmp_ende_cost, 
-                                const std::unordered_map<std::string, uint32_t>& tmp_ecls_name_to_id,
-                                const std::vector<uint32_t>& tmp_ende_ecls,
-                                const std::vector<uint32_t>& tmp_ende_child, 
-                                const std::vector<uint32_t>& tmp_ende_child_ptr, 
-                                const std::vector<uint32_t>& tmp_root_eclass_id) const 
+void G_EXT::_print_read_in_data(
+  const bool init,
+  const uint32_t tmp_num_ecls,
+  const uint32_t tmp_num_ende,
+  const std::vector<std::string>& tmp_ende_name, 
+  const std::vector<std::string>& tmp_ende_op, 
+  const std::vector<float>& tmp_ende_cost, 
+  const std::unordered_map<std::string, uint32_t>& tmp_ecls_name_to_id,
+  const std::vector<uint32_t>& tmp_ende_ecls,
+  const std::vector<uint32_t>& tmp_ende_child, 
+  const std::vector<uint32_t>& tmp_ende_child_ptr, 
+  const std::vector<uint32_t>& tmp_root_eclass_id) const 
 {
   std::cout << "\n========== G_EXT Internal State ==========\n";
   std::cout << "num_ende: " << tmp_num_ende << ", " << "num_ecls: " << tmp_num_ecls << "\n\n";
@@ -3414,7 +3347,9 @@ void G_EXT::_print_read_in_data(const bool init,
   }
 }
 
-void G_EXT::_print_degree(const bool is_td, const std::vector<bool>& picked_endes) const 
+void G_EXT::_print_degree(
+  const bool is_td, 
+  const std::vector<bool>& picked_endes) const 
 {
   const std::string a = (is_td) ? ("Top-Down _indegree\n") : ("Bottom-up _inv_indegree\n");
   const std::string b = (is_td) ? ("_indegree") : ("_inv_indegree");
@@ -3431,8 +3366,10 @@ void G_EXT::_print_degree(const bool is_td, const std::vector<bool>& picked_ende
   printf("\n");
 }
 
-void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
-                                const std::vector<bool>& picked_endes) 
+void G_EXT::_print_levelization(
+  const bool is_td, 
+  const std::vector<int>& level,
+  const std::vector<bool>& picked_endes) 
 {
   const std::string a = (is_td) ? ("Top-Down\n") : ("Bottom-up\n");
   
@@ -3464,16 +3401,16 @@ void G_EXT::_print_levelization(const bool is_td, const std::vector<int>& level,
   #include <nlohmann/json.hpp>
 
   void G_EXT::_dump_to_egg_json(
-      const std::string& out_path,
-      uint32_t num_ecls,
-      uint32_t num_ende,
-      const std::vector<std::string>& ende_name,
-      const std::vector<std::string>& ende_op,
-      const std::vector<float>& ende_cost,
-      const std::vector<uint32_t>& ende_ecls,
-      const std::vector<uint32_t>& ende_child,
-      const std::vector<uint32_t>& ende_child_ptr,
-      const std::vector<uint32_t>& root_eclass_id)
+    const std::string& out_path,
+    uint32_t num_ecls,
+    uint32_t num_ende,
+    const std::vector<std::string>& ende_name,
+    const std::vector<std::string>& ende_op,
+    const std::vector<float>& ende_cost,
+    const std::vector<uint32_t>& ende_ecls,
+    const std::vector<uint32_t>& ende_child,
+    const std::vector<uint32_t>& ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id)
   {
     std::vector<std::vector<uint32_t>> ecls_its_ende(num_ecls);
     for (uint32_t i = 0; i < num_ende; ++i) {
