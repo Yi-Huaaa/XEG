@@ -69,7 +69,7 @@ public:
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU tree construction runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    printf("CPU version cost: under tree code model = %.2lf,\n\tunder DAG cost model = %.2lf\n", 
+    printf("CPU version cost:\n\tunder tree code model = %.2lf,\n\tunder DAG cost model = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
     std::vector<bool> picked_endes_tmp = picked_endes;
@@ -91,7 +91,7 @@ public:
 
     // // GPU version starts
     // auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
-    // printf("GPU version cost: under tree code model = %.2lf,\n\tunder DAG cost model = %.2lf\n", 
+    // printf("GPU version cost:\n\tunder tree code model = %.2lf,\n\tunder DAG cost model = %.2lf\n", 
     //           best_tree_cost_gpu, dag_cost_gpu);
     // _copy_pickedende_back(picked_endes);
     // _copy_best_ende_of_ecls_back(best_ende_of_ecls);
@@ -320,6 +320,13 @@ private:
   void _print_degree(const bool is_td, const std::vector<bool>& picked_endes) const;
   void _print_levelization(const bool is_td, const std::vector<int>& level,
                           const std::vector<bool>& picked_endes);
+
+
+  // 0515 try
+  std::vector<bool> _new_inserted; 
+  bool _insertion2(const bool is_td, 
+    std::vector<bool>& picked_endes,
+    std::vector<int>& level);
 }; // class G_EXT
 #endif
 

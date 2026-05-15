@@ -872,7 +872,7 @@ void G_EXT::_bottom_up_levelize(
 }
 
 
-bool G_EXT::_insertion(const bool is_td, 
+bool G_EXT::_insertion2(const bool is_td, 
   std::vector<bool>& picked_endes,
   std::vector<int>& level) 
 {
@@ -1042,140 +1042,114 @@ bool G_EXT::_insertion(const bool is_td,
   return update;
 }
 
+bool G_EXT::_insertion(const bool is_td, 
+  std::vector<bool>& picked_endes,
+  std::vector<int>& level) 
+{
+#ifdef PRINT_LOG
+  if (is_td) {
+    printf("\nG_EXT::_top_down_insertion()\n");
+  } else {
+    printf("\nG_EXT::_bottom_up_insertion()\n");
+  }
+#endif
 
-// bool G_EXT::_insertion(const bool is_td, 
-//                       std::vector<bool>& picked_endes,
-//                       std::vector<int>& level) 
-// {
-// #ifdef PRINT_LOG
-//   if (is_td) {
-//     printf("\nG_EXT::_top_down_insertion()\n");
-//   } else {
-//     printf("\nG_EXT::_bottom_up_insertion()\n");
-//   }
-// #endif
-//   // Lambda
-//   auto has_overlap = [&](const std::vector<uint32_t>& a,
-//                         const std::vector<uint32_t>& b) -> bool {
-//     for (uint32_t x : a)
-//       for (uint32_t y : b)
-//         if (x == y)
-//           return true;
-//     return false;
-//   };
+  bool update = false;
 
-//   bool update = false;
+  // Step 1: 初始化 cycle revert 標記
+  // 將所有 _new_inserted 設為 false，只捕捉「這一輪」剛被平行的 threads 插入的點
+  _new_inserted.assign(_num_ende, false);
 
-//   // Try all candidates
-//   for (uint32_t ende = 0; ende < _num_ende; ende++) {
-//     if (picked_endes[ende]) continue;
-//     #ifdef PRINT_LOG
-//       printf("\n* Processing ende = %u\n", ende);
-//     #endif
-//     std::vector<uint32_t> valid_pars;
-//     std::vector<uint32_t> valid_chds;
-//     // _top_down_insertion(): 
-//       // If not picked, check whether it can be added to this graph
-//       // Conditions:
-//       //   1. At least 1 parent enode exists (located @ MAX(parent_level))
-//       //   2. At least 0 chldrn enode exists (located @ min(chldrn_level))
-//       //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
-//     // _bottom_up_insertion(): 
-//       // If not picked, check whether it can be added to this graph
-//       // Conditions:
-//       //   1. At least 0 parent enode exists (located @ MAX(parent_level))
-//       //   2. At least 1 chldrn enode exists (located @ min(chldrn_level))
-//       //   3. parent_level <= chldrn_level; can equal since children can be push to lower level at the next levelization
-//     bool has_par = false, has_chd = false;
-//     int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-//     uint32_t max_par_ende = UINT32_MAX, min_chd_ende = UINT32_MAX; // Note: init values here are not important!
-//     // Find max parent level 
-//     #ifdef PRINT_LOG
-//       printf("Find max parent level\n"); 
-//     #endif
-//     for (uint32_t k = _global_inv_adj_1D_ptr[ende]; k < _global_inv_adj_1D_ptr[ende+1]; k++) {
-//       uint32_t par_ende = _global_inv_adj_1D[k];
-//       if (!picked_endes[par_ende]) continue;
-//       int par_lvl = level[par_ende];
-//       valid_pars.push_back(par_ende);
-//       if (max_par_lvl < par_lvl) {
-//         #ifdef PRINT_LOG
-//           printf("  pre: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
-//         #endif
-//         MY_CHECK(par_lvl >= 0, "par_lvl >= 0"); 
-//         has_par = true; 
-//         max_par_lvl = par_lvl; 
-//         max_par_ende = par_ende;
-//         #ifdef PRINT_LOG
-//           printf("  pos: par_ende = %u, par_lvl = %d, max_par_lvl = %d\n", par_ende, par_lvl, max_par_lvl);
-//        #endif
-//       }
-//     }
-//     // Find min child level
-//     #ifdef PRINT_LOG
-//       printf("Find min child level\n"); 
-//     #endif
-//     for (uint32_t k = _global_adj_1D_ptr[ende]; k < _global_adj_1D_ptr[ende+1]; k++) {
-//       uint32_t chd_ende = _global_adj_1D[k];      
-//       if (!picked_endes[chd_ende]) continue;
-//       int chd_lvl = level[chd_ende];
-//       if (chd_lvl < 0) {
-//         printf("WTF: \n");
-//         std::cout << "chd_ende: " << chd_ende << ", chd_lvl = " << chd_lvl << "\n";
-//         exit(1); 
-//       }      
-//       MY_CHECK(chd_lvl >= 0, "chd_lvl >= 0"); 
-//       valid_chds.push_back(chd_ende);
-//       if (min_chd_lvl > chd_lvl) {
-//         #ifdef PRINT_LOG
-//           printf("  pre: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
-//         #endif 
-//         has_chd = true; 
-//         min_chd_lvl = chd_lvl;
-//         min_chd_ende = chd_ende; 
-//         #ifdef PRINT_LOG
-//           printf("  pos: chd_ende = %u, chd_lvl = %d, min_chd_lvl = %d\n", chd_ende, chd_lvl, min_chd_lvl);
-//         #endif 
-//       }
-//     }
+  // Step 3: 解放平行運算
+  // 使用 dynamic 排程，因為每個節點的 degree 不同，負載可能不均
+  // #pragma omp parallel for schedule(dynamic)
+  // #pragma omp parallel for schedule(static, 16)
+  // #pragma omp parallel for
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if (picked_endes[ende]) {
+      continue;
+    }
+
+    // Step 2: 使用 Local Vector 取代全域的 _tmp_picked_adj
+    // 這將運算完全鎖在 CPU 的 L1/L2 Cache 內，大幅降低 Memory Bandwidth 壓力
+    bool has_par = false, has_chd = false;
+    int max_par_lvl = -1, min_chd_lvl = INT_MAX;
     
-//     // Check whether form a cycle
-//     bool cond = (is_td) ? (has_par) : (has_chd);
-//     int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-//     // given_lvl == 0 的時候就有可能把非 root 的 enode 加到 level 0，這個時候就不能再繼續往上加上去否則 level 就會壞掉
-//     // 因此我們會停在 given level = 0 的狀況下
-//     bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap(valid_pars, valid_chds)) && (given_lvl >= 0);
-//     if (valid) {
-//       MY_CHECK(given_lvl > -1, "given_lvl > -1");
+    std::vector<uint32_t> valid_pars;
+    std::vector<uint32_t> valid_chds;
 
-//       // Update 
-//       picked_endes[ende] = true;
-//       level[ende] = given_lvl;
-//       // update _adj and _inv_adj
-//       for (uint32_t par_ende : valid_pars) {
-//         // _adj[par_ende].insert(ende);
-//         // _inv_adj[ende].insert(par_ende);
-//         _update_picked_adj(par_ende, ende); 
-//       }
-//       for (uint32_t chd_ende : valid_chds) {
-//         // _adj[ende].insert(chd_ende);
-//         // _inv_adj[chd_ende].insert(ende);
-//         _update_picked_adj(ende, chd_ende); 
-//       }
-//       update = true; 
+    // 尋找 max parent level
+    const uint32_t p_start = _global_inv_adj_1D_ptr[ende];
+    const uint32_t p_end   = _global_inv_adj_1D_ptr[ende+1];
+    for (uint32_t k = p_start; k < p_end; k++) {
+      uint32_t par_ende = _global_inv_adj_1D[k];
+      if (!picked_endes[par_ende]) continue;
+      
+      has_par = true;
+      int par_lvl = level[par_ende];
+      valid_pars.push_back(par_ende);
+      
+      if (max_par_lvl < par_lvl) {
+        max_par_lvl = par_lvl; 
+      }
+    }
 
-//       #ifdef PRINT_LOG
-//         printf("! valid ende = %u, max_par_lvl = %d (max_par_ende = %u), min_chd_lvl = %d (min_chd_ende = %u), given_lvl = %d\n", 
-//                 ende, 
-//                 max_par_lvl, max_par_ende,
-//                 min_chd_lvl, min_chd_ende,
-//                 given_lvl);
-//       #endif      
-//     }
-//   }
+    // 尋找 min child level
+    const uint32_t c_start = _global_adj_1D_ptr[ende];
+    const uint32_t c_end   = _global_adj_1D_ptr[ende+1];
+    for (uint32_t k = c_start; k < c_end; k++) {
+      uint32_t chd_ende = _global_adj_1D[k];      
+      if (!picked_endes[chd_ende]) continue;
+      
+      has_chd = true;
+      int chd_lvl = level[chd_ende];
+      valid_chds.push_back(chd_ende);
+      
+      if (min_chd_lvl > chd_lvl) {
+        min_chd_lvl = chd_lvl;
+      }
+    }
 
-//   return update;
-// }
+    // Check whether form a cycle (區域變數 Overlap Check)
+    bool cond = (is_td) ? (has_par) : (has_chd);
+    int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+    
+    bool has_overlap_b = false;
+    for (uint32_t p : valid_pars) {
+      for (uint32_t c : valid_chds) {
+        if (p == c) {
+          has_overlap_b = true;
+          break;
+        }
+      }
+      if (has_overlap_b) break;
+    }
+
+    bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap_b) && (given_lvl >= 0);
+    
+    // Step 3 (續): 只做輕量級的狀態更新，完全不碰 _picked_adj 這些 Mask
+    if (valid) {
+      update = true; 
+      // 因為每個 thread 處理不同的 ende，直接寫入陣列是 thread-safe 的
+      picked_endes[ende] = true;
+      level[ende] = given_lvl;
+      _new_inserted[ende] = true; // 標記為剛插入，交給接下來的 BFS 把關
+      
+      #ifdef PRINT_LOG
+        printf("! valid ende = %u, max_par_lvl = %d, min_chd_lvl = %d, given_lvl = %d\n", 
+               ende, max_par_lvl, min_chd_lvl, given_lvl);
+      #endif
+    } 
+  } // End of parallel for
+
+  // Step 4: 統一更新 Mask (批次重建)
+  // 如果這一輪有任何節點被成功加入，我們就呼叫你已經寫好的函數，一口氣把全域 Edge Masks 建好
+  if (update) {
+    _init_picked_adj(picked_endes);
+  }
+
+  return update;
+}
 
 
 void G_EXT::_update_picked_adj(const uint32_t fm_ende, const uint32_t to_ende) 
