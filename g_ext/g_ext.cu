@@ -716,6 +716,7 @@ void G_EXT::_cpu_DAG_construction(
   bool updated = true; 
   std::vector<int> level;
   level.resize(_num_ende, -1); // init, needed
+  _new_inserted.assign(_num_ende, false); // init, needed
 
   while(updated) {
     // bottom-up levelization && top-down insertion
@@ -782,6 +783,104 @@ void G_EXT::_update_deg(
 
 void G_EXT::_BFS(
   const bool is_td, std::vector<uint32_t>& deg, 
+  std::vector<bool>& picked_endes, // <-- 拿掉 const
+  const std::vector<uint32_t>& global_adj_1D,
+  const std::vector<uint32_t>& global_adj_1D_ptr,
+  const std::vector<bool>& picked_adj,
+  std::vector<int>& level)
+{
+  // lambda
+  auto get_rev_level = [&](const uint32_t LEVEL, uint32_t a) -> uint32_t {
+    return LEVEL - a - 1;
+  };
+
+  // init queue (roots || leaves)
+  std::queue<uint32_t> q;
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if ((deg[ende] == 0) && picked_endes[ende]) {
+      q.push(ende);
+    }
+  } 
+
+  // BFS: top-down / bottom-up levelization 
+  int cur_level = 0;
+  while (!q.empty()) {
+    size_t layer = q.size();
+    for (size_t t = 0; t < layer; ++t) {
+      uint32_t u = q.front(); q.pop();
+      level[u] = cur_level;
+      for (uint32_t k = global_adj_1D_ptr[u]; k < global_adj_1D_ptr[u+1]; k++) {
+        if (!picked_adj[k]) continue;
+        const uint32_t v = global_adj_1D[k];
+        if (deg[v] > 0 && --deg[v] == 0) {
+          q.push(v);
+        }        
+      }
+    }
+    ++cur_level;
+  }
+
+  // update _max_level
+  _max_level = cur_level; 
+
+  // =======================================================
+  // 💡 增量清理 (Incremental Cycle Revert) 對應 Algorithm 2
+  // =======================================================
+  for (uint32_t i = 0; i < _num_ende; i++) {
+    if (_new_inserted[i] && deg[i] > 0) {
+      // 1. 踢出節點並還原狀態
+      picked_endes[i] = false;
+      _new_inserted[i] = false;
+      level[i] = -1; 
+
+      // 2. 清除出邊 Mask (i -> chd)
+      for (uint32_t k = _global_adj_1D_ptr[i]; k < _global_adj_1D_ptr[i+1]; k++) {
+        _picked_adj[k] = false;
+        uint32_t chd = _global_adj_1D[k];
+        // 去 chd 的 inv_adj 裡把指向 i 的指標也設為 false
+        for (uint32_t kk = _global_inv_adj_1D_ptr[chd]; kk < _global_inv_adj_1D_ptr[chd+1]; kk++) {
+          if (_global_inv_adj_1D[kk] == i) {
+            _picked_inv_adj[kk] = false;
+            break;
+          }
+        }
+      }
+
+      // 3. 清除入邊 Mask (par -> i)
+      for (uint32_t k = _global_inv_adj_1D_ptr[i]; k < _global_inv_adj_1D_ptr[i+1]; k++) {
+        _picked_inv_adj[k] = false;
+        uint32_t par = _global_inv_adj_1D[k];
+        // 去 par 的 adj 裡把指向 i 的指標也設為 false
+        for (uint32_t kk = _global_adj_1D_ptr[par]; kk < _global_adj_1D_ptr[par+1]; kk++) {
+          if (_global_adj_1D[kk] == i) {
+            _picked_adj[kk] = false;
+            break;
+          }
+        }
+      }
+
+      // #ifdef PRINT_LOG
+        printf("[Cycle Revert] Node %u removed due to cycle!\n", i);
+      // #endif
+    }
+  }
+
+  // 反轉 Level (僅限 bottom-up)
+  if (!is_td) {
+    for (uint32_t i = 0; i < level.size(); i++) {
+      if (level[i] != -1) {
+        level[i] = get_rev_level(_max_level, level[i]);
+      }
+    }
+  }
+
+#ifdef PRINT_LOG
+  printf("_max_level = %d, cur_level = %d\n", _max_level, cur_level); 
+#endif
+}
+
+void G_EXT::_BFS2(
+  const bool is_td, std::vector<uint32_t>& deg, 
   const std::vector<bool>& picked_endes,
   const std::vector<uint32_t>& global_adj_1D,
   const std::vector<uint32_t>& global_adj_1D_ptr,
@@ -836,7 +935,7 @@ void G_EXT::_BFS(
 }
 
 void G_EXT::_top_down_levelize(
-  const std::vector<bool>& picked_endes,
+  std::vector<bool>& picked_endes,
   std::vector<int>& level) 
 {
 #ifdef PRINT_LOG
@@ -854,7 +953,7 @@ void G_EXT::_top_down_levelize(
 }
 
 void G_EXT::_bottom_up_levelize(
-  const std::vector<bool>& picked_endes,
+  std::vector<bool>& picked_endes,
   std::vector<int>& level) 
 {
 #ifdef PRINT_LOG
@@ -1064,7 +1163,7 @@ bool G_EXT::_insertion(const bool is_td,
   // 使用 dynamic 排程，因為每個節點的 degree 不同，負載可能不均
   // #pragma omp parallel for schedule(dynamic)
   // #pragma omp parallel for schedule(static, 16)
-  // #pragma omp parallel for
+  #pragma omp parallel for
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if (picked_endes[ende]) {
       continue;

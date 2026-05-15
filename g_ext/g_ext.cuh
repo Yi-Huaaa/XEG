@@ -164,14 +164,20 @@ private:
   void _cpu_DAG_construction(std::vector<bool>& picked_endes);
   void _construct_deg(const std::vector<bool>& picked_endes,
     const std::vector<double>& cost_of_ende); 
-  void _top_down_levelize(const std::vector<bool>& picked_endes,
+  void _top_down_levelize(std::vector<bool>& picked_endes,
     std::vector<int>& level);
-  void _bottom_up_levelize(const std::vector<bool>& picked_endes,
+  void _bottom_up_levelize(std::vector<bool>& picked_endes,
     std::vector<int>& level);
     void _update_deg(const bool need_to_update, 
       const std::vector<bool>& picked_endes);
-    void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
+    void _BFS2(const bool is_td, std::vector<uint32_t>& deg, 
       const std::vector<bool>& picked_endes,
+      const std::vector<uint32_t>& global_adj_1D,
+      const std::vector<uint32_t>& global_adj_1D_ptr,
+      const std::vector<bool>& picked_adj,
+      std::vector<int>& level);
+    void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
+      std::vector<bool>& picked_endes, 
       const std::vector<uint32_t>& global_adj_1D,
       const std::vector<uint32_t>& global_adj_1D_ptr,
       const std::vector<bool>& picked_adj,
