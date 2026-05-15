@@ -54,6 +54,7 @@ public:
     // READ IN argv/argc
     DAG_KERNEL = dag_kernel;
     NUM_THREAD_DAG_CONSTR = num_thread_dag_constrution;
+    bool bibi_testing = true;;
 
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
@@ -73,11 +74,11 @@ public:
 
     std::vector<bool> picked_endes_tmp = picked_endes;
     start = std::chrono::steady_clock::now();
-      _cpu_DAG_construction(picked_endes);  
+      // _cpu_DAG_construction(picked_endes);  
     end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU DAG construction runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    if (ILP_solver) {
+    if (ILP_solver && !bibi_testing) {
       _cpsat_solver(ILP_time_limit, 
                     _ecls_its_ende_newG, 
                     _ende_child, 
@@ -101,12 +102,12 @@ public:
     cudaEventCreate(&startGPU);
     cudaEventCreate(&stopGPU);    
     cudaEventRecord(startGPU);
-      _gpu_DAG_construction(); 
+      // _gpu_DAG_construction(); 
     cudaEventRecord(stopGPU);
     cudaEventSynchronize(stopGPU);
     cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
     printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);
-    if (ILP_solver) {
+    if (ILP_solver && !bibi_testing) {
       _cpsat_solver(ILP_time_limit, 
                     _ecls_its_ende_newG_GPU, 
                     _ende_child, 

@@ -561,7 +561,6 @@ std::pair<double, double> G_EXT::_cpu_tree_construction(const std::vector<float>
   }
   printf("\n");  
 #endif
-
   // Get best tree cost 
   double tree_ret = 0.0; 
   for (uint32_t r = 0; r < _root_eclass_id.size(); r++) {
@@ -1400,7 +1399,6 @@ __device__ double atomicMinDouble(double* addr, double val) {
   return __longlong_as_double(old);
 }
 
-
 __global__ void _relax_enodes_kernel(const uint32_t num_endes, 
   const float* ende_cost, 
   const uint32_t* ende_ecls,
@@ -1427,10 +1425,32 @@ __global__ void _relax_enodes_kernel(const uint32_t num_endes,
 
   double old = atomicMinDouble(&cost_of_ecls[which_ecls], acc_cost);
   if (acc_cost < old) {
-    cost_of_ecls[which_ecls] = acc_cost;
     best_ende_of_ecls[which_ecls] = t_idx;
     *update = true; // No need to be atomic
   }  
+}
+
+__global__ void _resolve_best_ende(
+  const uint32_t num_ecls,
+  const uint32_t* ecls_its_ende_1D,
+  const uint32_t* ecls_its_ende_1D_ptr,
+  const double*   cost_of_ecls,
+  const double*   cost_of_ende,
+  uint32_t*       best_ende_of_ecls)
+{
+  uint32_t ecls = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ecls >= num_ecls) return;
+
+  const uint32_t start = ecls_its_ende_1D_ptr[ecls];
+  const uint32_t end   = ecls_its_ende_1D_ptr[ecls+1];
+  const double btendecost = cost_of_ende[best_ende_of_ecls[ecls]];
+ 
+  for (uint32_t k = start; k < end; k++) {
+    uint32_t ende = ecls_its_ende_1D[k];
+    if (btendecost > cost_of_ende[ende]) { 
+      best_ende_of_ecls[ecls] = ende;
+    }
+  }
 }
 
 __global__ void _get_tree_cost(const uint32_t size, 
@@ -1470,17 +1490,37 @@ __global__ void _print_dvc_ende_picked_by_ende(const uint32_t sz,
   printf("\n");
 }
 
+// __global__ void _init_q(const uint32_t sz, 
+//   const uint32_t* root_eclass_id,
+//   const uint32_t* best_ende_of_ecls,
+//   uint32_t* q,
+//   uint32_t* q_sz,
+//   uint32_t* q_num)
+// {
+//   uint32_t pos = 0;
+//   for (uint32_t i = 0; i < sz; i++) {
+//     uint32_t ecls = root_eclass_id[i];
+//     uint32_t best_ende = best_ende_of_ecls[ecls];
+//     q[pos] = best_ende;
+//     pos++;
+//   }
+//   *q_sz = pos;
+//   *q_num = pos;
+// }
+
 __global__ void _init_q(const uint32_t sz, 
   const uint32_t* root_eclass_id,
   const uint32_t* best_ende_of_ecls,
   uint32_t* q,
   uint32_t* q_sz,
-  uint32_t* q_num)
+  uint32_t* q_num,
+  uint32_t* picked_endes)
 {
   uint32_t pos = 0;
   for (uint32_t i = 0; i < sz; i++) {
     uint32_t ecls = root_eclass_id[i];
     uint32_t best_ende = best_ende_of_ecls[ecls];
+    picked_endes[best_ende] = 1u;
     q[pos] = best_ende;
     pos++;
   }
@@ -1493,7 +1533,6 @@ __global__ void _get_dag_cost(
   const float* ende_cost,
   const uint32_t* ende_child,
   const uint32_t* ende_child_ptr,
-  const uint32_t* ende_picked_by_ende,
   const uint32_t* best_ende_of_ecls,
   uint32_t* q,
   uint32_t* q_sz,
@@ -1505,7 +1544,7 @@ __global__ void _get_dag_cost(
   if (t_idx >= num) return;
   uint32_t cur = q[*q_sp + t_idx];
   atomicAdd(dag_ret, static_cast<double>(ende_cost[cur]));
-  picked_endes[cur] = 1; // set as true
+  picked_endes[cur] = 1u; // set as true
   
   uint32_t start = ende_child_ptr[cur];
   uint32_t end   = ende_child_ptr[cur + 1];
@@ -1777,27 +1816,30 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
     cudaCheckErrors("_relax_enodes_kernel failed");
     cudaMemcpy(&h_update, _dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }
-
+  
   // Get the best tree cost on GPU
   _get_tree_cost<<<1, 1>>>(_root_eclass_id.size(), dvc_cost_of_ecls, _dvc_root_eclass_id, dvc_tree_ret);
 
   // Get best tree cost 
   double tree_ret = 0.0; 
   cudaMemcpy(&tree_ret, dvc_tree_ret, 1*sizeof(double), cudaMemcpyDeviceToHost);
-
-  // Construct _dvc_ende_picked_by_ende
-  blocks = (_num_ende + threads - 1) / threads;
-  _get_ende_picked_by_ende<<<blocks, threads>>>(_num_ende, 
-    dvc_ende_child,
-    dvc_ende_child_ptr,
-    _dvc_best_ende_of_ecls,
-    _dvc_ende_picked_by_ende);
+  
+  blocks = (_num_ecls + threads - 1) / threads;
+  _resolve_best_ende<<<blocks, threads>>>(
+    _num_ecls,
+    _dvc_ecls_its_ende_1D,
+    _dvc_ecls_its_ende_1D_ptr,
+    dvc_cost_of_ecls,
+    dvc_cost_of_ende,
+    _dvc_best_ende_of_ecls); 
+  cudaCheckErrors("_resolve_best_ende failed");
 
   // Get the best dag cost on GPU
   _init_q<<<1,1>>>(_root_eclass_id.size(),
     _dvc_root_eclass_id,
     _dvc_best_ende_of_ecls,
-    _dvc_q, _dvc_q_sz, _dvc_q_num);
+    _dvc_q, _dvc_q_sz, _dvc_q_num,
+    _dvc_picked_endes);    
   cudaCheckErrors("_init_q failed");
 
   double dag_ret = 0.0;
@@ -1810,13 +1852,11 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   while (num > 0) {
     cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice);
     blocks = (num + threads - 1) / threads;
-
     _get_dag_cost<<<blocks, threads>>>(
       num,
       dvc_ende_cost,
       dvc_ende_child,
       dvc_ende_child_ptr,
-      _dvc_ende_picked_by_ende,
       _dvc_best_ende_of_ecls,
       _dvc_q,
       _dvc_q_sz,
@@ -1830,7 +1870,6 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   }
   cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
   cudaCheckErrors("DAG cost memcpy failed");
-
 
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
