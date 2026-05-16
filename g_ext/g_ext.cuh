@@ -54,7 +54,7 @@ public:
     // READ IN argv/argc
     DAG_KERNEL = dag_kernel;
     NUM_THREAD_DAG_CONSTR = num_thread_dag_constrution;
-    bool bibi_testing = false;;
+    bool bibi_testing = true;;
 
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
@@ -63,13 +63,18 @@ public:
     std::vector<bool> picked_endes;
     std::chrono::duration<double> duration;
     auto start = std::chrono::steady_clock::now(); 
-      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_tree_construction(_ende_cost, cost_of_ecls, 
-                                                              cost_of_ende, best_ende_of_ecls, 
-                                                              picked_endes);
+      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_tree_construction(
+        _ende_cost, 
+        cost_of_ecls, 
+        cost_of_ende, 
+        best_ende_of_ecls, 
+        picked_endes);
     auto end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU tree construction runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    printf("CPU version cost:\n\tunder tree code model = %.2lf,\n\tunder DAG cost model = %.2lf\n", 
+    std::cout << "CPU tree construction runtime: " << 
+      round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    printf("CPU version cost:\n\tunder tree code model = %.2lf,
+      \n\tunder DAG cost model = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
     std::vector<bool> picked_endes_tmp = picked_endes;
@@ -77,45 +82,50 @@ public:
       _cpu_DAG_construction(picked_endes);  
     end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU DAG construction runtime: " << round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+    std::cout << "CPU DAG construction runtime: " << 
+      round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
     if (ILP_solver && !bibi_testing) {
-      _cpsat_solver(ILP_time_limit, 
-                    _ecls_its_ende_newG, 
-                    _ende_child, 
-                    _ende_child_ptr, 
-                    _root_eclass_id, 
-                    _ende_cost,
-                    best_ende_of_ecls, 
-                    picked_endes_tmp); 
+      _cpsat_solver(
+        ILP_time_limit, 
+        _ecls_its_ende_newG, 
+        _ende_child, 
+        _ende_child_ptr, 
+        _root_eclass_id, 
+        _ende_cost,
+        best_ende_of_ecls, 
+        picked_endes_tmp); 
     }
 
-    // // GPU version starts
-    // auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
-    // printf("GPU version cost:\n\tunder tree code model = %.2lf,\n\tunder DAG cost model = %.2lf\n", 
-    //           best_tree_cost_gpu, dag_cost_gpu);
-    // _copy_pickedende_back(picked_endes);
-    // _copy_best_ende_of_ecls_back(best_ende_of_ecls);
-    // cudaDeviceSynchronize();
+    // GPU version starts
+    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
+    printf("GPU version cost:\n\tunder tree code model = %.2lf,
+      \n\tunder DAG cost model = %.2lf\n", 
+      best_tree_cost_gpu, dag_cost_gpu);
+    _copy_pickedende_back(picked_endes);
+    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
+    cudaDeviceSynchronize();
 
-    // float gpu_reconst_Time = 0.;
-    // cudaEvent_t startGPU, stopGPU;
-    // cudaEventCreate(&startGPU);
-    // cudaEventCreate(&stopGPU);    
-    // cudaEventRecord(startGPU);
-    //   _gpu_DAG_construction(); 
-    // cudaEventRecord(stopGPU);
-    // cudaEventSynchronize(stopGPU);
-    // cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
-    // printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);
+    float gpu_reconst_Time = 0.;
+    cudaEvent_t startGPU, stopGPU;
+    cudaEventCreate(&startGPU);
+    cudaEventCreate(&stopGPU);    
+    cudaEventRecord(startGPU);
+      _gpu_DAG_construction(); 
+    cudaEventRecord(stopGPU);
+    cudaEventSynchronize(stopGPU);
+    cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
+    printf("GPU DAG construction runtime: %.2f (ms)\n", 
+      gpu_reconst_Time);
     // if (ILP_solver && !bibi_testing) {
-    //   _cpsat_solver(ILP_time_limit, 
-    //                 _ecls_its_ende_newG_GPU, 
-    //                 _ende_child, 
-    //                 _ende_child_ptr, 
-    //                 _root_eclass_id, 
-    //                 _ende_cost,
-    //                 best_ende_of_ecls, 
-    //                 picked_endes_tmp);
+    //   _cpsat_solver(
+    //     ILP_time_limit, 
+    //     _ecls_its_ende_newG_GPU, 
+    //     _ende_child, 
+    //     _ende_child_ptr, 
+    //     _root_eclass_id, 
+    //     _ende_cost,
+    //     best_ende_of_ecls, 
+    //     picked_endes_tmp);
     // }
     // // GPU version ends
   }
@@ -123,7 +133,8 @@ public:
 private:
   /* Read */
   void _read_input(const std::string input_path);
-  void _prune_dead_nodes(const uint32_t tmp_num_ecls,
+  void _prune_dead_nodes(
+    const uint32_t tmp_num_ecls,
     const uint32_t tmp_num_ende,
     const std::vector<std::string>& tmp_ende_name, 
     const std::vector<std::string>& tmp_ende_op, 
@@ -147,12 +158,14 @@ private:
   /* Run */
   /* Tree Level Relaxation */
   // CPU version
-  std::pair<double, double> _cpu_tree_construction(const std::vector<float>& tmp_ende_cost,
+  std::pair<double, double> _cpu_tree_construction(
+    const std::vector<float>& tmp_ende_cost,
     std::vector<double>& cost_of_ecls,
     std::vector<double>& cost_of_ende,
     std::vector<uint32_t>& best_ende_of_ecls,
     std::vector<bool>& picked_endes); 
-  double _compute_dag_cost(const std::vector<uint32_t>& best_ende_of_ecls,
+  double _compute_dag_cost(
+    const std::vector<uint32_t>& best_ende_of_ecls,
     std::vector<bool>& picked_endes,
     std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
   void _init_picked_adj(const std::vector<bool>& picked_endes);
@@ -162,32 +175,36 @@ private:
   /* DAG Construction */
   // CPU version 
   void _cpu_DAG_construction(std::vector<bool>& picked_endes);
-  void _construct_deg(const std::vector<bool>& picked_endes,
+  void _construct_deg(
+    const std::vector<bool>& picked_endes,
     const std::vector<double>& cost_of_ende); 
-  void _top_down_levelize(std::vector<bool>& picked_endes,
+  void _top_down_levelize(
+    std::vector<bool>& picked_endes,
     std::vector<int>& level);
-  void _bottom_up_levelize(std::vector<bool>& picked_endes,
+  void _bottom_up_levelize(
+    std::vector<bool>& picked_endes,
     std::vector<int>& level);
-    void _update_deg(const bool need_to_update, 
+    void _update_deg(
+      const bool need_to_update, 
       const std::vector<bool>& picked_endes);
-    void _BFS2(const bool is_td, std::vector<uint32_t>& deg, 
-      const std::vector<bool>& picked_endes,
-      const std::vector<uint32_t>& global_adj_1D,
-      const std::vector<uint32_t>& global_adj_1D_ptr,
-      const std::vector<bool>& picked_adj,
-      std::vector<int>& level);
-    void _BFS(const bool is_td, std::vector<uint32_t>& deg, 
+    void _BFS(
+      const bool is_td, 
+      std::vector<uint32_t>& deg, 
       std::vector<bool>& picked_endes, 
       const std::vector<uint32_t>& global_adj_1D,
       const std::vector<uint32_t>& global_adj_1D_ptr,
       const std::vector<bool>& picked_adj,
       std::vector<int>& level);
-  bool _insertion(const bool is_td, 
+  bool _insertion(
+    const bool is_td, 
     std::vector<bool>& picked_endes,
     std::vector<int>& level);
-  void _update_picked_adj(const uint32_t fm_ende, const uint32_t to_ende);
+  void _update_picked_adj(
+    const uint32_t fm_ende, 
+    const uint32_t to_ende);
   void _clear_redundant_endes(std::vector<bool>& picked_endes);
-    void _mark_reachable(const std::vector<uint32_t>& starts,
+    void _mark_reachable(
+      const std::vector<uint32_t>& starts,
       const std::vector<uint32_t>& global_adj_1D,
       const std::vector<uint32_t>& global_adj_1D_ptr,
       const std::vector<bool>& picked_adj,      
@@ -200,7 +217,8 @@ private:
   // GPU version
   void _gpu_DAG_construction();
     void _gpu_update_deg_init_level(const bool need_to_update);
-    void _gpu_BFS(const bool is_td, 
+    void _gpu_BFS(
+      const bool is_td, 
       uint32_t* deg, 
       const uint32_t* picked_endes,
       const uint32_t* global_adj_1D,
@@ -209,23 +227,28 @@ private:
       int* level);
     bool _gpu_insertion(const bool is_td);
     void _gpu_clear_redundant_endes();
-    void _gpu_mark_reachable(const std::vector<uint32_t>& starts_v,
+    void _gpu_mark_reachable(
+      const std::vector<uint32_t>& starts_v,
       const uint32_t* starts,
       const uint32_t* global_adj_1D,
       const uint32_t* global_adj_1D_ptr,
       const uint32_t* picked_adj,
       uint32_t* visited);
-    void _gpu_mark_reachable2(const std::vector<uint32_t>& starts_v,
+    void _gpu_mark_reachable2(
+      const std::vector<uint32_t>& starts_v,
       const uint32_t* starts,
       const uint32_t* global_adj_1D,
       const uint32_t* global_adj_1D_ptr,
       const uint32_t* picked_adj,
       uint32_t* visited);      
-    void _copy_pickedende_back(std::vector<bool>& picked_endes_tmp);
-    void _copy_best_ende_of_ecls_back(std::vector<uint32_t>& best_ende_of_ecls);    
+    void _copy_pickedende_back(
+      std::vector<bool>& picked_endes_tmp);
+    void _copy_best_ende_of_ecls_back(
+      std::vector<uint32_t>& best_ende_of_ecls);    
 
   /* ILP solver */ 
-  void _cpsat_solver(const double time_limit,
+  void _cpsat_solver(
+    const double time_limit,
     const std::vector<std::vector<uint32_t>>& ecls_its_ende, 
     const std::vector<uint32_t>& ende_child,
     const std::vector<uint32_t>& ende_child_ptr,
@@ -276,8 +299,8 @@ private:
   // global Device memory 
   uint32_t* _dvc_best_ende_of_ecls;
   bool* _dvc_update;
-  uint32_t* _dvc_ecls_its_ende_1D; // 有用了
-  uint32_t* _dvc_ecls_its_ende_1D_ptr; // 目前還沒有用
+  uint32_t* _dvc_ecls_its_ende_1D; 
+  uint32_t* _dvc_ecls_its_ende_1D_ptr; 
   uint32_t* _dvc_root_eclass_id;
   uint32_t* _dvc_ende_picked_by_ende;
   uint32_t* _dvc_picked_endes; // act bool
@@ -327,12 +350,19 @@ private:
   void _print_levelization(const bool is_td, const std::vector<int>& level,
                           const std::vector<bool>& picked_endes);
 
-
-  // 0515 try
+  // 0515 revision
   std::vector<bool> _new_inserted; 
   bool _insertion2(const bool is_td, 
     std::vector<bool>& picked_endes,
     std::vector<int>& level);
-}; // class G_EXT
+  void _BFS2(
+    const bool is_td, 
+    std::vector<uint32_t>& deg, 
+    const std::vector<bool>& picked_endes,
+    const std::vector<uint32_t>& global_adj_1D,
+    const std::vector<uint32_t>& global_adj_1D_ptr,
+    const std::vector<bool>& picked_adj,
+    std::vector<int>& level);
+  }; // class G_EXT
 #endif
 

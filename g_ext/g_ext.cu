@@ -802,7 +802,7 @@ void G_EXT::_BFS(
     }
   } 
 
-  // BFS: top-down / bottom-up levelization 
+  // BFS: top-down levelization 
   int cur_level = 0;
   while (!q.empty()) {
     size_t layer = q.size();
@@ -823,21 +823,19 @@ void G_EXT::_BFS(
   // update _max_level
   _max_level = cur_level; 
 
-  // =======================================================
-  // 💡 增量清理 (Incremental Cycle Revert) 對應 Algorithm 2
-  // =======================================================
+  // cycle revert; Note: actually here can be optimized; cannot in parallel, but can be optimized; 
+  // but I haven't optimize the implementation here; that is life.
   for (uint32_t i = 0; i < _num_ende; i++) {
     if (_new_inserted[i] && deg[i] > 0) {
-      // 1. 踢出節點並還原狀態
       picked_endes[i] = false;
       _new_inserted[i] = false;
       level[i] = -1; 
 
-      // 2. 清除出邊 Mask (i -> chd)
+      // clear mask, e-node to child e-nodes
       for (uint32_t k = _global_adj_1D_ptr[i]; k < _global_adj_1D_ptr[i+1]; k++) {
         _picked_adj[k] = false;
         uint32_t chd = _global_adj_1D[k];
-        // 去 chd 的 inv_adj 裡把指向 i 的指標也設為 false
+        // chd's inv_adj to e-node i -> false
         for (uint32_t kk = _global_inv_adj_1D_ptr[chd]; kk < _global_inv_adj_1D_ptr[chd+1]; kk++) {
           if (_global_inv_adj_1D[kk] == i) {
             _picked_inv_adj[kk] = false;
@@ -846,11 +844,11 @@ void G_EXT::_BFS(
         }
       }
 
-      // 3. 清除入邊 Mask (par -> i)
+      // clear mask, e-node to parent e-nodes
       for (uint32_t k = _global_inv_adj_1D_ptr[i]; k < _global_inv_adj_1D_ptr[i+1]; k++) {
         _picked_inv_adj[k] = false;
         uint32_t par = _global_inv_adj_1D[k];
-        // 去 par 的 adj 裡把指向 i 的指標也設為 false
+        // par's adj to e-node i -> false
         for (uint32_t kk = _global_adj_1D_ptr[par]; kk < _global_adj_1D_ptr[par+1]; kk++) {
           if (_global_adj_1D[kk] == i) {
             _picked_adj[kk] = false;
@@ -859,13 +857,13 @@ void G_EXT::_BFS(
         }
       }
 
-      // #ifdef PRINT_LOG
+      #ifdef PRINT_LOG
         printf("[Cycle Revert] Node %u removed due to cycle!\n", i);
-      // #endif
+      #endif
     }
   }
 
-  // 反轉 Level (僅限 bottom-up)
+  // reverse assigned level, just for bottom-up levelization
   if (!is_td) {
     for (uint32_t i = 0; i < level.size(); i++) {
       if (level[i] != -1) {
@@ -1375,19 +1373,6 @@ void G_EXT::get_nodes_in_subgraph(
 
 // =========================== GPU functions =========================== // 
 
-__device__ float atomicMinFloat(float* addr, float val) {
-  int* addr_as_i = (int*)addr;
-  int old = *addr_as_i, assumed;
-
-  do {
-    assumed = old;
-    float old_f = __int_as_float(assumed);
-    if (old_f <= val) break; 
-    old = atomicCAS(addr_as_i, assumed, __float_as_int(val));
-  } while (assumed != old);
-
-  return __int_as_float(old);
-}
 
 __device__ double atomicMinDouble(double* addr, double val) {
   unsigned long long int* addr_as_ull = (unsigned long long int*)addr;
@@ -1457,7 +1442,8 @@ __global__ void _resolve_best_ende(
   }
 }
 
-__global__ void _get_tree_cost(const uint32_t size, 
+__global__ void _get_tree_cost(
+  const uint32_t size, 
   const double* cost_of_ecls,
   const uint32_t* root_eclass_id,
   double* tree_ret) 
@@ -1468,51 +1454,8 @@ __global__ void _get_tree_cost(const uint32_t size,
   }
 }
 
-__global__ void _get_ende_picked_by_ende(const uint32_t num_ende, 
-  const uint32_t* ende_child,
-  const uint32_t* ende_child_ptr,
-  const uint32_t* best_ende_of_ecls, 
-  uint32_t* ende_picked_by_ende) 
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num_ende) return;
-  uint32_t start = ende_child_ptr[t_idx];
-  uint32_t end   = ende_child_ptr[t_idx+1];
-  for (uint32_t jj = start; jj < end; jj++) {
-    uint32_t chd_ecls = ende_child[jj];
-    ende_picked_by_ende[jj] = best_ende_of_ecls[chd_ecls]; // Note: 因為每個 eclass 都要選到一個 enode, 因此 size 會和 ende_child 一樣
-  }
-}
-
-__global__ void _print_dvc_ende_picked_by_ende(const uint32_t sz, 
-  const uint32_t* ende_picked_by_ende) 
-{
-  printf("ende_picked_by_ende: ");
-  for (uint32_t i = 0; i < sz; i++) {
-    printf("%u, ", ende_picked_by_ende[i]); 
-  }
-  printf("\n");
-}
-
-// __global__ void _init_q(const uint32_t sz, 
-//   const uint32_t* root_eclass_id,
-//   const uint32_t* best_ende_of_ecls,
-//   uint32_t* q,
-//   uint32_t* q_sz,
-//   uint32_t* q_num)
-// {
-//   uint32_t pos = 0;
-//   for (uint32_t i = 0; i < sz; i++) {
-//     uint32_t ecls = root_eclass_id[i];
-//     uint32_t best_ende = best_ende_of_ecls[ecls];
-//     q[pos] = best_ende;
-//     pos++;
-//   }
-//   *q_sz = pos;
-//   *q_num = pos;
-// }
-
-__global__ void _init_q(const uint32_t sz, 
+__global__ void _init_q(
+  const uint32_t sz, 
   const uint32_t* root_eclass_id,
   const uint32_t* best_ende_of_ecls,
   uint32_t* q,
@@ -1564,15 +1507,17 @@ __global__ void _get_dag_cost(
   }
 }
 
-
-__global__ void _gpu_init_picked_adj (const uint32_t num_endes, 
+__global__ void _gpu_init_picked_adj (
+  const uint32_t num_endes, 
   const uint32_t* dvc_global_adj_1D,
   const uint32_t* dvc_global_adj_1D_ptr,
   const uint32_t* dvc_global_inv_adj_1D,
   const uint32_t* dvc_global_inv_adj_1D_ptr,
   const uint32_t* dvc_picked_endes,
-  uint32_t* dvc_picked_adj, uint32_t* dvc_picked_inv_adj,
-  uint32_t* dvc_indegree, uint32_t* dvc_inv_indegree) 
+  uint32_t* dvc_picked_adj, 
+  uint32_t* dvc_picked_inv_adj,
+  uint32_t* dvc_indegree, 
+  uint32_t* dvc_inv_indegree) 
 {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_endes) return;
@@ -1627,7 +1572,8 @@ __global__ void _print_gpu_degree(const uint32_t n0,
   printf("\n");
 }
 
-__global__ void _print_gpu_init_picked_adj(const uint32_t n0, 
+__global__ void _print_gpu_init_picked_adj(
+  const uint32_t n0, 
   const uint32_t n1, 
   const uint32_t n2, 
   const uint32_t n3, 
@@ -1677,17 +1623,9 @@ __global__ void _print_gpu_init_picked_adj(const uint32_t n0,
   }
 }
 
-__global__ void _gpu_add_more_roots(const uint32_t num_root_ecls, 
-  const uint32_t* _dvc_all_root_ende_1D,
-  uint32_t* dvc_picked_endes)
-{
-  // Add more roots enodes
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num_root_ecls) return;
-  dvc_picked_endes[_dvc_all_root_ende_1D[t_idx]] = 1;
-}
-
-__global__ void _gpu_warm_up(const uint32_t num_ende, int* dvc_level)
+__global__ void _gpu_warm_up(
+  const uint32_t num_ende, 
+  int* dvc_level)
 {
   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (t_idx >= num_ende) return;  
@@ -1889,7 +1827,8 @@ void G_EXT::_gpu_DAG_construction() {
 #endif
 
   int blocks = (_num_ende + threads - 1) / threads;
-  _gpu_init_picked_adj<<<blocks,threads>>>(_num_ende, 
+  _gpu_init_picked_adj<<<blocks,threads>>>(
+    _num_ende, 
     _dvc_global_adj_1D,
     _dvc_global_adj_1D_ptr,
     _dvc_global_inv_adj_1D,
@@ -1899,12 +1838,6 @@ void G_EXT::_gpu_DAG_construction() {
     _dvc_indegree, _dvc_inv_indegree);
   cudaCheckErrors("_gpu_init_picked_adj failed");
   
-  blocks = (_all_root_ende_1D.size() + threads - 1) / threads;
-  _gpu_add_more_roots<<<blocks,threads>>>(_all_root_ende_1D.size(),
-    _dvc_all_root_ende_1D,
-    _dvc_picked_endes);
-  cudaCheckErrors("_gpu_add_more_roots failed"); // debug 
-
 #ifdef PRINT_LOG
   _print_gpu_init_picked_adj<<<1,1>>>(_num_ende,
     _num_ende,
@@ -1933,17 +1866,25 @@ void G_EXT::_gpu_DAG_construction() {
     cudaMemcpy(_dvc_update, &updated, 1*sizeof(bool), cudaMemcpyHostToDevice);
 
     _gpu_update_deg_init_level(updated);
-    _gpu_BFS(false, _dvc_inv_indegree, 
+    _gpu_BFS(
+      false, 
+      _dvc_inv_indegree, 
       _dvc_picked_endes, 
-      _dvc_global_inv_adj_1D, _dvc_global_inv_adj_1D_ptr, 
-      _dvc_picked_inv_adj, _dvc_level);
+      _dvc_global_inv_adj_1D, 
+      _dvc_global_inv_adj_1D_ptr, 
+      _dvc_picked_inv_adj, 
+      _dvc_level);
     bool tp = _gpu_insertion(true);
     
     _gpu_update_deg_init_level(updated);
-    _gpu_BFS(true, _dvc_indegree, 
+    _gpu_BFS(
+      true,
+       _dvc_indegree, 
       _dvc_picked_endes, 
-      _dvc_global_adj_1D, _dvc_global_adj_1D_ptr, 
-      _dvc_picked_adj, _dvc_level);
+      _dvc_global_adj_1D, 
+      _dvc_global_adj_1D_ptr, 
+      _dvc_picked_adj, 
+      _dvc_level);
     bool bu = _gpu_insertion(false);
 
     updated = tp || bu; 
@@ -3530,3 +3471,48 @@ void G_EXT::_print_levelization(
     std::cout << "[INFO] Wrote egg-compatible JSON to: " << out_path << std::endl;
   }
 #endif
+
+
+
+
+
+// __device__ float atomicMinFloat(float* addr, float val) {
+//   int* addr_as_i = (int*)addr;
+//   int old = *addr_as_i, assumed;
+
+//   do {
+//     assumed = old;
+//     float old_f = __int_as_float(assumed);
+//     if (old_f <= val) break; 
+//     old = atomicCAS(addr_as_i, assumed, __float_as_int(val));
+//   } while (assumed != old);
+
+//   return __int_as_float(old);
+// }
+
+
+// __global__ void _get_ende_picked_by_ende(const uint32_t num_ende, 
+//   const uint32_t* ende_child,
+//   const uint32_t* ende_child_ptr,
+//   const uint32_t* best_ende_of_ecls, 
+//   uint32_t* ende_picked_by_ende) 
+// {
+//   uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
+//   if (t_idx >= num_ende) return;
+//   uint32_t start = ende_child_ptr[t_idx];
+//   uint32_t end   = ende_child_ptr[t_idx+1];
+//   for (uint32_t jj = start; jj < end; jj++) {
+//     uint32_t chd_ecls = ende_child[jj];
+//     ende_picked_by_ende[jj] = best_ende_of_ecls[chd_ecls]; // Note: 因為每個 eclass 都要選到一個 enode, 因此 size 會和 ende_child 一樣
+//   }
+// }
+
+// __global__ void _print_dvc_ende_picked_by_ende(const uint32_t sz, 
+//   const uint32_t* ende_picked_by_ende) 
+// {
+//   printf("ende_picked_by_ende: ");
+//   for (uint32_t i = 0; i < sz; i++) {
+//     printf("%u, ", ende_picked_by_ende[i]); 
+//   }
+//   printf("\n");
+// }
