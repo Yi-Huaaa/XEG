@@ -52,9 +52,9 @@ public:
           const uint32_t num_thread_dag_constrution = 64) 
   {
     // READ IN argv/argc
-    DAG_KERNEL = dag_kernel;
     NUM_THREAD_DAG_CONSTR = num_thread_dag_constrution;
-    bool bibi_testing = true;;
+    bool bibi_testing = false;;
+    DAG_KERNEL = 1; // bibit 0516 testing here now
 
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
@@ -73,7 +73,7 @@ public:
     duration = end - start;
     std::cout << "CPU tree construction runtime: " << 
       round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    printf("CPU version cost:\n\tunder tree code model = %.2lf,
+    printf("CPU version cost:\n\tunder tree code model = %.2lf, \
       \n\tunder DAG cost model = %.2lf\n", 
       best_tree_cost_cpu, dag_cost_cpu);
 
@@ -96,26 +96,16 @@ public:
         picked_endes_tmp); 
     }
 
-    // GPU version starts
-    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
-    printf("GPU version cost:\n\tunder tree code model = %.2lf,
-      \n\tunder DAG cost model = %.2lf\n", 
-      best_tree_cost_gpu, dag_cost_gpu);
-    _copy_pickedende_back(picked_endes);
-    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
-    cudaDeviceSynchronize();
-
-    float gpu_reconst_Time = 0.;
-    cudaEvent_t startGPU, stopGPU;
-    cudaEventCreate(&startGPU);
-    cudaEventCreate(&stopGPU);    
-    cudaEventRecord(startGPU);
-      _gpu_DAG_construction(); 
-    cudaEventRecord(stopGPU);
-    cudaEventSynchronize(stopGPU);
-    cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
-    printf("GPU DAG construction runtime: %.2f (ms)\n", 
-      gpu_reconst_Time);
+    // // GPU version starts
+    // auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
+    // printf("GPU version cost:\n\tunder tree code model = %.2lf, \
+    //   \n\tunder DAG cost model = %.2lf\n", 
+    //   best_tree_cost_gpu, dag_cost_gpu);
+    // _copy_pickedende_back(picked_endes);
+    // _copy_best_ende_of_ecls_back(best_ende_of_ecls);
+    // cudaDeviceSynchronize();
+    
+    // _gpu_DAG_construction(); 
     // if (ILP_solver && !bibi_testing) {
     //   _cpsat_solver(
     //     ILP_time_limit, 
@@ -216,7 +206,7 @@ private:
       const std::vector<bool>& picked_endes);
   // GPU version
   void _gpu_DAG_construction();
-    void _gpu_update_deg_init_level(const bool need_to_update);
+    void _gpu_update_deg_init_level2(const bool need_to_update);
     void _gpu_BFS(
       const bool is_td, 
       uint32_t* deg, 
@@ -363,6 +353,20 @@ private:
     const std::vector<uint32_t>& global_adj_1D_ptr,
     const std::vector<bool>& picked_adj,
     std::vector<int>& level);
-  }; // class G_EXT
+  
+    // 0516 experiment
+  uint32_t* _dvc_base_indegree;
+  uint32_t* _dvc_base_inv_indegree;
+  bool* _dvc_new_inserted;
+  void _gpu_update_deg_init_level(
+    const bool need_to_update, 
+    const bool is_init);  
+  
+}; // class G_EXT
+
+
 #endif
+
+
+
 
