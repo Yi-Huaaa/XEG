@@ -1,7 +1,7 @@
 #include "g_ext.cuh"
 
 #define threads 1024 // num GPU threads
-// #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
+#define FAST_BITMAP_CHECK true // Use bitmap strategy or not
 
 /* ASPLOS_REBUTTAL */ 
 // #define ASPLOS_REBUTTAL
@@ -1990,44 +1990,6 @@ void G_EXT::_gpu_DAG_construction() {
   cudaEventCreate(&stopGPU);    
   cudaEventRecord(startGPU);
 
-  // int itr=0;
-  // bool updated = true;
-  // bool dvc_update_flag = false; 
-  // while (updated) {
-  //   _gpu_update_deg_init_level(updated);
-  //   _gpu_BFS(
-  //     false, 
-  //     _dvc_inv_indegree, 
-  //     _dvc_picked_endes, 
-  //     _dvc_global_inv_adj_1D, 
-  //     _dvc_global_inv_adj_1D_ptr, 
-  //     _dvc_picked_inv_adj, 
-  //     _dvc_level);
-  //     cudaMemcpy(_dvc_update, &dvc_update_flag, sizeof(bool), cudaMemcpyHostToDevice);
-  //   // bool tp = _gpu_insertion(true);
-  //   bool tp = true, bu = true;
-    
-  //   _gpu_update_deg_init_level(tp);
-  //   _gpu_BFS(
-  //     true, 
-  //     _dvc_indegree, 
-  //     _dvc_picked_endes, 
-  //     _dvc_global_adj_1D, 
-  //     _dvc_global_adj_1D_ptr, 
-  //     _dvc_picked_adj, 
-  //     _dvc_level);
-  //     cudaMemcpy(_dvc_update, &dvc_update_flag, sizeof(bool), cudaMemcpyHostToDevice);
-  //   // bool bu = _gpu_insertion(false);
-
-  //   if (itr == 5) tp = false;
-  //   if (itr == 5) bu = false;
-
-  //   updated = tp || bu;
-  //   itr++;
-  // }  
-  // printf("itr = %d\n", itr);
-
-
   #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
     uint32_t num_iter = 0;
   #endif
@@ -2069,13 +2031,21 @@ void G_EXT::_gpu_DAG_construction() {
     updated = tp || bu;
     #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
       num_iter++;
+      printf("Now num_iter = %d\n", num_iter);
     #endif  
   }  
 
   std::vector<uint32_t> in_subgraph_gpu; 
   in_subgraph_gpu.resize(_num_ende, 0);
   cudaMemcpy(in_subgraph_gpu.data(), _dvc_picked_endes, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  
+  uint32_t aaa = 0;
+  for (uint32_t i = 0; i < in_subgraph_gpu.size(); ++i ) {
+    if (in_subgraph_gpu[i]) aaa++;
+  }
+  printf("#alive e-nodes after GPU DAG construction = %u\n", aaa);
 
+  // 人生保命符在這裡！！！
   // Re-constructing data for second times ILP solver
   _ecls_its_ende_newG_GPU.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
   for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
@@ -2084,6 +2054,8 @@ void G_EXT::_gpu_DAG_construction() {
       _ecls_its_ende_newG_GPU[ecls].push_back(ende);
     }
   }
+  // 人生保命符在這裡！！！
+
 
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
@@ -2092,7 +2064,7 @@ void G_EXT::_gpu_DAG_construction() {
   #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
     std::cout << "GPU num_iter = " << num_iter << "\n";
   #endif
-  // printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);  
+  printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);  
 }
 
 __global__ void _update_deg_kl2 (
@@ -2183,38 +2155,76 @@ __global__ void _update_deg_kl(
   }
 }
 
+// void G_EXT::_gpu_update_deg_init_level(
+//   const bool need_to_update, 
+//   const bool is_init) 
+// {
+//   if (!need_to_update) return;
+
+//   cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int)); 
+
+//   if (is_init) {
+//     cudaMemset(_dvc_indegree, 0, _num_ende*sizeof(uint32_t));
+//     cudaMemset(_dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
+//   } else {
+//     cudaMemcpy(_dvc_indegree, _dvc_base_indegree, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToDevice);
+//     cudaMemcpy(_dvc_inv_indegree, _dvc_base_inv_indegree, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToDevice);
+//   }
+
+//   int blocks = (_num_ende + threads - 1) / threads;
+//   _update_deg_kl<<<blocks, threads>>>(
+//     _num_ende,
+//     is_init,
+//     _dvc_picked_endes,
+//     _dvc_new_inserted,
+//     _dvc_global_adj_1D_ptr,
+//     _dvc_global_adj_1D,
+//     _dvc_picked_adj,
+//     _dvc_global_inv_adj_1D_ptr,
+//     _dvc_global_inv_adj_1D,
+//     _dvc_picked_inv_adj,
+//     _dvc_indegree,
+//     _dvc_inv_indegree
+//   );
+//   cudaCheckErrors("_update_deg_kl failed");
+// }
+
+__global__ void _update_deg_full_kl(
+  const uint32_t num_ende,
+  const uint32_t* dvc_picked_endes,
+  const uint32_t* dvc_global_adj_1D_ptr,
+  const uint32_t* dvc_global_adj_1D,
+  const uint32_t* dvc_picked_adj,
+  uint32_t* dvc_indegree,
+  uint32_t* dvc_inv_indegree)
+{
+  uint32_t fm_ende = blockIdx.x * blockDim.x + threadIdx.x;
+  if (fm_ende >= num_ende) return;
+  if (!dvc_picked_endes[fm_ende]) return;
+  uint32_t start = dvc_global_adj_1D_ptr[fm_ende];
+  uint32_t end   = dvc_global_adj_1D_ptr[fm_ende + 1];
+  for (uint32_t k = start; k < end; k++) {
+    if (!dvc_picked_adj[k]) continue;
+    const uint32_t to_ende = dvc_global_adj_1D[k];
+    atomicAdd(&dvc_indegree[to_ende], 1);
+    atomicAdd(&dvc_inv_indegree[fm_ende], 1);
+  }
+}
+
 void G_EXT::_gpu_update_deg_init_level(
   const bool need_to_update, 
-  const bool is_init) 
+const bool is_init) 
 {
   if (!need_to_update) return;
-
-  cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int)); 
-
-  if (is_init) {
-    cudaMemset(_dvc_indegree, 0, _num_ende*sizeof(uint32_t));
-    cudaMemset(_dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
-  } else {
-    cudaMemcpy(_dvc_indegree, _dvc_base_indegree, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToDevice);
-    cudaMemcpy(_dvc_inv_indegree, _dvc_base_inv_indegree, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToDevice);
-  }
-
+  cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int));
+  cudaMemset(_dvc_indegree, 0, _num_ende*sizeof(uint32_t));
+  cudaMemset(_dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
   int blocks = (_num_ende + threads - 1) / threads;
-  _update_deg_kl<<<blocks, threads>>>(
-    _num_ende,
-    is_init,
-    _dvc_picked_endes,
-    _dvc_new_inserted,
-    _dvc_global_adj_1D_ptr,
-    _dvc_global_adj_1D,
-    _dvc_picked_adj,
-    _dvc_global_inv_adj_1D_ptr,
-    _dvc_global_inv_adj_1D,
-    _dvc_picked_inv_adj,
-    _dvc_indegree,
-    _dvc_inv_indegree
-  );
-  cudaCheckErrors("_update_deg_kl failed");
+  _update_deg_full_kl<<<blocks, threads>>>(
+    _num_ende, _dvc_picked_endes,
+    _dvc_global_adj_1D_ptr, _dvc_global_adj_1D, _dvc_picked_adj,
+    _dvc_indegree, _dvc_inv_indegree);
+  cudaCheckErrors("_update_deg_full_kl failed");
 }
 
 __global__ void _init_q1(const uint32_t num_ende, 
@@ -2232,6 +2242,52 @@ __global__ void _init_q1(const uint32_t num_ende,
     q[pos] = t_idx; // Note: t_idx is ende
   }
   *q_num = *q_sz;
+}
+
+__global__ void _gpu_cycle_revert_kl(
+  const uint32_t num_ende,
+  bool* dvc_new_inserted,
+  const uint32_t* dvc_deg,
+  uint32_t* dvc_picked_endes,
+  int* dvc_level,
+  const uint32_t* dvc_global_adj_1D_ptr,
+  const uint32_t* dvc_global_adj_1D,
+  const uint32_t* dvc_global_inv_adj_1D_ptr,
+  const uint32_t* dvc_global_inv_adj_1D,
+  uint32_t* dvc_picked_adj,
+  uint32_t* dvc_picked_inv_adj)
+{
+  uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= num_ende) return;
+  if (!(dvc_new_inserted[i] && dvc_deg[i] > 0)) return;
+
+  dvc_picked_endes[i] = 0;
+  dvc_new_inserted[i] = false;
+  dvc_level[i] = -1;
+
+  uint32_t start = dvc_global_adj_1D_ptr[i];
+  uint32_t end   = dvc_global_adj_1D_ptr[i + 1];
+  for (uint32_t k = start; k < end; k++) {
+    dvc_picked_adj[k] = 0;
+    uint32_t chd = dvc_global_adj_1D[k];
+    uint32_t cs = dvc_global_inv_adj_1D_ptr[chd];
+    uint32_t ce = dvc_global_inv_adj_1D_ptr[chd + 1];
+    for (uint32_t kk = cs; kk < ce; kk++) {
+      if (dvc_global_inv_adj_1D[kk] == i) { dvc_picked_inv_adj[kk] = 0; break; }
+    }
+  }
+
+  uint32_t p_start = dvc_global_inv_adj_1D_ptr[i];
+  uint32_t p_end   = dvc_global_inv_adj_1D_ptr[i + 1];
+  for (uint32_t k = p_start; k < p_end; k++) {
+    dvc_picked_inv_adj[k] = 0;
+    uint32_t par = dvc_global_inv_adj_1D[k];
+    uint32_t ps = dvc_global_adj_1D_ptr[par];
+    uint32_t pe = dvc_global_adj_1D_ptr[par + 1];
+    for (uint32_t kk = ps; kk < pe; kk++) {
+      if (dvc_global_adj_1D[kk] == i) { dvc_picked_adj[kk] = 0; break; }
+    }
+  }
 }
 
 __global__ void _gpu_BFS_kl(
@@ -2327,6 +2383,17 @@ void G_EXT::_gpu_BFS(
   }
 
   _max_level = cur_level;
+
+  // ===== cycle revert：永遠用「絕對」正向/反向 adjacency（member variable），與 is_td 無關 =====
+  {
+    int rblocks = (_num_ende + threads - 1) / threads;
+    _gpu_cycle_revert_kl<<<rblocks, threads>>>(
+      _num_ende, _dvc_new_inserted, deg, _dvc_picked_endes, level,
+      _dvc_global_adj_1D_ptr, _dvc_global_adj_1D,           // <-- 永遠是正向
+      _dvc_global_inv_adj_1D_ptr, _dvc_global_inv_adj_1D,   // <-- 永遠是反向
+      _dvc_picked_adj, _dvc_picked_inv_adj);
+    cudaCheckErrors("_gpu_cycle_revert_kl failed");
+  }
 
   if (!is_td) {
     blocks = (_num_ende + threads - 1) / threads;
@@ -2922,6 +2989,7 @@ __global__ void _gpu_insertion_kl_block(
   uint32_t* dvc_picked_adj,
   uint32_t* dvc_picked_inv_adj,
   int* dvc_level,
+  bool* dvc_new_inserted,
   bool* update)
 {
   const uint32_t ende = blockIdx.x;
@@ -2976,8 +3044,9 @@ __global__ void _gpu_insertion_kl_block(
   bool local_overlap = false;
 #if FAST_BITMAP_CHECK
   // --- Shared bitmap trick (lower bits as hash) ---
-  __shared__ uint8_t chd_flags[256];
-  for (int i = tid; i < 256; i += blockDim.x)
+  const uint32_t bitMap_size = 64;
+  __shared__ uint8_t chd_flags[bitMap_size];
+  for (int i = tid; i < bitMap_size; i += blockDim.x) 
     chd_flags[i] = 0;
   __syncthreads();
 
@@ -2989,7 +3058,7 @@ __global__ void _gpu_insertion_kl_block(
   for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x)
     if (dvc_tmp_picked_inv_adj[k] && chd_flags[dvc_global_inv_adj_1D[k] & 255])
       local_overlap = true;
-
+      
 #else
   // --- Default O(deg^2) safe check ---
   for (uint32_t k = p_start + tid; k < p_end && !local_overlap; k += blockDim.x) {
@@ -3022,6 +3091,7 @@ __global__ void _gpu_insertion_kl_block(
     dvc_picked_endes[ende] = true;
     dvc_level[ende] = given_lvl;
     *update = true;
+    dvc_new_inserted[ende] = true;
   }
 
   // --- update inv_adj ---
@@ -3070,6 +3140,7 @@ bool G_EXT::_gpu_insertion(const bool is_td)
   
   cudaMemset(_dvc_tmp_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
   cudaMemset(_dvc_tmp_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
+  cudaMemset(_dvc_new_inserted, 0, _num_ende * sizeof(bool));
 
   if (DAG_KERNEL == 0) {
     // 一個 thread 負責一個 enode
@@ -3122,6 +3193,7 @@ bool G_EXT::_gpu_insertion(const bool is_td)
       _dvc_picked_adj,
       _dvc_picked_inv_adj,
       _dvc_level,
+      _dvc_new_inserted,
       _dvc_update);
     cudaCheckErrors("_gpu_insertion_kl_block failed");
   }

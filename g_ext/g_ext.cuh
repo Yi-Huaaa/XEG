@@ -82,17 +82,17 @@ public:
     duration = end - start;
     std::cout << "CPU DAG construction runtime: " << 
       round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    // if (ILP_solver) {
-    //   _cpsat_solver(
-    //     ILP_time_limit, 
-    //     _ecls_its_ende_newG, 
-    //     _ende_child, 
-    //     _ende_child_ptr, 
-    //     _root_eclass_id, 
-    //     _ende_cost,
-    //     best_ende_of_ecls, 
-    //     picked_endes_tmp); 
-    // }
+    if (ILP_solver) {
+      _cpsat_solver(
+        ILP_time_limit, 
+        _ecls_its_ende_newG, 
+        _ende_child, 
+        _ende_child_ptr, 
+        _root_eclass_id, 
+        _ende_cost,
+        best_ende_of_ecls, 
+        picked_endes_tmp); 
+    }
 
     // GPU version starts
     auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
@@ -108,17 +108,17 @@ public:
     cudaDeviceSynchronize();
     
     _gpu_DAG_construction(); 
-    // if (ILP_solver) {
-    //   _cpsat_solver(
-    //     ILP_time_limit, 
-    //     _ecls_its_ende_newG_GPU, 
-    //     _ende_child, 
-    //     _ende_child_ptr, 
-    //     _root_eclass_id, 
-    //     _ende_cost,
-    //     best_ende_of_ecls, 
-    //     picked_endes_tmp);
-    // }
+    if (ILP_solver) {
+      _cpsat_solver(
+        ILP_time_limit, 
+        _ecls_its_ende_newG_GPU, 
+        _ende_child, 
+        _ende_child_ptr, 
+        _root_eclass_id, 
+        _ende_cost,
+        best_ende_of_ecls, 
+        picked_endes_tmp);
+    }
     // // GPU version ends
   }
 
