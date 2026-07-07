@@ -77,48 +77,49 @@ public:
 
     std::vector<bool> picked_endes_tmp = picked_endes;
     start = std::chrono::steady_clock::now();
-      _cpu_DAG_construction(picked_endes);  
+      // _cpu_DAG_construction(picked_endes);  
+      _cpu_DAG_construction_mt_bitmap(picked_endes);  
     end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU DAG construction runtime: " << 
       round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    if (ILP_solver) {
-      _cpsat_solver(
-        ILP_time_limit, 
-        _ecls_its_ende_newG, 
-        _ende_child, 
-        _ende_child_ptr, 
-        _root_eclass_id, 
-        _ende_cost,
-        best_ende_of_ecls, 
-        picked_endes_tmp); 
-    }
+    // if (ILP_solver) {
+    //   _cpsat_solver(
+    //     ILP_time_limit, 
+    //     _ecls_its_ende_newG, 
+    //     _ende_child, 
+    //     _ende_child_ptr, 
+    //     _root_eclass_id, 
+    //     _ende_cost,
+    //     best_ende_of_ecls, 
+    //     picked_endes_tmp); 
+    // }
 
-    // GPU version starts
-    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
-    printf("GPU version cost:\n\tunder tree code model = %.2lf, \
-      \n\tunder DAG cost model = %.2lf\n", 
-      best_tree_cost_gpu, dag_cost_gpu);
-      // auto t_parse_start = std::chrono::high_resolution_clock::now();
-    _copy_pickedende_back(picked_endes);
-    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
-      // auto t_parse_end = std::chrono::high_resolution_clock::now();
-      // std::chrono::duration<double> d = t_parse_end - t_parse_start;
-      // std::cout << "D2H_runtime: " << round_to((d.count()) * 1000, 0.001) << " (ms)\n";
-    cudaDeviceSynchronize();
+    // // GPU version starts
+    // auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
+    // printf("GPU version cost:\n\tunder tree code model = %.2lf, \
+    //   \n\tunder DAG cost model = %.2lf\n", 
+    //   best_tree_cost_gpu, dag_cost_gpu);
+    //   // auto t_parse_start = std::chrono::high_resolution_clock::now();
+    // _copy_pickedende_back(picked_endes);
+    // _copy_best_ende_of_ecls_back(best_ende_of_ecls);
+    //   // auto t_parse_end = std::chrono::high_resolution_clock::now();
+    //   // std::chrono::duration<double> d = t_parse_end - t_parse_start;
+    //   // std::cout << "D2H_runtime: " << round_to((d.count()) * 1000, 0.001) << " (ms)\n";
+    // cudaDeviceSynchronize();
     
-    _gpu_DAG_construction(); 
-    if (ILP_solver) {
-      _cpsat_solver(
-        ILP_time_limit, 
-        _ecls_its_ende_newG_GPU, 
-        _ende_child, 
-        _ende_child_ptr, 
-        _root_eclass_id, 
-        _ende_cost,
-        best_ende_of_ecls, 
-        picked_endes_tmp);
-    }
+    // _gpu_DAG_construction(); 
+    // if (ILP_solver) {
+    //   _cpsat_solver(
+    //     ILP_time_limit, 
+    //     _ecls_its_ende_newG_GPU, 
+    //     _ende_child, 
+    //     _ende_child_ptr, 
+    //     _root_eclass_id, 
+    //     _ende_cost,
+    //     best_ende_of_ecls, 
+    //     picked_endes_tmp);
+    // }
     // // GPU version ends
   }
 
@@ -150,7 +151,12 @@ private:
   // skewness
   double _compute_skewness(const std::vector<uint32_t>& degrees);
   void _print_degree_stats();
+  bool _insertion_bitmap_mt(
+    const bool is_td, 
+    std::vector<bool>& picked_endes,
+    std::vector<int>& level);
 
+  void _cpu_DAG_construction_mt_bitmap(std::vector<bool>& picked_endes);
   /* ASPLOS rebuttal ends */
 
   /* Run */
@@ -350,6 +356,11 @@ private:
 
   // 0515 revision
   std::vector<bool> _new_inserted; 
+  // ASPLOS rebuttal Q2: wasted work counters
+  std::atomic<uint64_t> _total_insert_count{0};
+  std::atomic<uint64_t> _total_revert_count{0};  
+  std::atomic<uint64_t> _total_bitmap_fp_count{0};
+  std::atomic<uint64_t> _total_overlap_check_count{0};  
   bool _insertion2(const bool is_td, 
     std::vector<bool>& picked_endes,
     std::vector<int>& level);

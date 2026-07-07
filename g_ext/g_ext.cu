@@ -9,6 +9,9 @@
 // #define ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
 // #define ASPLOS_REBUTTAL_NUMBER_ITERATIONS
 // #define ASPLOS_REBUTTAL_DAG_SHAPE
+#define ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
+#define ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
+
 
 /* DEBUG */
 // #define PRINT_LOG
@@ -1154,6 +1157,9 @@ void G_EXT::_BFS(
       picked_endes[i] = false;
       _new_inserted[i] = false;
       level[i] = -1; 
+      #ifdef ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
+        _total_revert_count.fetch_add(1, std::memory_order_relaxed);
+      #endif 
 
       // clear mask, e-node to child e-nodes
       for (uint32_t k = _global_adj_1D_ptr[i]; k < _global_adj_1D_ptr[i+1]; k++) {
@@ -1467,7 +1473,190 @@ void G_EXT::get_nodes_in_subgraph(
   }
 }
 
+bool G_EXT::_insertion_bitmap_mt(const bool is_td, 
+  std::vector<bool>& picked_endes,
+  std::vector<int>& level) 
+{
+  bool update = false;
+  _new_inserted.assign(_num_ende, false);
 
+  #pragma omp parallel for
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    if (picked_endes[ende]) {
+      continue;
+    }
+
+    bool has_par = false, has_chd = false;
+    int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+
+    // 每個 thread 各自的 local bitmap（跟 GPU kernel 的 shared bitmap 邏輯對應）
+    const uint32_t BITMAP_SIZE = 64;
+    uint8_t chd_flags[BITMAP_SIZE] = {0};
+
+    #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
+      std::vector<uint32_t> valid_chds; // 新增：保留精確版比對用
+      std::vector<uint32_t> valid_pars; // 用來記錄哪些 parent 通過初步篩選
+    #endif 
+
+    // ============================================================
+    // Step 1: 掃 child edges，建立 bitmap，順便找 min child level
+    // ============================================================
+    const uint32_t c_start = _global_adj_1D_ptr[ende];
+    const uint32_t c_end   = _global_adj_1D_ptr[ende+1];
+    for (uint32_t k = c_start; k < c_end; k++) {
+      uint32_t chd_ende = _global_adj_1D[k];
+      if (!picked_endes[chd_ende]) continue;
+
+      has_chd = true;
+      int chd_lvl = level[chd_ende];
+      if (min_chd_lvl > chd_lvl) {
+        min_chd_lvl = chd_lvl;
+      }
+      chd_flags[chd_ende & (BITMAP_SIZE - 1)] = 1; 
+
+      #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
+        valid_chds.push_back(chd_ende); // 新增
+      #endif 
+    }
+
+    // ============================================================
+    // Step 2: 掃 parent edges，找 max parent level，同時用 bitmap 檢查 overlap
+    // ============================================================
+    const uint32_t p_start = _global_inv_adj_1D_ptr[ende];
+    const uint32_t p_end   = _global_inv_adj_1D_ptr[ende+1];
+    bool has_overlap_b = false;
+
+    for (uint32_t k = p_start; k < p_end; k++) {
+      uint32_t par_ende = _global_inv_adj_1D[k];
+      if (!picked_endes[par_ende]) continue;
+
+      has_par = true;
+      int par_lvl = level[par_ende];
+      if (max_par_lvl < par_lvl) {
+        max_par_lvl = par_lvl;
+      }
+
+      // bitmap overlap check（跟 GPU kernel 完全對應的邏輯）
+      if (chd_flags[par_ende & (BITMAP_SIZE - 1)]) {
+        has_overlap_b = true;
+      }
+
+      #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
+        valid_pars.push_back(par_ende); // 新增
+      #endif 
+    }
+
+    // ============================================================
+    // Step 3: 判斷有效性（跟 GPU kernel 完全一致）
+    // ============================================================
+    bool cond = (is_td) ? (has_par) : (has_chd);
+    int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+    bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap_b) && (given_lvl >= 0);
+
+    #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
+      // ===== 精確比對（ground truth）=====
+      bool has_overlap_exact = false;
+      for (uint32_t p : valid_pars) {
+        for (uint32_t c : valid_chds) {
+          if (p == c) { has_overlap_exact = true; break; }
+        }
+        if (has_overlap_exact) break;
+      }
+      if (has_overlap_b && !has_overlap_exact) {
+        _total_bitmap_fp_count.fetch_add(1, std::memory_order_relaxed);
+      }
+      _total_overlap_check_count.fetch_add(1, std::memory_order_relaxed);
+    #endif 
+
+
+    // ===== 唯一一個 if (valid) 區塊，內部用 macro 決定要不要多做計數 =====
+    if (valid) {
+      update = true;
+      picked_endes[ende] = true;
+      level[ende] = given_lvl;
+      _new_inserted[ende] = true;
+
+      #if defined(ASPLOS_REBUTTAL_WASTED_INSERTION_TEST) || defined(ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE)
+        _total_insert_count.fetch_add(1, std::memory_order_relaxed);
+      #endif
+
+      #ifdef PRINT_LOG
+        printf("! valid ende = %u, max_par_lvl = %d, min_chd_lvl = %d, given_lvl = %d\n", 
+               ende, max_par_lvl, min_chd_lvl, given_lvl);
+      #endif
+    }
+
+  } // End of parallel for
+
+  if (update) {
+    _init_picked_adj(picked_endes);
+  }
+  return update;
+}
+
+void G_EXT::_cpu_DAG_construction_mt_bitmap(
+  std::vector<bool>& picked_endes)
+{
+  #ifdef ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
+    _total_insert_count.store(0);
+    _total_revert_count.store(0);
+  #endif
+  #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
+    _total_bitmap_fp_count.store(0);
+    _total_overlap_check_count.store(0);
+  #endif
+  
+  uint32_t num_iter = 0;
+  bool updated = true; 
+  std::vector<int> level;
+  level.resize(_num_ende, -1);
+  _new_inserted.assign(_num_ende, false);
+
+  while(updated) {
+    _update_deg(updated, picked_endes); 
+    _bottom_up_levelize(picked_endes, level);   // 沿用既有、已驗證正確的 CPU levelization+revert
+    bool tp = _insertion_bitmap_mt(true, picked_endes, level); // 只有這裡換成 bitmap 版本
+
+    _update_deg(tp, picked_endes); 
+    _top_down_levelize(picked_endes, level);
+    bool bu = _insertion_bitmap_mt(false, picked_endes, level);
+
+    updated = tp || bu; 
+    num_iter++;
+
+    printf("[CPU+bitmap] iter %u: tp=%d, bu=%d\n", num_iter, tp, bu);
+
+    if (num_iter > 1000) {  // 安全閥，避免真的卡死
+      std::cerr << "[WARNING] CPU+bitmap version exceeded 1000 iterations, likely livelock\n";
+      break;
+    }
+  }
+  std::cout << "[CPU+bitmap] Total iterations = " << num_iter << "\n";
+
+  #ifdef ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
+    // ===== Q2: wasted work report =====
+    uint64_t total_insert = _total_insert_count.load();
+    uint64_t total_revert = _total_revert_count.load();
+    double wasted_pct_of_insert = (total_insert > 0) 
+      ? (100.0 * static_cast<double>(total_revert) / static_cast<double>(total_insert)) 
+      : 0.0;
+
+    std::cout << "[Q2 Wasted Work] total_insert = " << total_insert
+              << ", total_revert = " << total_revert
+              << ", wasted_pct_of_insert = " << wasted_pct_of_insert << "%\n";  
+  #endif
+
+#ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
+    uint64_t total_fp = _total_bitmap_fp_count.load();
+    uint64_t total_check = _total_overlap_check_count.load();
+    double fp_pct = (total_check > 0) 
+      ? (100.0 * static_cast<double>(total_fp) / static_cast<double>(total_check)) 
+      : 0.0;
+    std::cout << "[Q4 Bitmap FP] total_fp = " << total_fp 
+              << ", total_check = " << total_check 
+              << ", fp_pct = " << fp_pct << "%\n";
+  #endif  
+}
 
 // =========================== GPU functions =========================== // 
 
@@ -2010,7 +2199,6 @@ void G_EXT::_gpu_DAG_construction() {
       
     cudaMemcpy(_dvc_update, &dvc_update_flag, sizeof(bool), cudaMemcpyHostToDevice);
     bool tp = _gpu_insertion(true);
-    // bool tp = true, bu = true;
     
     _gpu_update_deg_init_level(tp, false);
     _gpu_BFS(
@@ -2024,9 +2212,6 @@ void G_EXT::_gpu_DAG_construction() {
       
     cudaMemcpy(_dvc_update, &dvc_update_flag, sizeof(bool), cudaMemcpyHostToDevice);
     bool bu = _gpu_insertion(false);
-
-    // if (itr == 5) tp = false;
-    // if (itr == 5) bu = false;
 
     updated = tp || bu;
     #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
@@ -2045,7 +2230,6 @@ void G_EXT::_gpu_DAG_construction() {
   }
   printf("#alive e-nodes after GPU DAG construction = %u\n", aaa);
 
-  // 人生保命符在這裡！！！
   // Re-constructing data for second times ILP solver
   _ecls_its_ende_newG_GPU.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
   for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
@@ -2054,8 +2238,6 @@ void G_EXT::_gpu_DAG_construction() {
       _ecls_its_ende_newG_GPU[ecls].push_back(ende);
     }
   }
-  // 人生保命符在這裡！！！
-
 
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
@@ -3044,7 +3226,7 @@ __global__ void _gpu_insertion_kl_block(
   bool local_overlap = false;
 #if FAST_BITMAP_CHECK
   // --- Shared bitmap trick (lower bits as hash) ---
-  const uint32_t bitMap_size = 64;
+  const uint32_t bitMap_size = 256;
   __shared__ uint8_t chd_flags[bitMap_size];
   for (int i = tid; i < bitMap_size; i += blockDim.x) 
     chd_flags[i] = 0;
