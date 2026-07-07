@@ -3,6 +3,13 @@
 #define threads 1024 // num GPU threads
 // #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
 
+/* ASPLOS_REBUTTAL */ 
+// #define ASPLOS_REBUTTAL
+// #define ASPLOS_REBUTTAL_SKEWNESS
+// #define ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
+// #define ASPLOS_REBUTTAL_NUMBER_ITERATIONS
+// #define ASPLOS_REBUTTAL_DAG_SHAPE
+
 /* DEBUG */
 // #define PRINT_LOG
 // #define CHECK_CYCLE // check for read input
@@ -176,6 +183,10 @@ void G_EXT::_read_input(
     tmp_ende_child,
     tmp_ende_child_ptr,
     tmp_root_eclass_id);
+  
+#ifdef ASPLOS_REBUTTAL_SKEWNESS  
+  _print_degree_stats();  // Experiment 1. skewness
+#endif 
 }
 
 void G_EXT::_prune_dead_nodes(
@@ -282,6 +293,10 @@ void G_EXT::_prune_dead_nodes(
 
   MY_CHECK((_num_ecls+dead_ecls_idx.size()) == tmp_num_ecls, "_num_ecls+dead_ecls_idx.size()");
   MY_CHECK(_root_eclass_id.size() == tmp_root_eclass_id.size(), "_root_eclass_id.size()");
+  
+#ifdef ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
+  auto t_parse_start = std::chrono::high_resolution_clock::now();
+#endif 
 
   // Compress _ecls_its_ende to 1D 
   uint32_t acc_ptr = 0;
@@ -399,43 +414,127 @@ void G_EXT::_prune_dead_nodes(
   }
 #endif
 
-  // Construct _global_adj, _global_inv_adj --> There maybe cycle inside _global_adj and _global_inv_adj
-  _global_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-  _global_inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+//   // Construct _global_adj, _global_inv_adj --> There maybe cycle inside _global_adj and _global_inv_adj
+//   _global_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+//   _global_inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
+//   for (uint32_t ende = 0; ende < _num_ende; ende++) {
+//     uint32_t start = _ende_child_ptr[ende]; 
+//     uint32_t end = _ende_child_ptr[ende+1];
+//     for (uint32_t jj = start; jj < end; jj++) {
+//       uint32_t chd_ecls = _ende_child[jj];
+//       for (uint32_t ende2 : _ecls_its_ende[chd_ecls]) {
+//         // remove self-loop
+//         if (ende != ende2) {
+//           _global_adj[ende].insert(ende2); // update _global_adj 
+//           _global_inv_adj[ende2].insert(ende); // update inv_adjs
+//         }
+//       }
+//     }
+//   }
+
+//   // Compress _global_adj and _global_inv_adj to 1D 
+//   acc_ptr = 0;
+//   _global_adj_1D_ptr.push_back(acc_ptr);
+//   for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
+//     for (uint32_t to_ende : _global_adj[ende]) {
+//       _global_adj_1D.push_back(to_ende);
+//       acc_ptr++;
+//     }
+//     _global_adj_1D_ptr.push_back(acc_ptr);
+//   }
+  
+//   acc_ptr = 0;
+//   _global_inv_adj_1D_ptr.push_back(acc_ptr);
+//   for (uint32_t ende = 0; ende < _global_inv_adj.size(); ende++) {
+//     for (uint32_t to_ende : _global_inv_adj[ende]) {
+//       _global_inv_adj_1D.push_back(to_ende);
+//       acc_ptr++;
+//     }
+//     _global_inv_adj_1D_ptr.push_back(acc_ptr);
+//   }
+
+//   // Init size of _picked_adj and _picked_inv_adj
+//   _picked_adj.resize(_global_adj_1D.size(), false); 
+//   _picked_inv_adj.resize(_global_inv_adj_1D.size(), false);
+//   _tmp_picked_adj.resize(_global_adj_1D.size(), false); 
+//   _tmp_picked_inv_adj.resize(_global_inv_adj_1D.size(), false);  
+
+// #ifdef PRINT_LOG
+//   printf("_global_adj mapping (ende Id -> ende Id):\n");
+//   _print_adj(_global_adj);
+//   printf("_global_inv_adj mapping (ende Id -> ende Id):\n");
+//   _print_adj(_global_inv_adj);
+
+//   printf("_num_ende = %u\n", _num_ende);
+//   printf("_global_adj:\n");
+//   for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
+//     printf("_global_adj[%u] (sz = %lu) = [", ende, _global_adj.size());
+//     for (uint32_t to_ende : _global_adj[ende]) {
+//       printf("%u, ", to_ende);
+//     }
+//     printf("]\n");
+//   }
+//   printf("\n");  
+// #endif
+
+//   for (uint32_t r_ecls : _root_eclass_id) {
+//     for (uint32_t r : _ecls_its_ende[r_ecls]) {
+//       _roots.push_back(r); 
+//     }
+//   }
+
+//   // JUST USED FOR CHECK
+//   MY_CHECK(_all_root_ende_1D.size() == _roots.size(), "_all_root_ende_1D.size() == _roots.size()");
+//   for (uint32_t i = 0; i < _all_root_ende_1D.size(); i++) {
+//     if (_all_root_ende_1D[i] != _roots[i]) {
+//       exit(1);
+//     }
+//   }
+
+//   for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
+//     if (_global_adj[ende].size() == 0) {
+//       _leaves.push_back(ende); 
+//     }
+//   }  
+// Construct _global_adj_1D, _global_inv_adj_1D directly (CSR format),
+  // avoiding std::unordered_set overhead for large e-graphs.
+  // Note: There maybe cycle inside _global_adj_1D and _global_inv_adj_1D
+
+  // 20260706 Claude optimized data preprocessing version starts 
+  // Step 1: gather raw (possibly duplicated) adjacency per e-node
+  std::vector<std::vector<uint32_t>> raw_adj(_num_ende);
+  std::vector<std::vector<uint32_t>> raw_inv_adj(_num_ende);
+
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    uint32_t start = _ende_child_ptr[ende]; 
-    uint32_t end = _ende_child_ptr[ende+1];
+    uint32_t start = _ende_child_ptr[ende];
+    uint32_t end   = _ende_child_ptr[ende+1];
     for (uint32_t jj = start; jj < end; jj++) {
       uint32_t chd_ecls = _ende_child[jj];
       for (uint32_t ende2 : _ecls_its_ende[chd_ecls]) {
         // remove self-loop
         if (ende != ende2) {
-          _global_adj[ende].insert(ende2); // update _global_adj 
-          _global_inv_adj[ende2].insert(ende); // update inv_adjs
+          raw_adj[ende].push_back(ende2);
+          raw_inv_adj[ende2].push_back(ende);
         }
       }
     }
   }
 
-  // Compress _global_adj and _global_inv_adj to 1D 
-  acc_ptr = 0;
-  _global_adj_1D_ptr.push_back(acc_ptr);
-  for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
-    for (uint32_t to_ende : _global_adj[ende]) {
-      _global_adj_1D.push_back(to_ende);
-      acc_ptr++;
-    }
-    _global_adj_1D_ptr.push_back(acc_ptr);
+  // Step 2: sort + unique (dedupe) each list, then compress directly to 1D CSR
+  _global_adj_1D_ptr.push_back(0);
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    std::sort(raw_adj[ende].begin(), raw_adj[ende].end());
+    raw_adj[ende].erase(std::unique(raw_adj[ende].begin(), raw_adj[ende].end()), raw_adj[ende].end());
+    _global_adj_1D.insert(_global_adj_1D.end(), raw_adj[ende].begin(), raw_adj[ende].end());
+    _global_adj_1D_ptr.push_back(_global_adj_1D.size());
   }
-  
-  acc_ptr = 0;
-  _global_inv_adj_1D_ptr.push_back(acc_ptr);
-  for (uint32_t ende = 0; ende < _global_inv_adj.size(); ende++) {
-    for (uint32_t to_ende : _global_inv_adj[ende]) {
-      _global_inv_adj_1D.push_back(to_ende);
-      acc_ptr++;
-    }
-    _global_inv_adj_1D_ptr.push_back(acc_ptr);
+
+  _global_inv_adj_1D_ptr.push_back(0);
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    std::sort(raw_inv_adj[ende].begin(), raw_inv_adj[ende].end());
+    raw_inv_adj[ende].erase(std::unique(raw_inv_adj[ende].begin(), raw_inv_adj[ende].end()), raw_inv_adj[ende].end());
+    _global_inv_adj_1D.insert(_global_inv_adj_1D.end(), raw_inv_adj[ende].begin(), raw_inv_adj[ende].end());
+    _global_inv_adj_1D_ptr.push_back(_global_inv_adj_1D.size());
   }
 
   // Init size of _picked_adj and _picked_inv_adj
@@ -445,20 +544,28 @@ void G_EXT::_prune_dead_nodes(
   _tmp_picked_inv_adj.resize(_global_inv_adj_1D.size(), false);  
 
 #ifdef PRINT_LOG
-  printf("_global_adj mapping (ende Id -> ende Id):\n");
-  _print_adj(_global_adj);
-  printf("_global_inv_adj mapping (ende Id -> ende Id):\n");
-  _print_adj(_global_inv_adj);
-
-  printf("_num_ende = %u\n", _num_ende);
-  printf("_global_adj:\n");
-  for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
-    printf("_global_adj[%u] (sz = %lu) = [", ende, _global_adj.size());
-    for (uint32_t to_ende : _global_adj[ende]) {
-      printf("%u, ", to_ende);
+  printf("_global_adj_1D mapping (ende Id -> ende Id):\n");
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    uint32_t start = _global_adj_1D_ptr[ende];
+    uint32_t end   = _global_adj_1D_ptr[ende + 1];
+    printf("fm_node = %u, to nodes = [", ende);
+    for (uint32_t k = start; k < end; k++) {
+      printf("%u, ", _global_adj_1D[k]);
     }
     printf("]\n");
   }
+  printf("_global_inv_adj_1D mapping (ende Id -> ende Id):\n");
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    uint32_t start = _global_inv_adj_1D_ptr[ende];
+    uint32_t end   = _global_inv_adj_1D_ptr[ende + 1];
+    printf("fm_node = %u, to nodes = [", ende);
+    for (uint32_t k = start; k < end; k++) {
+      printf("%u, ", _global_inv_adj_1D[k]);
+    }
+    printf("]\n");
+  }
+
+  printf("_num_ende = %u\n", _num_ende);
   printf("\n");  
 #endif
 
@@ -476,12 +583,154 @@ void G_EXT::_prune_dead_nodes(
     }
   }
 
-  for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
-    if (_global_adj[ende].size() == 0) {
+  for (uint32_t ende = 0; ende < _num_ende; ende++) {
+    uint32_t out_degree = _global_adj_1D_ptr[ende+1] - _global_adj_1D_ptr[ende];
+    if (out_degree == 0) {
       _leaves.push_back(ende); 
     }
-  }  
+  }
+  // 20260706 Claude optimized data preprocessing version ends 
+
+
+#ifdef ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
+  auto t_parse_end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> d = t_parse_end - t_parse_start;
+  std::cout << "CSR flattern time: " << round_to((d.count()) * 1000, 0.001) << " (ms)\n";
+#endif 
+
 }
+
+#ifdef ASPLOS_REBUTTAL_SKEWNESS
+  double G_EXT::_compute_skewness(const std::vector<uint32_t>& degrees) {
+    if (degrees.empty()) return 0.0;
+
+    double n = static_cast<double>(degrees.size());
+    double mean = 0.0;
+    for (uint32_t d : degrees) mean += d;
+    mean /= n;
+
+    double m2 = 0.0, m3 = 0.0;
+    for (uint32_t d : degrees) {
+      double diff = static_cast<double>(d) - mean;
+      m2 += diff * diff;
+      m3 += diff * diff * diff;
+    }
+    m2 /= n;
+    m3 /= n;
+
+    double stddev = std::sqrt(m2);
+    if (stddev < 1e-12) return 0.0; // 避免除以 0（所有 degree 都一樣時）
+
+    return m3 / (stddev * stddev * stddev);
+  }
+
+  void G_EXT::_print_degree_stats() {
+    std::vector<uint32_t> deg_NC(_num_ende);
+    std::vector<uint32_t> deg_NN(_num_ende);
+
+    for (uint32_t i = 0; i < _num_ende; i++) {
+      uint32_t start = _ende_child_ptr[i];
+      uint32_t end   = _ende_child_ptr[i+1];
+      deg_NC[i] = end - start;  // e-node -> child e-class 的數量
+
+      uint32_t nn_count = 0;
+      for (uint32_t jj = start; jj < end; jj++) {
+        uint32_t child_ecls = _ende_child[jj];
+        nn_count += _ecls_its_ende[child_ecls].size();  // 該 child e-class 裡有幾個 e-node
+      }
+      deg_NN[i] = nn_count;  // e-node -> e-node 的展開數量（不去重）
+    }
+
+    // 算 average（全部 e-node）
+    double sum_NC = 0.0, sum_NN = 0.0;
+    for (uint32_t i = 0; i < _num_ende; i++) {
+      sum_NC += deg_NC[i];
+      sum_NN += deg_NN[i];
+    }
+    double avg_NC = sum_NC / static_cast<double>(_num_ende);
+    double avg_NN = sum_NN / static_cast<double>(_num_ende);
+
+    double skew_NC = _compute_skewness(deg_NC);
+    double skew_NN = _compute_skewness(deg_NN);
+
+    // 找出 max 的位置（e-node index），而不只是數值
+    uint32_t max_NC_idx = static_cast<uint32_t>(std::distance(deg_NC.begin(), std::max_element(deg_NC.begin(), deg_NC.end())));
+    uint32_t max_NN_idx = static_cast<uint32_t>(std::distance(deg_NN.begin(), std::max_element(deg_NN.begin(), deg_NN.end())));
+    uint32_t max_NC = deg_NC[max_NC_idx];
+    uint32_t max_NN = deg_NN[max_NN_idx];
+
+    printf("[Degree Stats] avg(d_NC) = %.4f, avg(d_NN) = %.4f\n", avg_NC, avg_NN);
+    printf("[Degree Stats] skewness(d_NC) = %.4f, skewness(d_NN) = %.4f\n", skew_NC, skew_NN);
+    printf("[Degree Stats] max(d_NC) = %u (ende_idx=%u), max(d_NN) = %u (ende_idx=%u)\n",
+          max_NC, max_NC_idx, max_NN, max_NN_idx);
+
+    // ===== 檢查這個 max degree 的 e-node 是否為 root =====
+    std::unordered_set<uint32_t> root_set(_roots.begin(), _roots.end()); // 轉成 set，查詢 O(1)
+    auto is_root_ende = [&](uint32_t ende_idx) -> bool {
+      return root_set.find(ende_idx) != root_set.end();
+    };
+
+    bool max_NC_is_root = is_root_ende(max_NC_idx);
+    bool max_NN_is_root = is_root_ende(max_NN_idx);
+
+    printf("[Degree Stats] max(d_NC) ende is root? %s\n", max_NC_is_root ? "YES" : "NO");
+    printf("[Degree Stats] max(d_NN) ende is root? %s\n", max_NN_is_root ? "YES" : "NO");
+    printf("[Degree Stats] max(d_NC) ende belongs to eclass=%u\n", _ende_ecls[max_NC_idx]);
+    printf("[Degree Stats] max(d_NN) ende belongs to eclass=%u\n", _ende_ecls[max_NN_idx]);
+
+    // ===== 新增：排除所有 root e-node 之後，重新計算 avg / skewness / max =====
+    std::vector<uint32_t> deg_NC_noroot, deg_NN_noroot;
+    deg_NC_noroot.reserve(_num_ende);
+    deg_NN_noroot.reserve(_num_ende);
+    for (uint32_t i = 0; i < _num_ende; i++) {
+      if (root_set.find(i) != root_set.end()) continue; // 排除 root
+      deg_NC_noroot.push_back(deg_NC[i]);
+      deg_NN_noroot.push_back(deg_NN[i]);
+    }
+
+    double avg_NC_noroot = 0.0, avg_NN_noroot = 0.0;
+    double skew_NC_noroot = 0.0, skew_NN_noroot = 0.0;
+    uint32_t max_NC_noroot = 0, max_NN_noroot = 0;
+
+    if (!deg_NC_noroot.empty()) {
+      double sum_NC_nr = 0.0, sum_NN_nr = 0.0;
+      for (size_t i = 0; i < deg_NC_noroot.size(); i++) {
+        sum_NC_nr += deg_NC_noroot[i];
+        sum_NN_nr += deg_NN_noroot[i];
+      }
+      avg_NC_noroot = sum_NC_nr / static_cast<double>(deg_NC_noroot.size());
+      avg_NN_noroot = sum_NN_nr / static_cast<double>(deg_NN_noroot.size());
+
+      skew_NC_noroot = _compute_skewness(deg_NC_noroot);
+      skew_NN_noroot = _compute_skewness(deg_NN_noroot);
+
+      max_NC_noroot = *std::max_element(deg_NC_noroot.begin(), deg_NC_noroot.end());
+      max_NN_noroot = *std::max_element(deg_NN_noroot.begin(), deg_NN_noroot.end());
+    }
+
+    printf("[Degree Stats][excl. root] avg(d_NC) = %.4f, avg(d_NN) = %.4f\n", avg_NC_noroot, avg_NN_noroot);
+    printf("[Degree Stats][excl. root] skewness(d_NC) = %.4f, skewness(d_NN) = %.4f\n", skew_NC_noroot, skew_NN_noroot);
+    printf("[Degree Stats][excl. root] max(d_NC) = %u, max(d_NN) = %u\n", max_NC_noroot, max_NN_noroot);
+    printf("[Degree Stats][excl. root] num e-nodes excluded (root count) = %zu\n", _roots.size());
+
+    // ===== 新增：把每個 e-node 的 degree dump 到檔案（單一檔案，直接覆蓋）=====
+    std::ofstream ofs("rebuttal_exp/degree_skew_exp.out"); // 預設 trunc mode，每次重跑會覆蓋舊檔
+    ofs << "# NUM_ENDE: " << _num_ende << "\n";
+    ofs << "# AVG_NC: " << avg_NC << " AVG_NN: " << avg_NN << "\n";
+    ofs << "# SKEW_NC: " << skew_NC << " SKEW_NN: " << skew_NN << "\n";
+    ofs << "# MAX_NC: " << max_NC << " MAX_NN: " << max_NN << "\n";
+    ofs << "# MAX_NC_IS_ROOT: " << (max_NC_is_root ? 1 : 0)
+        << " MAX_NN_IS_ROOT: " << (max_NN_is_root ? 1 : 0) << "\n";
+    ofs << "# AVG_NC_NOROOT: " << avg_NC_noroot << " AVG_NN_NOROOT: " << avg_NN_noroot << "\n";
+    ofs << "# SKEW_NC_NOROOT: " << skew_NC_noroot << " SKEW_NN_NOROOT: " << skew_NN_noroot << "\n";
+    ofs << "# MAX_NC_NOROOT: " << max_NC_noroot << " MAX_NN_NOROOT: " << max_NN_noroot << "\n";
+    ofs << "# deg_NC deg_NN\n";
+    for (uint32_t i = 0; i < _num_ende; i++) {
+      ofs << deg_NC[i] << " " << deg_NN[i] << "\n";
+    }
+    ofs.close();
+  }
+#endif 
 
 // =========================== TREE/DAG functions =========================== // 
 
@@ -713,6 +962,11 @@ void G_EXT::_cpu_DAG_construction(
     }
   }
 #endif
+  
+  #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
+    uint32_t num_iter = 0;
+  #endif
+
   bool updated = true; 
   std::vector<int> level;
   level.resize(_num_ende, -1); // init, needed
@@ -733,7 +987,14 @@ void G_EXT::_cpu_DAG_construction(
     #ifdef PRINT_LOG
       std::cout << "Get into while loop again? " << updated << "\n==========================================\n"; 
     #endif
+    #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
+      num_iter++;
+    #endif
   }
+  
+  #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
+    std::cout << "CPU num_iter = " << num_iter << "\n";
+  #endif
 
   // Clear redundant enodes
   _clear_redundant_endes(picked_endes);
@@ -746,6 +1007,70 @@ void G_EXT::_cpu_DAG_construction(
       _ecls_its_ende_newG[ecls].push_back(ende);
     }
   }
+
+#ifdef ASPLOS_REBUTTAL_DAG_SHAPE
+  // Compute depth/width of the final DAG passed to the ILP solver
+  // (based on a fresh top-down levelization restricted to _in_subgraph nodes)
+  {
+    std::vector<int> final_level(_num_ende, -1);
+    std::vector<uint32_t> final_indeg(_num_ende, 0);
+
+    // build in-degree restricted to final subgraph nodes and picked_adj edges
+    for (uint32_t fm_ende = 0; fm_ende < _num_ende; fm_ende++) {
+      if (!_in_subgraph[fm_ende]) continue;
+      uint32_t start = _global_adj_1D_ptr[fm_ende];
+      uint32_t end   = _global_adj_1D_ptr[fm_ende + 1];
+      for (uint32_t k = start; k < end; k++) {
+        if (!_picked_adj[k]) continue;
+        uint32_t to_ende = _global_adj_1D[k];
+        if (!_in_subgraph[to_ende]) continue;
+        final_indeg[to_ende]++;
+      }
+    }
+
+    std::queue<uint32_t> q;
+    for (uint32_t i = 0; i < _num_ende; i++) {
+      if (_in_subgraph[i] && final_indeg[i] == 0) q.push(i);
+    }
+
+    int cur_level = 0;
+    std::vector<uint32_t> width_per_level;
+    while (!q.empty()) {
+      size_t layer_size = q.size();
+      width_per_level.push_back(static_cast<uint32_t>(layer_size));
+      for (size_t t = 0; t < layer_size; t++) {
+        uint32_t u = q.front(); q.pop();
+        final_level[u] = cur_level;
+        uint32_t start = _global_adj_1D_ptr[u];
+        uint32_t end   = _global_adj_1D_ptr[u + 1];
+        for (uint32_t k = start; k < end; k++) {
+          if (!_picked_adj[k]) continue;
+          uint32_t v = _global_adj_1D[k];
+          if (!_in_subgraph[v]) continue;
+          if (--final_indeg[v] == 0) q.push(v);
+        }
+      }
+      cur_level++;
+    }
+
+    uint32_t depth = static_cast<uint32_t>(cur_level);
+    uint32_t max_width = 0;
+    uint64_t total_nodes_in_subgraph = 0;
+    for (uint32_t w : width_per_level) {
+      if (w > max_width) max_width = w;
+      total_nodes_in_subgraph += w;
+    }
+    double avg_width = (depth > 0)
+      ? (static_cast<double>(total_nodes_in_subgraph) / depth)
+      : 0.0;
+
+    std::cout << "[DAG Shape] depth = " << depth
+               << ", max_width = " << max_width
+               << ", avg_width = " << avg_width
+               << ", total_nodes_in_final_subgraph = " << total_nodes_in_subgraph
+               << "\n";
+  }
+#endif  
 }
 
 void G_EXT::_update_deg(
@@ -1408,6 +1733,14 @@ __global__ void _gpu_warm_up(
 
 std::pair<double, double> G_EXT::_gpu_tree_construction() 
 {
+#ifdef ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
+  float H2D_runtime = 0.;
+  cudaEvent_t startH2D_runtime, stopH2D_runtime;
+  cudaEventCreate(&startH2D_runtime);
+  cudaEventCreate(&stopH2D_runtime);    
+  cudaEventRecord(startH2D_runtime);
+#endif
+
   int blocks = (_num_ende + threads - 1) / threads;
 
   // Local memory 
@@ -1499,7 +1832,7 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   cudaMemset(_dvc_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
   cudaMemset(_dvc_tmp_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
   cudaMemset(_dvc_tmp_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
-  _gpu_warm_up<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: place this GPU kernel here as the warm-up for GPU; w/o this, the kernel runtime below will be extremely long. Need to remrmber!
+
   cudaMemcpy(_dvc_all_root_ende_1D, _all_root_ende_1D.data(), _all_root_ende_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice);
   cudaMemset(_dvc_max_level, 0, 1*sizeof(int));
   cudaMemset(_dvc_in_subgraph, 0, _num_ende*sizeof(uint32_t)); // false
@@ -1508,6 +1841,15 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   cudaMemset(_dvc_from_roots, 0, _num_ende*sizeof(uint32_t)); // false
   cudaMemset(_dvc_from_leaves, 0, _num_ende*sizeof(uint32_t)); // false
   cudaCheckErrors("cudaMemcpy failed");
+
+ #ifdef ASPLOS_REBUTTAL_DATA_TRANSFER_TIME 
+  cudaEventRecord(stopH2D_runtime);
+  cudaEventSynchronize(stopH2D_runtime);
+  cudaEventElapsedTime(&H2D_runtime, startH2D_runtime, stopH2D_runtime);                                    
+  printf("H2D_runtime runtime: %.2f (ms)\n", H2D_runtime);
+#endif
+
+  _gpu_warm_up<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: place this GPU kernel here as the warm-up for GPU; w/o this, the kernel runtime below will be extremely long. Need to remrmber!
 
   float gpuTime = 0.;
   cudaEvent_t startGPU, stopGPU;
@@ -1589,7 +1931,7 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-  printf("GPU tree construction runtime: %.2f (ms)\n", gpuTime);
+  // printf("GPU tree construction runtime: %.2f (ms)\n", gpuTime);
 
   return std::make_pair(tree_ret, dag_ret);
 }
@@ -1686,7 +2028,10 @@ void G_EXT::_gpu_DAG_construction() {
   // printf("itr = %d\n", itr);
 
 
-  int itr = 0;
+  #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
+    uint32_t num_iter = 0;
+  #endif
+
   bool updated = true;
   bool dvc_update_flag = false; 
 
@@ -1722,7 +2067,9 @@ void G_EXT::_gpu_DAG_construction() {
     // if (itr == 5) bu = false;
 
     updated = tp || bu;
-    itr++;
+    #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
+      num_iter++;
+    #endif  
   }  
 
   std::vector<uint32_t> in_subgraph_gpu; 
@@ -1742,15 +2089,10 @@ void G_EXT::_gpu_DAG_construction() {
   cudaEventSynchronize(stopGPU);
   cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
   
-  printf("itr = %d\n", itr);
-  printf("GPU DAG construction runtime: %.2f (ms)\n", 
-    gpu_reconst_Time);  
-
-  // 實驗結束，記得釋放記憶體
-  cudaFree(_dvc_base_indegree);
-  cudaFree(_dvc_base_inv_indegree);
-  cudaFree(_dvc_new_inserted);
-
+  #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
+    std::cout << "GPU num_iter = " << num_iter << "\n";
+  #endif
+  // printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);  
 }
 
 __global__ void _update_deg_kl2 (

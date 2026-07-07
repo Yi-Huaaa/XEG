@@ -53,8 +53,6 @@ public:
   {
     // READ IN argv/argc
     NUM_THREAD_DAG_CONSTR = num_thread_dag_constrution;
-    bool bibi_testing = false;;
-    DAG_KERNEL = 1; // bibit 0516 testing here now
 
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
@@ -84,29 +82,33 @@ public:
     duration = end - start;
     std::cout << "CPU DAG construction runtime: " << 
       round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    if (ILP_solver && !bibi_testing) {
-      _cpsat_solver(
-        ILP_time_limit, 
-        _ecls_its_ende_newG, 
-        _ende_child, 
-        _ende_child_ptr, 
-        _root_eclass_id, 
-        _ende_cost,
-        best_ende_of_ecls, 
-        picked_endes_tmp); 
-    }
+    // if (ILP_solver) {
+    //   _cpsat_solver(
+    //     ILP_time_limit, 
+    //     _ecls_its_ende_newG, 
+    //     _ende_child, 
+    //     _ende_child_ptr, 
+    //     _root_eclass_id, 
+    //     _ende_cost,
+    //     best_ende_of_ecls, 
+    //     picked_endes_tmp); 
+    // }
 
-    // // GPU version starts
-    // auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
-    // printf("GPU version cost:\n\tunder tree code model = %.2lf, \
-    //   \n\tunder DAG cost model = %.2lf\n", 
-    //   best_tree_cost_gpu, dag_cost_gpu);
-    // _copy_pickedende_back(picked_endes);
-    // _copy_best_ende_of_ecls_back(best_ende_of_ecls);
-    // cudaDeviceSynchronize();
+    // GPU version starts
+    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
+    printf("GPU version cost:\n\tunder tree code model = %.2lf, \
+      \n\tunder DAG cost model = %.2lf\n", 
+      best_tree_cost_gpu, dag_cost_gpu);
+      // auto t_parse_start = std::chrono::high_resolution_clock::now();
+    _copy_pickedende_back(picked_endes);
+    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
+      // auto t_parse_end = std::chrono::high_resolution_clock::now();
+      // std::chrono::duration<double> d = t_parse_end - t_parse_start;
+      // std::cout << "D2H_runtime: " << round_to((d.count()) * 1000, 0.001) << " (ms)\n";
+    cudaDeviceSynchronize();
     
-    // _gpu_DAG_construction(); 
-    // if (ILP_solver && !bibi_testing) {
+    _gpu_DAG_construction(); 
+    // if (ILP_solver) {
     //   _cpsat_solver(
     //     ILP_time_limit, 
     //     _ecls_its_ende_newG_GPU, 
@@ -144,6 +146,12 @@ private:
     const std::vector<uint32_t>& ende_child,
     const std::vector<uint32_t>& ende_child_ptr,
     const std::vector<uint32_t>& root_eclass_id);
+  /* ASPLOS rebuttal starts */
+  // skewness
+  double _compute_skewness(const std::vector<uint32_t>& degrees);
+  void _print_degree_stats();
+
+  /* ASPLOS rebuttal ends */
 
   /* Run */
   /* Tree Level Relaxation */
