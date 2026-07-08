@@ -12,7 +12,6 @@
 #define ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
 #define ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
 
-
 /* DEBUG */
 // #define PRINT_LOG
 // #define CHECK_CYCLE // check for read input
@@ -1490,7 +1489,7 @@ bool G_EXT::_insertion_bitmap_mt(const bool is_td,
     int max_par_lvl = -1, min_chd_lvl = INT_MAX;
 
     // 每個 thread 各自的 local bitmap（跟 GPU kernel 的 shared bitmap 邏輯對應）
-    const uint32_t BITMAP_SIZE = 64;
+    const uint32_t BITMAP_SIZE = 256;
     uint8_t chd_flags[BITMAP_SIZE] = {0};
 
     #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
@@ -1632,6 +1631,19 @@ void G_EXT::_cpu_DAG_construction_mt_bitmap(
     }
   }
   std::cout << "[CPU+bitmap] Total iterations = " << num_iter << "\n";
+
+
+  // Clear redundant enodes
+  _clear_redundant_endes(picked_endes);
+
+  // Re-constructing data for second times ILP solver
+  _ecls_its_ende_newG.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
+  for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
+    for (uint32_t ende : _ecls_its_ende[ecls]) {
+      if (!_in_subgraph[ende]) continue;
+      _ecls_its_ende_newG[ecls].push_back(ende);
+    }
+  }
 
   #ifdef ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
     // ===== Q2: wasted work report =====
