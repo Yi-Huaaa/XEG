@@ -77,8 +77,8 @@ public:
 
     std::vector<bool> picked_endes_tmp = picked_endes;
     start = std::chrono::steady_clock::now();
-      // _cpu_DAG_construction(picked_endes);  
-      _cpu_DAG_construction_mt_bitmap(picked_endes);  
+      _cpu_DAG_construction(picked_endes);  
+      // _cpu_DAG_construction_mt_bitmap(picked_endes);  
     end = std::chrono::steady_clock::now();
     duration = end - start;
     std::cout << "CPU DAG construction runtime: " << 
