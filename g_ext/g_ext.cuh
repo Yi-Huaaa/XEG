@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <stdexcept>
 #include <vector>
 #include <list>
 #include <thread>
@@ -33,6 +34,12 @@
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
 
+enum class DagKernel : uint32_t {
+  Thread = 0,
+  Warp   = 1,
+  Block  = 2,
+};
+
 class G_EXT {
 
 public:
@@ -48,11 +55,31 @@ public:
   
   void run(const bool ILP_solver = false, 
           const double ILP_time_limit = 360,
-          const uint32_t dag_kernel = 2,
-          const uint32_t num_thread_dag_constrution = 64) 
+          DagKernel dag_kernel = DagKernel::Thread,
+          uint32_t num_thread_dag_constrution = 1) 
   {
-    // READ IN argv/argc
-    NUM_THREAD_DAG_CONSTR = num_thread_dag_constrution;
+    switch (dag_kernel) {
+      case DagKernel::Thread:
+        if (num_thread_dag_constrution != 1) {
+          throw std::invalid_argument(
+            "Thread DAG kernel requires exactly one thread per candidate");
+        }
+        break;
+
+      case DagKernel::Warp:
+        throw std::logic_error(
+          "Warp-level GPU DAG construction is not implemented yet");
+
+      case DagKernel::Block:
+        throw std::logic_error(
+          "Block-level GPU DAG construction is not implemented yet");
+
+      default:
+        throw std::invalid_argument("Invalid DagKernel value");
+    }
+
+    _dag_kernel = dag_kernel;
+    _dag_threads_per_candidate = num_thread_dag_constrution;
 
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
@@ -96,14 +123,43 @@ public:
     }
 
     // GPU version starts
-    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
-    printf("GPU version cost:\n\tunder tree code model = %.2lf, \
-      \n\tunder DAG cost model = %.2lf\n", 
-      best_tree_cost_gpu, dag_cost_gpu);
-    _copy_pickedende_back(picked_endes);
-    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
-    cudaDeviceSynchronize();
-    
+    auto [best_tree_cost_gpu, dag_cost_gpu] =
+      _gpu_tree_construction();
+
+    printf(
+      "GPU version cost:\n"
+      "\tunder tree cost model = %.2lf,\n"
+      "\tunder DAG cost model = %.2lf\n",
+      best_tree_cost_gpu,
+      dag_cost_gpu);
+
+    // Preserve GPU tree result independently from the CPU oracle.
+    std::vector<bool> gpu_tree_selected;
+    std::vector<uint32_t> gpu_best_ende_of_ecls;
+
+    _copy_pickedende_back(gpu_tree_selected);
+    _copy_best_ende_of_ecls_back(gpu_best_ende_of_ecls);
+
+    // Allocate and initialize only DAG-construction memory.
+    _gpu_allocate_dag_buffers();
+    _gpu_initialize_dag_buffers();
+
+    // Currently this is allowed to be a no-op stub.
+    _gpu_DAG_construction();
+
+    std::vector<bool> gpu_dag_selected;
+    _copy_pickedende_back(gpu_dag_selected);
+
+    // 之後為了效能要刪掉
+    if (gpu_tree_selected != gpu_dag_selected) {
+      throw std::logic_error(
+        "No-op GPU DAG construction modified the GPU tree solution");
+    }
+
+    // Only free memory owned exclusively by the new DAG implementation.
+    _gpu_free_dag_buffers();
+    // GPU version ends    
+
     // _gpu_DAG_construction(); 
     // if (ILP_solver) {
     //   _cpsat_solver(
@@ -216,35 +272,18 @@ private:
       const std::vector<bool>& picked_endes);
   // GPU version
   void _gpu_DAG_construction();
-    void _gpu_update_deg_init_level2(const bool need_to_update);
-    void _gpu_BFS(
-      const bool is_td, 
-      uint32_t* deg, 
-      const uint32_t* picked_endes,
-      const uint32_t* global_adj_1D,
-      const uint32_t* global_adj_1D_ptr,
-      const uint32_t* picked_adj,
-      int* level);
-    bool _gpu_insertion(const bool is_td);
-    void _gpu_clear_redundant_endes();
-    void _gpu_mark_reachable(
-      const std::vector<uint32_t>& starts_v,
-      const uint32_t* starts,
-      const uint32_t* global_adj_1D,
-      const uint32_t* global_adj_1D_ptr,
-      const uint32_t* picked_adj,
-      uint32_t* visited);
-    void _gpu_mark_reachable2(
-      const std::vector<uint32_t>& starts_v,
-      const uint32_t* starts,
-      const uint32_t* global_adj_1D,
-      const uint32_t* global_adj_1D_ptr,
-      const uint32_t* picked_adj,
-      uint32_t* visited);      
-    void _copy_pickedende_back(
-      std::vector<bool>& picked_endes_tmp);
-    void _copy_best_ende_of_ecls_back(
-      std::vector<uint32_t>& best_ende_of_ecls);    
+
+  // GPU DAG memory lifecycle
+  void _gpu_allocate_dag_buffers();
+  void _gpu_initialize_dag_buffers();
+  void _gpu_free_dag_buffers() noexcept;
+
+  // Device-to-host copy helpers
+  void _copy_pickedende_back(
+    std::vector<bool>& picked_endes_out);
+
+  void _copy_best_ende_of_ecls_back(
+    std::vector<uint32_t>& best_ende_of_ecls_out);
 
   /* ILP solver */ 
   void _cpsat_solver(
@@ -296,41 +335,10 @@ private:
   std::vector<std::vector<uint32_t>> _ecls_its_ende_newG;
   std::vector<std::vector<uint32_t>> _ecls_its_ende_newG_GPU;
 
-  // global Device memory 
-  uint32_t* _dvc_best_ende_of_ecls;
-  bool* _dvc_update;
-  uint32_t* _dvc_ecls_its_ende_1D; 
-  uint32_t* _dvc_ecls_its_ende_1D_ptr; 
-  uint32_t* _dvc_root_eclass_id;
-  uint32_t* _dvc_ende_picked_by_ende;
-  uint32_t* _dvc_picked_endes; // act bool
-  uint32_t* _dvc_q; // queue
-  uint32_t* _dvc_q_sz; // size of queue
-  uint32_t* _dvc_q_sp; // start point of queue
-  uint32_t* _dvc_q_num; // number elements in q
-
-  uint32_t* _dvc_global_adj_1D;
-  uint32_t* _dvc_global_adj_1D_ptr;
-  uint32_t* _dvc_global_inv_adj_1D;
-  uint32_t* _dvc_global_inv_adj_1D_ptr;
-  uint32_t* _dvc_indegree;
-  uint32_t* _dvc_inv_indegree;
-  uint32_t* _dvc_picked_adj;
-  uint32_t* _dvc_picked_inv_adj;
-  uint32_t* _dvc_tmp_picked_adj;
-  uint32_t* _dvc_tmp_picked_inv_adj; 
-  int* _dvc_level;
-  uint32_t* _dvc_all_root_ende_1D;
-  int* _dvc_max_level;
-  uint32_t* _dvc_in_subgraph;
-  uint32_t* _dvc_roots;
-  uint32_t* _dvc_leaves;
-  uint32_t* _dvc_from_roots; // for final construction
-  uint32_t* _dvc_from_leaves; // for final construction
   
   // READ IN argv/argc
-  uint32_t DAG_KERNEL = 2; // Default setting = 2, (0, 1, 2) = (thread, warp, block) version
-  uint32_t NUM_THREAD_DAG_CONSTR = 64; // Default setting
+  DagKernel _dag_kernel = DagKernel::Thread;
+  uint32_t _dag_threads_per_candidate = 1;
 
   // Print function
   void _print_input() const;
@@ -368,14 +376,71 @@ private:
     const std::vector<uint32_t>& global_adj_1D_ptr,
     const std::vector<bool>& picked_adj,
     std::vector<int>& level);
-  
-    // 0516 experiment
-  uint32_t* _dvc_base_indegree;
-  uint32_t* _dvc_base_inv_indegree;
-  bool* _dvc_new_inserted;
-  void _gpu_update_deg_init_level(
-    const bool need_to_update, 
-    const bool is_init);  
+
+  // ============================================================
+  // Existing GPU tree/shared memory
+  //
+  // These names and ownership are preserved because
+  // _gpu_tree_construction() already uses them.
+  // Do not rename or remove them during the DAG rewrite.
+  // ============================================================
+  uint32_t* _dvc_best_ende_of_ecls = nullptr;
+  bool* _dvc_update = nullptr;
+
+  uint32_t* _dvc_ecls_its_ende_1D = nullptr;
+  uint32_t* _dvc_ecls_its_ende_1D_ptr = nullptr;
+  uint32_t* _dvc_root_eclass_id = nullptr;
+  uint32_t* _dvc_ende_picked_by_ende = nullptr;
+
+  uint32_t* _dvc_picked_endes = nullptr;
+
+  uint32_t* _dvc_q = nullptr;
+  uint32_t* _dvc_q_sz = nullptr;
+  uint32_t* _dvc_q_sp = nullptr;
+  uint32_t* _dvc_q_num = nullptr;
+
+  // These buffers are allocated and initialized by
+  // _gpu_tree_construction(), then reused by GPU DAG construction.
+  uint32_t* _dvc_global_adj_1D = nullptr;
+  uint32_t* _dvc_global_adj_1D_ptr = nullptr;
+  uint32_t* _dvc_global_inv_adj_1D = nullptr;
+  uint32_t* _dvc_global_inv_adj_1D_ptr = nullptr;
+
+  uint32_t* _dvc_indegree = nullptr;
+  uint32_t* _dvc_inv_indegree = nullptr;
+
+  uint32_t* _dvc_picked_adj = nullptr;
+  uint32_t* _dvc_picked_inv_adj = nullptr;
+  uint32_t* _dvc_tmp_picked_adj = nullptr;
+  uint32_t* _dvc_tmp_picked_inv_adj = nullptr;
+
+  int* _dvc_level = nullptr;
+  uint32_t* _dvc_all_root_ende_1D = nullptr;
+  int* _dvc_max_level = nullptr;
+
+  uint32_t* _dvc_in_subgraph = nullptr;
+  uint32_t* _dvc_roots = nullptr;
+  uint32_t* _dvc_leaves = nullptr;
+  uint32_t* _dvc_from_roots = nullptr;
+  uint32_t* _dvc_from_leaves = nullptr;
+
+  // ============================================================
+  // New GPU DAG-only scratch memory
+  //
+  // These are the only buffers managed by
+  // _gpu_allocate_dag_buffers() / _gpu_free_dag_buffers().
+  // ============================================================
+  uint32_t* _dvc_dag_new_inserted = nullptr;
+
+  uint32_t* _dvc_dag_insert_decision = nullptr;
+  int* _dvc_dag_candidate_level = nullptr;
+  uint32_t* _dvc_dag_u0 = nullptr;
+
+  uint32_t* _dvc_dag_frontier = nullptr;
+  uint32_t* _dvc_dag_next_frontier = nullptr;
+  uint32_t* _dvc_dag_frontier_size = nullptr;
+  uint32_t* _dvc_dag_next_frontier_size = nullptr;
+    
   
 }; // class G_EXT
 

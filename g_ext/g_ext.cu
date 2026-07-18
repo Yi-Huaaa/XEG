@@ -3,21 +3,8 @@
 #define threads 1024 // num GPU threads
 #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
 
-/* ASPLOS_REBUTTAL */ 
-// #define ASPLOS_REBUTTAL
-// #define ASPLOS_REBUTTAL_SKEWNESS
-// #define ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
-// #define ASPLOS_REBUTTAL_NUMBER_ITERATIONS
-// #define ASPLOS_REBUTTAL_DAG_SHAPE
-// #define ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
-// #define ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
-
 /* DEBUG */
 // #define PRINT_LOG
-// #define CHECK_CYCLE // check for read input
-
-/* GENERATE NEW DBENCHMARK for SmoothE */
-// #define DUMP_NEW_JSON
 
 #define ENABLE_CHECK
 #ifdef ENABLE_CHECK
@@ -45,7 +32,55 @@
             exit(1); \
         } \
     } while (0)
+
+#define CUDA_CHECK(call)                                                \
+  do {                                                                  \
+    cudaError_t cuda_status__ = (call);                                  \
+    if (cuda_status__ != cudaSuccess) {                                  \
+      fprintf(stderr,                                                    \
+              "CUDA API error: %s at %s:%d\n",                           \
+              cudaGetErrorString(cuda_status__),                         \
+              __FILE__,                                                  \
+              __LINE__);                                                 \
+      std::exit(EXIT_FAILURE);                                           \
+    }                                                                    \
+  } while (0)    
  
+namespace {
+template <typename T>
+void cuda_malloc_array(T*& ptr, size_t count)
+{
+  ptr = nullptr;
+
+  if (count == 0) {
+    return;
+  }
+
+  CUDA_CHECK(cudaMalloc(
+    reinterpret_cast<void**>(&ptr),
+    count * sizeof(T)));
+}
+
+template <typename T>
+void cuda_free_and_null(T*& ptr) noexcept
+{
+  if (ptr == nullptr) {
+    return;
+  }
+
+  cudaError_t err = cudaFree(ptr);
+
+  if (err != cudaSuccess) {
+    fprintf(
+      stderr,
+      "Warning: cudaFree failed: %s\n",
+      cudaGetErrorString(err));
+  }
+
+  ptr = nullptr;
+}
+}  // namespace
+
 
 // G_EXT fucntions
 void G_EXT::_read_input(
@@ -153,14 +188,6 @@ void G_EXT::_read_input(
   MY_CHECK(tmp_ende_cost.size() == tmp_num_ende, "!= num_ende 3");
   MY_CHECK(tmp_ende_ecls.size() == tmp_num_ende, "!= num_ende 4");
 
-#ifdef DUMP_NEW_JSON
-  std::string out_path = input_path + ".egg.json";
-  _dump_to_egg_json(out_path, tmp_num_ecls, tmp_num_ende,
-    tmp_ende_name, tmp_ende_op, tmp_ende_cost,
-    tmp_ende_ecls, tmp_ende_child, tmp_ende_child_ptr,
-    tmp_root_eclass_id);
-#endif
-
 #ifdef PRINT_LOG
   _print_read_in_data(true,
     tmp_num_ecls,
@@ -185,10 +212,6 @@ void G_EXT::_read_input(
     tmp_ende_child,
     tmp_ende_child_ptr,
     tmp_root_eclass_id);
-  
-#ifdef ASPLOS_REBUTTAL_SKEWNESS  
-  _print_degree_stats();  // Experiment 1. skewness
-#endif 
 }
 
 void G_EXT::_prune_dead_nodes(
@@ -296,10 +319,6 @@ void G_EXT::_prune_dead_nodes(
   MY_CHECK((_num_ecls+dead_ecls_idx.size()) == tmp_num_ecls, "_num_ecls+dead_ecls_idx.size()");
   MY_CHECK(_root_eclass_id.size() == tmp_root_eclass_id.size(), "_root_eclass_id.size()");
   
-#ifdef ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
-  auto t_parse_start = std::chrono::high_resolution_clock::now();
-#endif 
-
   // Compress _ecls_its_ende to 1D 
   uint32_t acc_ptr = 0;
   _ecls_its_ende_1D_ptr.push_back(acc_ptr);
@@ -346,163 +365,6 @@ void G_EXT::_prune_dead_nodes(
     _root_eclass_id);   
 #endif 
   
-#ifdef CHECK_CYCLE
-  // ======================================
-  // SCC check
-  // ======================================
-  {
-    std::vector<std::vector<uint32_t>> adj(_num_ecls);
-    // construct eclass-level adjacency
-    for (uint32_t ende = 0; ende < _num_ende; ++ende) {
-      uint32_t start = _ende_child_ptr[ende];
-      uint32_t end   = _ende_child_ptr[ende + 1];
-      uint32_t parent_ecls = _ende_ecls[ende];
-      for (uint32_t jj = start; jj < end; ++jj) {
-        uint32_t child_ecls = _ende_child[jj];
-        adj[parent_ecls].push_back(child_ecls);
-      }
-    }
-
-    // Tarjan's algorithm
-    uint32_t index = 0;
-    std::vector<int> dfn(_num_ecls, -1), low(_num_ecls, -1);
-    std::vector<bool> in_stack(_num_ecls, false);
-    std::stack<uint32_t> st;
-    std::vector<std::vector<uint32_t>> scc_list;
-
-    std::function<void(uint32_t)> tarjan = [&](uint32_t u) {
-      dfn[u] = low[u] = index++;
-      st.push(u);
-      in_stack[u] = true;
-
-      for (uint32_t v : adj[u]) {
-        if (dfn[v] == -1) {
-          tarjan(v);
-          low[u] = std::min(low[u], low[v]);
-        } else if (in_stack[v]) {
-          low[u] = std::min(low[u], dfn[v]);
-        }
-      }
-
-      if (low[u] == dfn[u]) {
-        std::vector<uint32_t> scc;
-        while (true) {
-          uint32_t w = st.top();
-          st.pop();
-          in_stack[w] = false;
-          scc.push_back(w);
-          if (w == u) break;
-        }
-        if (scc.size() > 1) { // real cycle
-          scc_list.push_back(scc);
-        }
-      }
-    };
-
-    for (uint32_t i = 0; i < _num_ecls; ++i) {
-      if (dfn[i] == -1) tarjan(i);
-    }
-
-    if (!scc_list.empty()) {
-      std::cout << "Found " << scc_list.size() << " strongly connected components (cycles) after pruning.\n";
-      for (size_t i = 0; i < scc_list.size(); ++i) {
-        std::cout << "  SCC " << i << " (size=" << scc_list[i].size() << "): ";
-        for (uint32_t e : scc_list[i]) std::cout << e << " ";
-        std::cout << "\n";
-      }
-    } else {
-      std::cout << "Graph is acyclic (no SCC found after pruning).\n";
-    }
-  }
-#endif
-
-//   // Construct _global_adj, _global_inv_adj --> There maybe cycle inside _global_adj and _global_inv_adj
-//   _global_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-//   _global_inv_adj.resize(_num_ende, std::unordered_set<uint32_t>()); // ende -> ende
-//   for (uint32_t ende = 0; ende < _num_ende; ende++) {
-//     uint32_t start = _ende_child_ptr[ende]; 
-//     uint32_t end = _ende_child_ptr[ende+1];
-//     for (uint32_t jj = start; jj < end; jj++) {
-//       uint32_t chd_ecls = _ende_child[jj];
-//       for (uint32_t ende2 : _ecls_its_ende[chd_ecls]) {
-//         // remove self-loop
-//         if (ende != ende2) {
-//           _global_adj[ende].insert(ende2); // update _global_adj 
-//           _global_inv_adj[ende2].insert(ende); // update inv_adjs
-//         }
-//       }
-//     }
-//   }
-
-//   // Compress _global_adj and _global_inv_adj to 1D 
-//   acc_ptr = 0;
-//   _global_adj_1D_ptr.push_back(acc_ptr);
-//   for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
-//     for (uint32_t to_ende : _global_adj[ende]) {
-//       _global_adj_1D.push_back(to_ende);
-//       acc_ptr++;
-//     }
-//     _global_adj_1D_ptr.push_back(acc_ptr);
-//   }
-  
-//   acc_ptr = 0;
-//   _global_inv_adj_1D_ptr.push_back(acc_ptr);
-//   for (uint32_t ende = 0; ende < _global_inv_adj.size(); ende++) {
-//     for (uint32_t to_ende : _global_inv_adj[ende]) {
-//       _global_inv_adj_1D.push_back(to_ende);
-//       acc_ptr++;
-//     }
-//     _global_inv_adj_1D_ptr.push_back(acc_ptr);
-//   }
-
-//   // Init size of _picked_adj and _picked_inv_adj
-//   _picked_adj.resize(_global_adj_1D.size(), false); 
-//   _picked_inv_adj.resize(_global_inv_adj_1D.size(), false);
-//   _tmp_picked_adj.resize(_global_adj_1D.size(), false); 
-//   _tmp_picked_inv_adj.resize(_global_inv_adj_1D.size(), false);  
-
-// #ifdef PRINT_LOG
-//   printf("_global_adj mapping (ende Id -> ende Id):\n");
-//   _print_adj(_global_adj);
-//   printf("_global_inv_adj mapping (ende Id -> ende Id):\n");
-//   _print_adj(_global_inv_adj);
-
-//   printf("_num_ende = %u\n", _num_ende);
-//   printf("_global_adj:\n");
-//   for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
-//     printf("_global_adj[%u] (sz = %lu) = [", ende, _global_adj.size());
-//     for (uint32_t to_ende : _global_adj[ende]) {
-//       printf("%u, ", to_ende);
-//     }
-//     printf("]\n");
-//   }
-//   printf("\n");  
-// #endif
-
-//   for (uint32_t r_ecls : _root_eclass_id) {
-//     for (uint32_t r : _ecls_its_ende[r_ecls]) {
-//       _roots.push_back(r); 
-//     }
-//   }
-
-//   // JUST USED FOR CHECK
-//   MY_CHECK(_all_root_ende_1D.size() == _roots.size(), "_all_root_ende_1D.size() == _roots.size()");
-//   for (uint32_t i = 0; i < _all_root_ende_1D.size(); i++) {
-//     if (_all_root_ende_1D[i] != _roots[i]) {
-//       exit(1);
-//     }
-//   }
-
-//   for (uint32_t ende = 0; ende < _global_adj.size(); ende++) {
-//     if (_global_adj[ende].size() == 0) {
-//       _leaves.push_back(ende); 
-//     }
-//   }  
-// Construct _global_adj_1D, _global_inv_adj_1D directly (CSR format),
-  // avoiding std::unordered_set overhead for large e-graphs.
-  // Note: There maybe cycle inside _global_adj_1D and _global_inv_adj_1D
-
-  // 20260706 Claude optimized data preprocessing version starts 
   // Step 1: gather raw (possibly duplicated) adjacency per e-node
   std::vector<std::vector<uint32_t>> raw_adj(_num_ende);
   std::vector<std::vector<uint32_t>> raw_inv_adj(_num_ende);
@@ -591,151 +453,11 @@ void G_EXT::_prune_dead_nodes(
       _leaves.push_back(ende); 
     }
   }
-  // 20260706 Claude optimized data preprocessing version ends 
 
-
-#ifdef ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
-  auto t_parse_end = std::chrono::high_resolution_clock::now();
-  std::chrono::duration<double> d = t_parse_end - t_parse_start;
-  std::cout << "CSR flattern time: " << round_to((d.count()) * 1000, 0.001) << " (ms)\n";
-#endif 
 
 }
 
-#ifdef ASPLOS_REBUTTAL_SKEWNESS
-  double G_EXT::_compute_skewness(const std::vector<uint32_t>& degrees) {
-    if (degrees.empty()) return 0.0;
-
-    double n = static_cast<double>(degrees.size());
-    double mean = 0.0;
-    for (uint32_t d : degrees) mean += d;
-    mean /= n;
-
-    double m2 = 0.0, m3 = 0.0;
-    for (uint32_t d : degrees) {
-      double diff = static_cast<double>(d) - mean;
-      m2 += diff * diff;
-      m3 += diff * diff * diff;
-    }
-    m2 /= n;
-    m3 /= n;
-
-    double stddev = std::sqrt(m2);
-    if (stddev < 1e-12) return 0.0; // 避免除以 0（所有 degree 都一樣時）
-
-    return m3 / (stddev * stddev * stddev);
-  }
-
-  void G_EXT::_print_degree_stats() {
-    std::vector<uint32_t> deg_NC(_num_ende);
-    std::vector<uint32_t> deg_NN(_num_ende);
-
-    for (uint32_t i = 0; i < _num_ende; i++) {
-      uint32_t start = _ende_child_ptr[i];
-      uint32_t end   = _ende_child_ptr[i+1];
-      deg_NC[i] = end - start;  // e-node -> child e-class 的數量
-
-      uint32_t nn_count = 0;
-      for (uint32_t jj = start; jj < end; jj++) {
-        uint32_t child_ecls = _ende_child[jj];
-        nn_count += _ecls_its_ende[child_ecls].size();  // 該 child e-class 裡有幾個 e-node
-      }
-      deg_NN[i] = nn_count;  // e-node -> e-node 的展開數量（不去重）
-    }
-
-    // 算 average（全部 e-node）
-    double sum_NC = 0.0, sum_NN = 0.0;
-    for (uint32_t i = 0; i < _num_ende; i++) {
-      sum_NC += deg_NC[i];
-      sum_NN += deg_NN[i];
-    }
-    double avg_NC = sum_NC / static_cast<double>(_num_ende);
-    double avg_NN = sum_NN / static_cast<double>(_num_ende);
-
-    double skew_NC = _compute_skewness(deg_NC);
-    double skew_NN = _compute_skewness(deg_NN);
-
-    // 找出 max 的位置（e-node index），而不只是數值
-    uint32_t max_NC_idx = static_cast<uint32_t>(std::distance(deg_NC.begin(), std::max_element(deg_NC.begin(), deg_NC.end())));
-    uint32_t max_NN_idx = static_cast<uint32_t>(std::distance(deg_NN.begin(), std::max_element(deg_NN.begin(), deg_NN.end())));
-    uint32_t max_NC = deg_NC[max_NC_idx];
-    uint32_t max_NN = deg_NN[max_NN_idx];
-
-    printf("[Degree Stats] avg(d_NC) = %.4f, avg(d_NN) = %.4f\n", avg_NC, avg_NN);
-    printf("[Degree Stats] skewness(d_NC) = %.4f, skewness(d_NN) = %.4f\n", skew_NC, skew_NN);
-    printf("[Degree Stats] max(d_NC) = %u (ende_idx=%u), max(d_NN) = %u (ende_idx=%u)\n",
-          max_NC, max_NC_idx, max_NN, max_NN_idx);
-
-    // ===== 檢查這個 max degree 的 e-node 是否為 root =====
-    std::unordered_set<uint32_t> root_set(_roots.begin(), _roots.end()); // 轉成 set，查詢 O(1)
-    auto is_root_ende = [&](uint32_t ende_idx) -> bool {
-      return root_set.find(ende_idx) != root_set.end();
-    };
-
-    bool max_NC_is_root = is_root_ende(max_NC_idx);
-    bool max_NN_is_root = is_root_ende(max_NN_idx);
-
-    printf("[Degree Stats] max(d_NC) ende is root? %s\n", max_NC_is_root ? "YES" : "NO");
-    printf("[Degree Stats] max(d_NN) ende is root? %s\n", max_NN_is_root ? "YES" : "NO");
-    printf("[Degree Stats] max(d_NC) ende belongs to eclass=%u\n", _ende_ecls[max_NC_idx]);
-    printf("[Degree Stats] max(d_NN) ende belongs to eclass=%u\n", _ende_ecls[max_NN_idx]);
-
-    // ===== 新增：排除所有 root e-node 之後，重新計算 avg / skewness / max =====
-    std::vector<uint32_t> deg_NC_noroot, deg_NN_noroot;
-    deg_NC_noroot.reserve(_num_ende);
-    deg_NN_noroot.reserve(_num_ende);
-    for (uint32_t i = 0; i < _num_ende; i++) {
-      if (root_set.find(i) != root_set.end()) continue; // 排除 root
-      deg_NC_noroot.push_back(deg_NC[i]);
-      deg_NN_noroot.push_back(deg_NN[i]);
-    }
-
-    double avg_NC_noroot = 0.0, avg_NN_noroot = 0.0;
-    double skew_NC_noroot = 0.0, skew_NN_noroot = 0.0;
-    uint32_t max_NC_noroot = 0, max_NN_noroot = 0;
-
-    if (!deg_NC_noroot.empty()) {
-      double sum_NC_nr = 0.0, sum_NN_nr = 0.0;
-      for (size_t i = 0; i < deg_NC_noroot.size(); i++) {
-        sum_NC_nr += deg_NC_noroot[i];
-        sum_NN_nr += deg_NN_noroot[i];
-      }
-      avg_NC_noroot = sum_NC_nr / static_cast<double>(deg_NC_noroot.size());
-      avg_NN_noroot = sum_NN_nr / static_cast<double>(deg_NN_noroot.size());
-
-      skew_NC_noroot = _compute_skewness(deg_NC_noroot);
-      skew_NN_noroot = _compute_skewness(deg_NN_noroot);
-
-      max_NC_noroot = *std::max_element(deg_NC_noroot.begin(), deg_NC_noroot.end());
-      max_NN_noroot = *std::max_element(deg_NN_noroot.begin(), deg_NN_noroot.end());
-    }
-
-    printf("[Degree Stats][excl. root] avg(d_NC) = %.4f, avg(d_NN) = %.4f\n", avg_NC_noroot, avg_NN_noroot);
-    printf("[Degree Stats][excl. root] skewness(d_NC) = %.4f, skewness(d_NN) = %.4f\n", skew_NC_noroot, skew_NN_noroot);
-    printf("[Degree Stats][excl. root] max(d_NC) = %u, max(d_NN) = %u\n", max_NC_noroot, max_NN_noroot);
-    printf("[Degree Stats][excl. root] num e-nodes excluded (root count) = %zu\n", _roots.size());
-
-    // ===== 新增：把每個 e-node 的 degree dump 到檔案（單一檔案，直接覆蓋）=====
-    std::ofstream ofs("rebuttal_exp/degree_skew_exp.out"); // 預設 trunc mode，每次重跑會覆蓋舊檔
-    ofs << "# NUM_ENDE: " << _num_ende << "\n";
-    ofs << "# AVG_NC: " << avg_NC << " AVG_NN: " << avg_NN << "\n";
-    ofs << "# SKEW_NC: " << skew_NC << " SKEW_NN: " << skew_NN << "\n";
-    ofs << "# MAX_NC: " << max_NC << " MAX_NN: " << max_NN << "\n";
-    ofs << "# MAX_NC_IS_ROOT: " << (max_NC_is_root ? 1 : 0)
-        << " MAX_NN_IS_ROOT: " << (max_NN_is_root ? 1 : 0) << "\n";
-    ofs << "# AVG_NC_NOROOT: " << avg_NC_noroot << " AVG_NN_NOROOT: " << avg_NN_noroot << "\n";
-    ofs << "# SKEW_NC_NOROOT: " << skew_NC_noroot << " SKEW_NN_NOROOT: " << skew_NN_noroot << "\n";
-    ofs << "# MAX_NC_NOROOT: " << max_NC_noroot << " MAX_NN_NOROOT: " << max_NN_noroot << "\n";
-    ofs << "# deg_NC deg_NN\n";
-    for (uint32_t i = 0; i < _num_ende; i++) {
-      ofs << deg_NC[i] << " " << deg_NN[i] << "\n";
-    }
-    ofs.close();
-  }
-#endif 
-
 // =========================== TREE/DAG functions =========================== // 
-
 
 std::pair<double, double> G_EXT::_cpu_tree_construction(
   const std::vector<float>& tmp_ende_cost,
@@ -964,10 +686,6 @@ void G_EXT::_cpu_DAG_construction(
     }
   }
 #endif
-  
-  #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
-    uint32_t num_iter = 0;
-  #endif
 
   bool updated = true; 
   std::vector<int> level;
@@ -989,15 +707,9 @@ void G_EXT::_cpu_DAG_construction(
     #ifdef PRINT_LOG
       std::cout << "Get into while loop again? " << updated << "\n==========================================\n"; 
     #endif
-    #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
-      num_iter++;
-    #endif
+
   }
   
-  #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
-    std::cout << "CPU num_iter = " << num_iter << "\n";
-  #endif
-
   // Clear redundant enodes
   _clear_redundant_endes(picked_endes);
 
@@ -1009,70 +721,6 @@ void G_EXT::_cpu_DAG_construction(
       _ecls_its_ende_newG[ecls].push_back(ende);
     }
   }
-
-#ifdef ASPLOS_REBUTTAL_DAG_SHAPE
-  // Compute depth/width of the final DAG passed to the ILP solver
-  // (based on a fresh top-down levelization restricted to _in_subgraph nodes)
-  {
-    std::vector<int> final_level(_num_ende, -1);
-    std::vector<uint32_t> final_indeg(_num_ende, 0);
-
-    // build in-degree restricted to final subgraph nodes and picked_adj edges
-    for (uint32_t fm_ende = 0; fm_ende < _num_ende; fm_ende++) {
-      if (!_in_subgraph[fm_ende]) continue;
-      uint32_t start = _global_adj_1D_ptr[fm_ende];
-      uint32_t end   = _global_adj_1D_ptr[fm_ende + 1];
-      for (uint32_t k = start; k < end; k++) {
-        if (!_picked_adj[k]) continue;
-        uint32_t to_ende = _global_adj_1D[k];
-        if (!_in_subgraph[to_ende]) continue;
-        final_indeg[to_ende]++;
-      }
-    }
-
-    std::queue<uint32_t> q;
-    for (uint32_t i = 0; i < _num_ende; i++) {
-      if (_in_subgraph[i] && final_indeg[i] == 0) q.push(i);
-    }
-
-    int cur_level = 0;
-    std::vector<uint32_t> width_per_level;
-    while (!q.empty()) {
-      size_t layer_size = q.size();
-      width_per_level.push_back(static_cast<uint32_t>(layer_size));
-      for (size_t t = 0; t < layer_size; t++) {
-        uint32_t u = q.front(); q.pop();
-        final_level[u] = cur_level;
-        uint32_t start = _global_adj_1D_ptr[u];
-        uint32_t end   = _global_adj_1D_ptr[u + 1];
-        for (uint32_t k = start; k < end; k++) {
-          if (!_picked_adj[k]) continue;
-          uint32_t v = _global_adj_1D[k];
-          if (!_in_subgraph[v]) continue;
-          if (--final_indeg[v] == 0) q.push(v);
-        }
-      }
-      cur_level++;
-    }
-
-    uint32_t depth = static_cast<uint32_t>(cur_level);
-    uint32_t max_width = 0;
-    uint64_t total_nodes_in_subgraph = 0;
-    for (uint32_t w : width_per_level) {
-      if (w > max_width) max_width = w;
-      total_nodes_in_subgraph += w;
-    }
-    double avg_width = (depth > 0)
-      ? (static_cast<double>(total_nodes_in_subgraph) / depth)
-      : 0.0;
-
-    std::cout << "[DAG Shape] depth = " << depth
-               << ", max_width = " << max_width
-               << ", avg_width = " << avg_width
-               << ", total_nodes_in_final_subgraph = " << total_nodes_in_subgraph
-               << "\n";
-  }
-#endif  
 }
 
 void G_EXT::_update_deg(
@@ -1156,9 +804,6 @@ void G_EXT::_BFS(
       picked_endes[i] = false;
       _new_inserted[i] = false;
       level[i] = -1; 
-      #ifdef ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
-        _total_revert_count.fetch_add(1, std::memory_order_relaxed);
-      #endif 
 
       // clear mask, e-node to child e-nodes
       for (uint32_t k = _global_adj_1D_ptr[i]; k < _global_adj_1D_ptr[i+1]; k++) {
@@ -1492,10 +1137,6 @@ bool G_EXT::_insertion_bitmap_mt(const bool is_td,
     const uint32_t BITMAP_SIZE = 256;
     uint8_t chd_flags[BITMAP_SIZE] = {0};
 
-    #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
-      std::vector<uint32_t> valid_chds; // 新增：保留精確版比對用
-      std::vector<uint32_t> valid_pars; // 用來記錄哪些 parent 通過初步篩選
-    #endif 
 
     // ============================================================
     // Step 1: 掃 child edges，建立 bitmap，順便找 min child level
@@ -1512,10 +1153,6 @@ bool G_EXT::_insertion_bitmap_mt(const bool is_td,
         min_chd_lvl = chd_lvl;
       }
       chd_flags[chd_ende & (BITMAP_SIZE - 1)] = 1; 
-
-      #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
-        valid_chds.push_back(chd_ende); // 新增
-      #endif 
     }
 
     // ============================================================
@@ -1539,10 +1176,6 @@ bool G_EXT::_insertion_bitmap_mt(const bool is_td,
       if (chd_flags[par_ende & (BITMAP_SIZE - 1)]) {
         has_overlap_b = true;
       }
-
-      #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
-        valid_pars.push_back(par_ende); // 新增
-      #endif 
     }
 
     // ============================================================
@@ -1552,32 +1185,12 @@ bool G_EXT::_insertion_bitmap_mt(const bool is_td,
     int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
     bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap_b) && (given_lvl >= 0);
 
-    #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
-      // ===== 精確比對（ground truth）=====
-      bool has_overlap_exact = false;
-      for (uint32_t p : valid_pars) {
-        for (uint32_t c : valid_chds) {
-          if (p == c) { has_overlap_exact = true; break; }
-        }
-        if (has_overlap_exact) break;
-      }
-      if (has_overlap_b && !has_overlap_exact) {
-        _total_bitmap_fp_count.fetch_add(1, std::memory_order_relaxed);
-      }
-      _total_overlap_check_count.fetch_add(1, std::memory_order_relaxed);
-    #endif 
-
-
     // ===== 唯一一個 if (valid) 區塊，內部用 macro 決定要不要多做計數 =====
     if (valid) {
       update = true;
       picked_endes[ende] = true;
       level[ende] = given_lvl;
       _new_inserted[ende] = true;
-
-      #if defined(ASPLOS_REBUTTAL_WASTED_INSERTION_TEST) || defined(ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE)
-        _total_insert_count.fetch_add(1, std::memory_order_relaxed);
-      #endif
 
       #ifdef PRINT_LOG
         printf("! valid ende = %u, max_par_lvl = %d, min_chd_lvl = %d, given_lvl = %d\n", 
@@ -1596,15 +1209,6 @@ bool G_EXT::_insertion_bitmap_mt(const bool is_td,
 void G_EXT::_cpu_DAG_construction_mt_bitmap(
   std::vector<bool>& picked_endes)
 {
-  #ifdef ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
-    _total_insert_count.store(0);
-    _total_revert_count.store(0);
-  #endif
-  #ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
-    _total_bitmap_fp_count.store(0);
-    _total_overlap_check_count.store(0);
-  #endif
-  
   uint32_t num_iter = 0;
   bool updated = true; 
   std::vector<int> level;
@@ -1623,15 +1227,11 @@ void G_EXT::_cpu_DAG_construction_mt_bitmap(
     updated = tp || bu; 
     num_iter++;
 
-    printf("[CPU+bitmap] iter %u: tp=%d, bu=%d\n", num_iter, tp, bu);
-
-    if (num_iter > 1000) {  // 安全閥，避免真的卡死
-      std::cerr << "[WARNING] CPU+bitmap version exceeded 1000 iterations, likely livelock\n";
-      break;
-    }
+    // if (num_iter > 1000) {  // 安全閥，避免真的卡死
+    //   std::cerr << "[WARNING] CPU+bitmap version exceeded 1000 iterations, likely livelock\n";
+    //   break;
+    // }
   }
-  std::cout << "[CPU+bitmap] Total iterations = " << num_iter << "\n";
-
 
   // Clear redundant enodes
   _clear_redundant_endes(picked_endes);
@@ -1644,30 +1244,6 @@ void G_EXT::_cpu_DAG_construction_mt_bitmap(
       _ecls_its_ende_newG[ecls].push_back(ende);
     }
   }
-
-  #ifdef ASPLOS_REBUTTAL_WASTED_INSERTION_TEST
-    // ===== Q2: wasted work report =====
-    uint64_t total_insert = _total_insert_count.load();
-    uint64_t total_revert = _total_revert_count.load();
-    double wasted_pct_of_insert = (total_insert > 0) 
-      ? (100.0 * static_cast<double>(total_revert) / static_cast<double>(total_insert)) 
-      : 0.0;
-
-    std::cout << "[Q2 Wasted Work] total_insert = " << total_insert
-              << ", total_revert = " << total_revert
-              << ", wasted_pct_of_insert = " << wasted_pct_of_insert << "%\n";  
-  #endif
-
-#ifdef ASPLOS_REBUTTAL_BITMAP_FALSE_POSITIVE_RATE
-    uint64_t total_fp = _total_bitmap_fp_count.load();
-    uint64_t total_check = _total_overlap_check_count.load();
-    double fp_pct = (total_check > 0) 
-      ? (100.0 * static_cast<double>(total_fp) / static_cast<double>(total_check)) 
-      : 0.0;
-    std::cout << "[Q4 Bitmap FP] total_fp = " << total_fp 
-              << ", total_check = " << total_check 
-              << ", fp_pct = " << fp_pct << "%\n";
-  #endif  
 }
 
 // =========================== GPU functions =========================== // 
@@ -1687,7 +1263,7 @@ __device__ double atomicMinDouble(double* addr, double val) {
   return __longlong_as_double(old);
 }
 
-__global__ void _relax_enodes_kernel(const uint32_t num_endes, 
+__global__ void _gpu_tree_construction_kernel(const uint32_t num_endes, 
   const float* ende_cost, 
   const uint32_t* ende_ecls,
   const uint32_t* ende_child,
@@ -1806,45 +1382,6 @@ __global__ void _get_dag_cost(
   }
 }
 
-__global__ void _gpu_init_picked_adj (
-  const uint32_t num_endes, 
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_inv_adj_1D,
-  const uint32_t* dvc_global_inv_adj_1D_ptr,
-  const uint32_t* dvc_picked_endes,
-  uint32_t* dvc_picked_adj, 
-  uint32_t* dvc_picked_inv_adj,
-  uint32_t* dvc_indegree, 
-  uint32_t* dvc_inv_indegree) 
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num_endes) return;
-
-  if (!dvc_picked_endes[t_idx]) return;
-  // init dvc_picked_adj
-  uint32_t start = dvc_global_adj_1D_ptr[t_idx];
-  uint32_t end = dvc_global_adj_1D_ptr[t_idx+1];
-  for (uint32_t k = start; k < end; k++) {
-    const uint32_t to_ende = dvc_global_adj_1D[k];
-    if (dvc_picked_endes[to_ende]) {
-      dvc_picked_adj[k] = 1; // true
-      atomicAdd(&dvc_indegree[to_ende], 1);
-      atomicAdd(&dvc_inv_indegree[t_idx], 1);
-    }
-  }
-
-  // init dvc_picked_inv_adj
-  start = dvc_global_inv_adj_1D_ptr[t_idx];
-  end = dvc_global_inv_adj_1D_ptr[t_idx+1];
-  for (uint32_t k = start; k < end; k++) {
-    const uint32_t to_ende = dvc_global_inv_adj_1D[k];
-    if (dvc_picked_endes[to_ende]) {
-      dvc_picked_inv_adj[k] = 1; // true
-    }
-  }
-}
-
 __global__ void _print_gpu_degree(const uint32_t n0, 
   const uint32_t n1, 
   const uint32_t* dvc_picked_endes,
@@ -1934,14 +1471,6 @@ __global__ void _gpu_warm_up(
 
 std::pair<double, double> G_EXT::_gpu_tree_construction() 
 {
-#ifdef ASPLOS_REBUTTAL_DATA_TRANSFER_TIME
-  float H2D_runtime = 0.;
-  cudaEvent_t startH2D_runtime, stopH2D_runtime;
-  cudaEventCreate(&startH2D_runtime);
-  cudaEventCreate(&stopH2D_runtime);    
-  cudaEventRecord(startH2D_runtime);
-#endif
-
   int blocks = (_num_ende + threads - 1) / threads;
 
   // Local memory 
@@ -2043,12 +1572,6 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   cudaMemset(_dvc_from_leaves, 0, _num_ende*sizeof(uint32_t)); // false
   cudaCheckErrors("cudaMemcpy failed");
 
- #ifdef ASPLOS_REBUTTAL_DATA_TRANSFER_TIME 
-  cudaEventRecord(stopH2D_runtime);
-  cudaEventSynchronize(stopH2D_runtime);
-  cudaEventElapsedTime(&H2D_runtime, startH2D_runtime, stopH2D_runtime);                                    
-  printf("H2D_runtime runtime: %.2f (ms)\n", H2D_runtime);
-#endif
 
   _gpu_warm_up<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: place this GPU kernel here as the warm-up for GPU; w/o this, the kernel runtime below will be extremely long. Need to remrmber!
 
@@ -2062,7 +1585,7 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   while (h_update) {
     h_update = false;
     cudaMemcpy(_dvc_update, &h_update, sizeof(bool), cudaMemcpyHostToDevice);
-    _relax_enodes_kernel<<<blocks, threads>>>(_num_ende,
+    _gpu_tree_construction_kernel<<<blocks, threads>>>(_num_ende,
       dvc_ende_cost,
       dvc_ende_ecls,
       dvc_ende_child,
@@ -2071,7 +1594,7 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
       dvc_cost_of_ecls,
       dvc_cost_of_ende,
       _dvc_best_ende_of_ecls);
-    cudaCheckErrors("_relax_enodes_kernel failed");
+    cudaCheckErrors("_gpu_tree_construction_kernel failed");
     cudaMemcpy(&h_update, _dvc_update, sizeof(bool), cudaMemcpyDeviceToHost);
   }
   
@@ -2132,1386 +1655,208 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   cudaEventRecord(stopGPU);
   cudaEventSynchronize(stopGPU);
   cudaEventElapsedTime(&gpuTime, startGPU, stopGPU);                                    
-  // printf("GPU tree construction runtime: %.2f (ms)\n", gpuTime);
+  printf("GPU tree construction runtime: %.2f (ms)\n", gpuTime);
 
   return std::make_pair(tree_ret, dag_ret);
 }
 
-void G_EXT::_gpu_DAG_construction() {
-#ifdef PRINT_LOG
-  printf("\nInside _gpu_DAG_construction()\n");
-#endif
+void G_EXT::_gpu_allocate_dag_buffers()
+{
+  // Validate the shared buffers produced by GPU tree construction.
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_indegree == nullptr ||
+      _dvc_inv_indegree == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_max_level == nullptr ||
+      _dvc_in_subgraph == nullptr ||
+      _dvc_from_roots == nullptr ||
+      _dvc_from_leaves == nullptr) {
+    throw std::logic_error(
+      "GPU DAG construction requires initialized GPU tree/shared buffers");
+  }
 
-  int blocks = (_num_ende + threads - 1) / threads;
-  _gpu_init_picked_adj<<<blocks,threads>>>(
-    _num_ende, 
-    _dvc_global_adj_1D,
-    _dvc_global_adj_1D_ptr,
-    _dvc_global_inv_adj_1D,
-    _dvc_global_inv_adj_1D_ptr,
+  if (!_roots.empty() && _dvc_roots == nullptr) {
+    throw std::logic_error(
+      "GPU root buffer was not initialized by GPU tree construction");
+  }
+
+  if (!_leaves.empty() && _dvc_leaves == nullptr) {
+    throw std::logic_error(
+      "GPU leaf buffer was not initialized by GPU tree construction");
+  }
+
+  // Safe if DAG allocation is requested more than once.
+  // This function only frees DAG-owned scratch memory.
+  _gpu_free_dag_buffers();
+
+  cuda_malloc_array(_dvc_dag_new_inserted, _num_ende);
+  cuda_malloc_array(_dvc_dag_insert_decision, _num_ende);
+  cuda_malloc_array(_dvc_dag_candidate_level, _num_ende);
+  cuda_malloc_array(_dvc_dag_u0, 1);
+  cuda_malloc_array(_dvc_dag_frontier, _num_ende);
+  cuda_malloc_array(_dvc_dag_next_frontier, _num_ende);
+  cuda_malloc_array(_dvc_dag_frontier_size, 1);
+  cuda_malloc_array(_dvc_dag_next_frontier_size, 1);
+}
+
+void G_EXT::_gpu_initialize_dag_buffers()
+{
+  if (_dvc_dag_new_inserted == nullptr ||
+      _dvc_dag_insert_decision == nullptr ||
+      _dvc_dag_candidate_level == nullptr ||
+      _dvc_dag_u0 == nullptr ||
+      _dvc_dag_frontier == nullptr ||
+      _dvc_dag_next_frontier == nullptr ||
+      _dvc_dag_frontier_size == nullptr ||
+      _dvc_dag_next_frontier_size == nullptr) {
+    throw std::logic_error(
+      "_gpu_initialize_dag_buffers called before DAG allocation");
+  }
+
+  // Reinitialize shared working state.
+  //
+  // Do not modify _dvc_picked_endes:
+  // it contains the tree solution produced by Algorithm 1.
+  CUDA_CHECK(cudaMemset(_dvc_level, 0xFF,
+    static_cast<size_t>(_num_ende) * sizeof(int)));
+
+  CUDA_CHECK(cudaMemset(_dvc_indegree, 0,
+    static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(_dvc_inv_indegree, 0,
+    static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(_dvc_max_level, 0,
+    sizeof(int)));
+
+  // Initialize DAG-only insertion state.
+  CUDA_CHECK(cudaMemset(_dvc_dag_new_inserted, 0,
+    static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(_dvc_dag_insert_decision, 0,
+    static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(_dvc_dag_candidate_level, 0xFF,
+    static_cast<size_t>(_num_ende) * sizeof(int)));
+
+  CUDA_CHECK(cudaMemset(_dvc_dag_u0, 0,
+    sizeof(uint32_t)));
+
+  // Only frontier sizes need initialization.
+  // Frontier contents will be overwritten before they are read.
+  CUDA_CHECK(cudaMemset(_dvc_dag_frontier_size, 0,
+    sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(_dvc_dag_next_frontier_size, 0,
+    sizeof(uint32_t)));
+
+  // Reuse the filtering buffers already allocated by tree construction.
+  CUDA_CHECK(cudaMemset(_dvc_from_roots, 0,
+    static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(_dvc_from_leaves, 0,
+    static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(_dvc_in_subgraph, 0,
+    static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
+}
+
+void G_EXT::_gpu_free_dag_buffers() noexcept
+{
+  cuda_free_and_null(_dvc_dag_next_frontier_size);
+  cuda_free_and_null(_dvc_dag_frontier_size);
+
+  cuda_free_and_null(_dvc_dag_next_frontier);
+  cuda_free_and_null(_dvc_dag_frontier);
+
+  cuda_free_and_null(_dvc_dag_u0);
+  cuda_free_and_null(_dvc_dag_candidate_level);
+  cuda_free_and_null(_dvc_dag_insert_decision);
+  cuda_free_and_null(_dvc_dag_new_inserted);
+}
+
+void G_EXT::_gpu_DAG_construction()
+{
+  float gpu_dag_time_ms = 0.0f;
+  cudaEvent_t start_gpu = nullptr;
+  cudaEvent_t stop_gpu = nullptr;
+
+  cudaEventCreate(&start_gpu);
+  cudaEventCreate(&stop_gpu);
+
+  cudaEventRecord(start_gpu);
+
+  // Intentionally empty during Step 1 and Step 2.
+  // _dvc_picked_endes therefore remains the tree solution.
+
+  cudaEventRecord(stop_gpu);
+  cudaEventSynchronize(stop_gpu);
+  cudaEventElapsedTime(
+    &gpu_dag_time_ms,
+    start_gpu,
+    stop_gpu);
+
+  cudaEventDestroy(start_gpu);
+  cudaEventDestroy(stop_gpu);
+
+  printf(
+    "GPU DAG construction runtime: %.2f (ms)\n",
+    gpu_dag_time_ms);
+}
+
+void G_EXT::_copy_pickedende_back(
+  std::vector<bool>& picked_endes_out)
+{
+  if (_dvc_picked_endes == nullptr) {
+    throw std::logic_error(
+      "_copy_pickedende_back called before GPU tree construction");
+  }
+
+  std::vector<uint32_t> host_selected(_num_ende, 0);
+
+  cudaError_t err = cudaMemcpy(
+    host_selected.data(),
     _dvc_picked_endes,
-    _dvc_picked_adj, _dvc_picked_inv_adj,
-    _dvc_indegree, _dvc_inv_indegree);
-  cudaCheckErrors("_gpu_init_picked_adj failed");
-  
-  cudaMalloc(&_dvc_base_indegree, _num_ende * sizeof(uint32_t));
-  cudaMalloc(&_dvc_base_inv_indegree, _num_ende * sizeof(uint32_t));
-  cudaMalloc(&_dvc_new_inserted, _num_ende * sizeof(bool));
-  cudaMemset(_dvc_new_inserted, 0, _num_ende * sizeof(bool));
+    static_cast<size_t>(_num_ende) * sizeof(uint32_t),
+    cudaMemcpyDeviceToHost);
 
-  _gpu_update_deg_init_level(true, true);
-  cudaMemcpy(_dvc_base_indegree, _dvc_indegree, _num_ende * sizeof(uint32_t), cudaMemcpyDeviceToDevice);
-  cudaMemcpy(_dvc_base_inv_indegree, _dvc_inv_indegree, _num_ende * sizeof(uint32_t), cudaMemcpyDeviceToDevice);
-
-
-#ifdef PRINT_LOG
-  _print_gpu_init_picked_adj<<<1,1>>>(_num_ende,
-    _num_ende,
-    _global_adj_1D.size(),
-    _global_adj_1D.size(),
-    _dvc_picked_endes,
-    _dvc_indegree,
-    _dvc_inv_indegree,
-    _dvc_picked_adj,
-    _dvc_picked_inv_adj,
-    _dvc_global_adj_1D_ptr, 
-    _dvc_global_inv_adj_1D_ptr,
-    _dvc_global_adj_1D,
-    _dvc_global_inv_adj_1D); // debug
-  cudaCheckErrors("_print_gpu_init_picked_adj failed"); // debug 
-  cudaDeviceSynchronize(); // debug
-  _print_gpu_degree<<<1,1>>>(_num_ende, _num_ende, _dvc_picked_endes, _dvc_indegree, _dvc_inv_indegree);
-  cudaCheckErrors("_print_gpu_degree failed"); // debug 
-  cudaDeviceSynchronize(); // debug
-#endif
-
-  float gpu_reconst_Time = 0.;
-  cudaEvent_t startGPU, stopGPU;
-  cudaEventCreate(&startGPU);
-  cudaEventCreate(&stopGPU);    
-  cudaEventRecord(startGPU);
-
-  #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
-    uint32_t num_iter = 0;
-  #endif
-
-  bool updated = true;
-  bool dvc_update_flag = false; 
-
-  while (updated) {
-    _gpu_update_deg_init_level(updated, false);
-    _gpu_BFS(
-      false, 
-      _dvc_inv_indegree, 
-      _dvc_picked_endes, 
-      _dvc_global_inv_adj_1D, 
-      _dvc_global_inv_adj_1D_ptr, 
-      _dvc_picked_inv_adj, 
-      _dvc_level);
-      
-    cudaMemcpy(_dvc_update, &dvc_update_flag, sizeof(bool), cudaMemcpyHostToDevice);
-    bool tp = _gpu_insertion(true);
-    
-    _gpu_update_deg_init_level(tp, false);
-    _gpu_BFS(
-      true, 
-      _dvc_indegree, 
-      _dvc_picked_endes, 
-      _dvc_global_adj_1D, 
-      _dvc_global_adj_1D_ptr, 
-      _dvc_picked_adj, 
-      _dvc_level);
-      
-    cudaMemcpy(_dvc_update, &dvc_update_flag, sizeof(bool), cudaMemcpyHostToDevice);
-    bool bu = _gpu_insertion(false);
-
-    updated = tp || bu;
-    #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
-      num_iter++;
-      printf("Now num_iter = %d\n", num_iter);
-    #endif  
-  }  
-
-  std::vector<uint32_t> in_subgraph_gpu; 
-  in_subgraph_gpu.resize(_num_ende, 0);
-  cudaMemcpy(in_subgraph_gpu.data(), _dvc_picked_endes, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-  
-  uint32_t aaa = 0;
-  for (uint32_t i = 0; i < in_subgraph_gpu.size(); ++i ) {
-    if (in_subgraph_gpu[i]) aaa++;
-  }
-  printf("#alive e-nodes after GPU DAG construction = %u\n", aaa);
-
-  // Re-constructing data for second times ILP solver
-  _ecls_its_ende_newG_GPU.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
-  for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
-    for (uint32_t ende : _ecls_its_ende[ecls]) {
-      if (!_in_subgraph[ende]) continue;
-      _ecls_its_ende_newG_GPU[ecls].push_back(ende);
-    }
+  if (err != cudaSuccess) {
+    throw std::runtime_error(
+      std::string("Failed to copy selected e-nodes: ") +
+      cudaGetErrorString(err));
   }
 
-  cudaEventRecord(stopGPU);
-  cudaEventSynchronize(stopGPU);
-  cudaEventElapsedTime(&gpu_reconst_Time, startGPU, stopGPU);
-  
-  #ifdef ASPLOS_REBUTTAL_NUMBER_ITERATIONS
-    std::cout << "GPU num_iter = " << num_iter << "\n";
-  #endif
-  printf("GPU DAG construction runtime: %.2f (ms)\n", gpu_reconst_Time);  
+  picked_endes_out.assign(_num_ende, false);
+
+  for (uint32_t ende = 0; ende < _num_ende; ++ende) {
+    picked_endes_out[ende] = (host_selected[ende] != 0);
+  }
 }
 
-__global__ void _update_deg_kl2 (
-  const uint32_t num_endes, 
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_picked_endes,
-  const uint32_t* dvc_picked_adj, 
-  uint32_t* dvc_indegree, uint32_t* dvc_inv_indegree) 
+void G_EXT::_copy_best_ende_of_ecls_back(
+  std::vector<uint32_t>& best_ende_of_ecls_out)
 {
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if ((t_idx >= num_endes) || (!dvc_picked_endes[t_idx])) return;
+  if (_dvc_best_ende_of_ecls == nullptr) {
+    throw std::logic_error(
+      "_copy_best_ende_of_ecls_back called before GPU tree construction");
+  }
 
-  // assign dvc_indegree and dvc_inv_indegree
-  for (uint32_t k = dvc_global_adj_1D_ptr[t_idx]; k < dvc_global_adj_1D_ptr[t_idx+1]; k++) {
-    if (!dvc_picked_adj[k]) continue;
-    const uint32_t to_ende = dvc_global_adj_1D[k];
-    if (dvc_picked_endes[to_ende]) {
-      atomicAdd(&dvc_indegree[to_ende], 1);
-      atomicAdd(&dvc_inv_indegree[t_idx], 1);
-    } 
+  best_ende_of_ecls_out.resize(_num_ecls);
+
+  cudaError_t err = cudaMemcpy(
+    best_ende_of_ecls_out.data(),
+    _dvc_best_ende_of_ecls,
+    static_cast<size_t>(_num_ecls) * sizeof(uint32_t),
+    cudaMemcpyDeviceToHost);
+
+  if (err != cudaSuccess) {
+    throw std::runtime_error(
+      std::string("Failed to copy best e-nodes: ") +
+      cudaGetErrorString(err));
   }
 }
-
-void G_EXT::_gpu_update_deg_init_level2(const bool need_to_update) 
-{
-  if (!need_to_update) return;
-
-  // Init 
-  cudaMemset(_dvc_indegree, 0, _num_ende*sizeof(uint32_t));
-  cudaMemset(_dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
-  cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int));
-  
-  int blocks = (_num_ende + threads - 1) / threads;
-  _update_deg_kl2<<<blocks, threads>>>(
-    _num_ende,
-    _dvc_global_adj_1D,
-    _dvc_global_adj_1D_ptr,
-    _dvc_picked_endes,
-    _dvc_picked_adj,
-    _dvc_indegree,
-    _dvc_inv_indegree);
-  cudaCheckErrors("_update_deg_kl2 failed");
-
-#ifdef PRINT_LOG
-  _print_gpu_degree<<<1,1>>>(_num_ende, _num_ende, _dvc_picked_endes, _dvc_indegree, _dvc_inv_indegree);
-  cudaCheckErrors("_print_gpu_degree failed"); // debug 
-  cudaDeviceSynchronize(); // debug  
-#endif
-}
-
-__global__ void _update_deg_kl(
-  const uint32_t num,
-  const bool is_init,
-  const uint32_t* dvc_picked_endes,
-  const bool* dvc_new_inserted,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_picked_adj,
-  const uint32_t* dvc_global_inv_adj_1D_ptr,
-  const uint32_t* dvc_global_inv_adj_1D,
-  const uint32_t* dvc_picked_inv_adj,
-  uint32_t* dvc_indegree,
-  uint32_t* dvc_inv_indegree)
-{
-  uint32_t fm_ende = blockIdx.x * blockDim.x + threadIdx.x;
-  if (fm_ende >= num) return;
-
-  if (is_init) {
-    if (!dvc_picked_endes[fm_ende]) return;
-    for (uint32_t k = dvc_global_adj_1D_ptr[fm_ende]; k < dvc_global_adj_1D_ptr[fm_ende+1]; k++) {
-      if (!dvc_picked_adj[k]) continue;
-      const uint32_t to_ende = dvc_global_adj_1D[k];
-      atomicAdd(&dvc_indegree[to_ende], 1);
-      atomicAdd(&dvc_inv_indegree[fm_ende], 1);
-    }
-  } else {
-    if (!dvc_new_inserted[fm_ende]) return; // only update those for newly inserted e-nodes
-
-    // assign dvc_indegree and dvc_inv_indegree
-    for (uint32_t k = dvc_global_adj_1D_ptr[fm_ende]; k < dvc_global_adj_1D_ptr[fm_ende+1]; k++) {
-      const uint32_t to_ende = dvc_global_adj_1D[k];
-      if (dvc_picked_endes[to_ende]) {
-        atomicAdd(&dvc_indegree[to_ende], 1);
-        atomicAdd(&dvc_inv_indegree[fm_ende], 1);
-      } 
-    }    
-  }
-}
-
-__global__ void _update_deg_full_kl(
-  const uint32_t num_ende,
-  const uint32_t* dvc_picked_endes,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_picked_adj,
-  uint32_t* dvc_indegree,
-  uint32_t* dvc_inv_indegree)
-{
-  uint32_t fm_ende = blockIdx.x * blockDim.x + threadIdx.x;
-  if (fm_ende >= num_ende) return;
-  if (!dvc_picked_endes[fm_ende]) return;
-  uint32_t start = dvc_global_adj_1D_ptr[fm_ende];
-  uint32_t end   = dvc_global_adj_1D_ptr[fm_ende + 1];
-  for (uint32_t k = start; k < end; k++) {
-    if (!dvc_picked_adj[k]) continue;
-    const uint32_t to_ende = dvc_global_adj_1D[k];
-    atomicAdd(&dvc_indegree[to_ende], 1);
-    atomicAdd(&dvc_inv_indegree[fm_ende], 1);
-  }
-}
-
-void G_EXT::_gpu_update_deg_init_level(
-  const bool need_to_update, 
-const bool is_init) 
-{
-  if (!need_to_update) return;
-  cudaMemset(_dvc_level, 0xFF, _num_ende*sizeof(int));
-  cudaMemset(_dvc_indegree, 0, _num_ende*sizeof(uint32_t));
-  cudaMemset(_dvc_inv_indegree, 0, _num_ende*sizeof(uint32_t));
-  int blocks = (_num_ende + threads - 1) / threads;
-  _update_deg_full_kl<<<blocks, threads>>>(
-    _num_ende, _dvc_picked_endes,
-    _dvc_global_adj_1D_ptr, _dvc_global_adj_1D, _dvc_picked_adj,
-    _dvc_indegree, _dvc_inv_indegree);
-  cudaCheckErrors("_update_deg_full_kl failed");
-}
-
-__global__ void _init_q1(const uint32_t num_ende, 
-  const uint32_t* dvc_indegree,
-  const uint32_t* dvc_picked_endes,
-  uint32_t* q,
-  uint32_t* q_sz,
-  uint32_t* q_num)
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num_ende) return;
-
-  if ((dvc_indegree[t_idx] == 0) && dvc_picked_endes[t_idx]) {
-    uint32_t pos = atomicAdd(q_sz, 1);
-    q[pos] = t_idx; // Note: t_idx is ende
-  }
-  *q_num = *q_sz;
-}
-
-__global__ void _gpu_cycle_revert_kl(
-  const uint32_t num_ende,
-  bool* dvc_new_inserted,
-  const uint32_t* dvc_deg,
-  uint32_t* dvc_picked_endes,
-  int* dvc_level,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_global_inv_adj_1D_ptr,
-  const uint32_t* dvc_global_inv_adj_1D,
-  uint32_t* dvc_picked_adj,
-  uint32_t* dvc_picked_inv_adj)
-{
-  uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= num_ende) return;
-  if (!(dvc_new_inserted[i] && dvc_deg[i] > 0)) return;
-
-  dvc_picked_endes[i] = 0;
-  dvc_new_inserted[i] = false;
-  dvc_level[i] = -1;
-
-  uint32_t start = dvc_global_adj_1D_ptr[i];
-  uint32_t end   = dvc_global_adj_1D_ptr[i + 1];
-  for (uint32_t k = start; k < end; k++) {
-    dvc_picked_adj[k] = 0;
-    uint32_t chd = dvc_global_adj_1D[k];
-    uint32_t cs = dvc_global_inv_adj_1D_ptr[chd];
-    uint32_t ce = dvc_global_inv_adj_1D_ptr[chd + 1];
-    for (uint32_t kk = cs; kk < ce; kk++) {
-      if (dvc_global_inv_adj_1D[kk] == i) { dvc_picked_inv_adj[kk] = 0; break; }
-    }
-  }
-
-  uint32_t p_start = dvc_global_inv_adj_1D_ptr[i];
-  uint32_t p_end   = dvc_global_inv_adj_1D_ptr[i + 1];
-  for (uint32_t k = p_start; k < p_end; k++) {
-    dvc_picked_inv_adj[k] = 0;
-    uint32_t par = dvc_global_inv_adj_1D[k];
-    uint32_t ps = dvc_global_adj_1D_ptr[par];
-    uint32_t pe = dvc_global_adj_1D_ptr[par + 1];
-    for (uint32_t kk = ps; kk < pe; kk++) {
-      if (dvc_global_adj_1D[kk] == i) { dvc_picked_adj[kk] = 0; break; }
-    }
-  }
-}
-
-__global__ void _gpu_BFS_kl(
-  const uint32_t num, 
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t q_sp,
-  uint32_t* q,
-  uint32_t* q_sz,
-  int* level,
-  const int cur_level,
-  const uint32_t* dvc_picked_adj,
-  uint32_t* deg)
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num) return;
-
-  uint32_t u = q[q_sp + t_idx];
-  level[u] = cur_level;
-  
-  for (uint32_t k = dvc_global_adj_1D_ptr[u]; k < dvc_global_adj_1D_ptr[u+1]; k++) {
-    if (!dvc_picked_adj[k]) continue;
-    const uint32_t v = dvc_global_adj_1D[k];
-    uint32_t old_deg = atomicSub(&deg[v], 1);
-    if (old_deg == 1) {
-      uint32_t pos = atomicAdd(q_sz, 1);
-      q[pos] = v;
-    }        
-  }
-}
-
-__global__ void _reverse_level(  
-  const uint32_t num, 
-  const int cur_level,
-  int* level) 
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num) return;
-  
-  if (level[t_idx] != -1) {
-    level[t_idx] = cur_level - level[t_idx] - 1;
-  }
-}
-
-void G_EXT::_gpu_BFS(
-  const bool is_td, 
-  uint32_t* deg, 
-  const uint32_t* picked_endes,
-  const uint32_t* global_adj_1D,
-  const uint32_t* global_adj_1D_ptr,
-  const uint32_t* picked_adj,
-  int* level)
-{
-  cudaMemset(_dvc_q, 0, _num_ende*sizeof(uint32_t));
-  cudaMemset(_dvc_q_sz, 0, 1*sizeof(uint32_t));
-
-  // init queue
-  int blocks = (_num_ende + threads - 1) / threads;
-  _init_q1<<<blocks,threads>>>(
-    _num_ende, 
-    deg,
-    picked_endes,
-    _dvc_q, _dvc_q_sz, _dvc_q_num);
-  cudaCheckErrors("_init_q1 failed");
-  
-  // BFS: top-down levelization 
-  uint32_t q_sz = 0;
-  cudaMemcpy(&q_sz, _dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-  uint32_t q_sp = 0;
-  uint32_t num = q_sz - q_sp;  
-  int cur_level = 0;
-
-  while (num > 0) {
-    blocks = (num + threads - 1) / threads;
-    _gpu_BFS_kl<<<blocks, threads>>>(
-      num,
-      global_adj_1D_ptr,
-      global_adj_1D,
-      q_sp,
-      _dvc_q,
-      _dvc_q_sz,
-      level,
-      cur_level, 
-      picked_adj,
-      deg);
-    cudaCheckErrors("_gpu_BFS_kl failed");
-
-    cudaMemcpy(&q_sz, _dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    
-    q_sp += num;
-    num = q_sz - q_sp;
-    cur_level++; 
-  }
-
-  _max_level = cur_level;
-
-  // ===== cycle revert：永遠用「絕對」正向/反向 adjacency（member variable），與 is_td 無關 =====
-  {
-    int rblocks = (_num_ende + threads - 1) / threads;
-    _gpu_cycle_revert_kl<<<rblocks, threads>>>(
-      _num_ende, _dvc_new_inserted, deg, _dvc_picked_endes, level,
-      _dvc_global_adj_1D_ptr, _dvc_global_adj_1D,           // <-- 永遠是正向
-      _dvc_global_inv_adj_1D_ptr, _dvc_global_inv_adj_1D,   // <-- 永遠是反向
-      _dvc_picked_adj, _dvc_picked_inv_adj);
-    cudaCheckErrors("_gpu_cycle_revert_kl failed");
-  }
-
-  if (!is_td) {
-    blocks = (_num_ende + threads - 1) / threads;
-    _reverse_level<<<blocks,threads>>>(_num_ende, _max_level, level);
-    cudaCheckErrors("_reverse_level failed");
-  }
-}
-
-__global__ void _gpu_insertion_kl(
-  const bool is_td,
-  const uint32_t num_ende, 
-  uint32_t* dvc_picked_endes,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_global_inv_adj_1D_ptr,
-  const uint32_t* dvc_global_inv_adj_1D,
-  uint32_t* dvc_tmp_picked_adj,
-  uint32_t* dvc_tmp_picked_inv_adj,
-  uint32_t* dvc_picked_adj,
-  uint32_t* dvc_picked_inv_adj,
-  int* dvc_level,
-  bool* update)
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num_ende) return;
-  const uint32_t ende = t_idx; 
-  if (dvc_picked_endes[ende]) return;
-
-  bool has_par = false, has_chd = false;
-  int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-  // Find max parent level 
-  for (uint32_t k = dvc_global_inv_adj_1D_ptr[ende]; k < dvc_global_inv_adj_1D_ptr[ende+1]; k++) {
-    uint32_t par_ende = dvc_global_inv_adj_1D[k];
-    if (!dvc_picked_endes[par_ende]) continue;
-    int par_lvl = dvc_level[par_ende];
-    dvc_tmp_picked_inv_adj[k] = true; 
-    if (max_par_lvl < par_lvl) {
-      has_par = true; 
-      max_par_lvl = par_lvl; 
-    }
-  }
-
-  // Find min child level
-  for (uint32_t k = dvc_global_adj_1D_ptr[ende]; k < dvc_global_adj_1D_ptr[ende+1]; k++) {
-    uint32_t chd_ende = dvc_global_adj_1D[k];      
-    if (!dvc_picked_endes[chd_ende]) continue;
-    int chd_lvl = dvc_level[chd_ende];
-    dvc_tmp_picked_adj[k] = true;
-    if (min_chd_lvl > chd_lvl) {
-      has_chd = true; 
-      min_chd_lvl = chd_lvl;
-    }
-  }
-
-  // Check whether form a cycle
-  bool cond = (is_td) ? (has_par) : (has_chd);
-  int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-  bool has_overlap_b = false;
-  for (uint32_t k = dvc_global_inv_adj_1D_ptr[ende]; k < dvc_global_inv_adj_1D_ptr[ende+1]; k++) {
-    if(!dvc_tmp_picked_inv_adj[k]) continue;
-    const uint32_t par_ende = dvc_global_inv_adj_1D[k];      
-    for (uint32_t kk = dvc_global_adj_1D_ptr[ende]; kk < dvc_global_adj_1D_ptr[ende+1]; kk++) {
-      if(!dvc_tmp_picked_adj[kk]) continue;
-      const uint32_t chd_ende = dvc_global_adj_1D[kk];
-      if (par_ende == chd_ende) has_overlap_b = true;
-      break;
-    }      
-  }
-  bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap_b) && (given_lvl >= 0);
-  if (valid) {
-    // Update 
-    dvc_picked_endes[ende] = true;
-    dvc_level[ende] = given_lvl;
-    *update = true; 
-
-    // update _adj and _inv_adj
-    for (uint32_t k = dvc_global_inv_adj_1D_ptr[ende]; k < dvc_global_inv_adj_1D_ptr[ende+1]; k++) {
-      if(!dvc_tmp_picked_inv_adj[k]) continue;
-      const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-      dvc_picked_inv_adj[k] = true;
-      for (uint32_t kk = dvc_global_adj_1D_ptr[par_ende]; kk < dvc_global_adj_1D_ptr[par_ende+1]; kk++) {
-        const uint32_t tar_ende = dvc_global_adj_1D[kk];
-        if (ende == tar_ende) {
-          dvc_picked_adj[kk] = true;
-          break;
-        }
-      }
-    }
-
-    for (uint32_t k = dvc_global_adj_1D_ptr[ende]; k < dvc_global_adj_1D_ptr[ende+1]; k++) {
-      if(!dvc_tmp_picked_adj[k]) continue;
-      const uint32_t chd_ende = dvc_global_adj_1D[k];
-      dvc_picked_adj[k] = true;
-      for (uint32_t kk = dvc_global_inv_adj_1D_ptr[chd_ende]; kk < dvc_global_inv_adj_1D_ptr[chd_ende+1]; kk++) {
-        const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
-        if (ende == tar_ende) {
-          dvc_picked_inv_adj[kk] = true;
-          break;
-        }
-      }
-    }         
-  } 
-}
-
-// bitmap version
-#if FAST_BITMAP_CHECK
-  __inline__ __device__ int warpReduceMax(int val) {
-    return __reduce_max_sync(0xffffffff, val);
-  }
-
-  __inline__ __device__ int warpReduceMin(int val) {
-    return __reduce_min_sync(0xffffffff, val);
-  }
-
-  __global__ void _gpu_insertion_kl_warp(
-    const bool is_td,
-    const uint32_t num_ende, 
-    uint32_t* dvc_picked_endes,
-    const uint32_t* dvc_global_adj_1D_ptr,
-    const uint32_t* dvc_global_adj_1D,
-    const uint32_t* dvc_global_inv_adj_1D_ptr,
-    const uint32_t* dvc_global_inv_adj_1D,
-    uint32_t* dvc_tmp_picked_adj,
-    uint32_t* dvc_tmp_picked_inv_adj,
-    uint32_t* dvc_picked_adj,
-    uint32_t* dvc_picked_inv_adj,
-    int* dvc_level,
-    bool* update)
-  {
-    // one warp per ende
-    const uint32_t global_tid = blockIdx.x * blockDim.x + threadIdx.x;
-    const uint32_t warp_id = global_tid / 32;
-    const uint32_t lane_id = threadIdx.x % 32;
-
-    if (warp_id >= num_ende) return;
-    const uint32_t ende = warp_id;
-    if (dvc_picked_endes[ende]) return;
-
-    bool has_par = false, has_chd = false;
-    int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-
-    // find max parent level
-    uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
-    uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
-    for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
-      uint32_t par_ende = dvc_global_inv_adj_1D[k];
-      if (!dvc_picked_endes[par_ende]) continue;
-      int par_lvl = dvc_level[par_ende];
-      dvc_tmp_picked_inv_adj[k] = true;
-      has_par = true;
-      max_par_lvl = max(max_par_lvl, par_lvl);
-    }
-    max_par_lvl = warpReduceMax(max_par_lvl);
-    has_par = __any_sync(0xffffffff, has_par);
-
-    // find min child level + build bitmap
-    uint64_t child_bitmap = 0ull;
-    uint32_t c_start = dvc_global_adj_1D_ptr[ende];
-    uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
-    for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
-      uint32_t chd_ende = dvc_global_adj_1D[k];
-      if (!dvc_picked_endes[chd_ende]) continue;
-      int chd_lvl = dvc_level[chd_ende];
-      dvc_tmp_picked_adj[k] = true;
-      has_chd = true;
-      min_chd_lvl = min(min_chd_lvl, chd_lvl);
-
-      // map child e-node to bitmap bit (use hash to compress)
-      uint32_t bit_idx = chd_ende & 63; // mod 64
-      child_bitmap |= (1ull << bit_idx);
-    }
-
-    // combine all warp threads' bitmaps
-    min_chd_lvl = warpReduceMin(min_chd_lvl);
-    has_chd = __any_sync(0xffffffff, has_chd);
-    child_bitmap = __reduce_or_sync(0xffffffff, child_bitmap);
-
-    // cycle check with bitmap
-    bool cond = is_td ? has_par : has_chd;
-    int given_lvl = is_td ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-
-    bool local_overlap = false;
-    for (uint32_t k = p_start + lane_id; k < p_end && !local_overlap; k += 32) {
-      if (!dvc_tmp_picked_inv_adj[k]) continue;
-      const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-      uint32_t bit_idx = par_ende & 63;
-      if (child_bitmap & (1ull << bit_idx)) {
-        local_overlap = true;
-        break;
-      }
-    }
-
-    bool has_overlap_b = __any_sync(0xffffffff, local_overlap);
-    bool valid = cond && (max_par_lvl < min_chd_lvl)
-              && !has_overlap_b && (given_lvl >= 0);
-
-    bool warp_valid = __any_sync(0xffffffff, valid);
-
-    // updates
-    if (warp_valid) {
-      if (lane_id == 0) {
-        dvc_picked_endes[ende] = true;
-        dvc_level[ende] = given_lvl;
-        *update = true;
-      }
-
-      // update inv_adj
-      for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
-        if (!dvc_tmp_picked_inv_adj[k]) continue;
-        const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-        dvc_picked_inv_adj[k] = true;
-        uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
-        uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
-        for (uint32_t kk = par_start; kk < par_end; kk++) {
-          const uint32_t tar_ende = dvc_global_adj_1D[kk];
-          if (tar_ende == ende) {
-            dvc_picked_adj[kk] = true;
-            break;
-          }
-        }
-      }
-
-      // update adj
-      for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
-        if (!dvc_tmp_picked_adj[k]) continue;
-        const uint32_t chd_ende = dvc_global_adj_1D[k];
-        dvc_picked_adj[k] = true;
-        uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
-        uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
-        for (uint32_t kk = chd_start; kk < chd_end; kk++) {
-          const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
-          if (tar_ende == ende) {
-            dvc_picked_inv_adj[kk] = true;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-#else // slower original version
-  __inline__ __device__ int warpReduceMax(int val) {
-    return __reduce_max_sync(0xffffffff, val);
-  }
-
-  __inline__ __device__ int warpReduceMin(int val) {
-    return __reduce_min_sync(0xffffffff, val);
-  }
-
-  __global__ void _gpu_insertion_kl_warp(
-    const bool is_td,
-    const uint32_t num_ende, 
-    uint32_t* dvc_picked_endes,
-    const uint32_t* dvc_global_adj_1D_ptr,
-    const uint32_t* dvc_global_adj_1D,
-    const uint32_t* dvc_global_inv_adj_1D_ptr,
-    const uint32_t* dvc_global_inv_adj_1D,
-    uint32_t* dvc_tmp_picked_adj,
-    uint32_t* dvc_tmp_picked_inv_adj,
-    uint32_t* dvc_picked_adj,
-    uint32_t* dvc_picked_inv_adj,
-    int* dvc_level,
-    bool* update)
-  {
-    // one warp per ende
-    const uint32_t global_tid = blockIdx.x * blockDim.x + threadIdx.x;
-    const uint32_t warp_id = global_tid / 32;
-    const uint32_t lane_id = threadIdx.x % 32;
-
-    if (warp_id >= num_ende) return;
-    const uint32_t ende = warp_id;
-    if (dvc_picked_endes[ende]) return;
-
-    bool has_par = false, has_chd = false;
-    int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-    // Find max parent level 
-    uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
-    uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
-    for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
-      uint32_t par_ende = dvc_global_inv_adj_1D[k];
-      if (!dvc_picked_endes[par_ende]) continue;
-      int par_lvl = dvc_level[par_ende];
-      dvc_tmp_picked_inv_adj[k] = true;
-      has_par = true;
-      max_par_lvl = max(max_par_lvl, par_lvl);
-    }
-
-    // reduction to get max parent level across warp
-    max_par_lvl = warpReduceMax(max_par_lvl);
-
-    // warp broadcast: has_par is true if any thread has true
-    unsigned int par_mask = __ballot_sync(0xffffffff, has_par);
-    has_par = par_mask != 0;
-
-    // Find min child level
-    uint32_t c_start = dvc_global_adj_1D_ptr[ende];
-    uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
-    for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
-      uint32_t chd_ende = dvc_global_adj_1D[k];
-      if (!dvc_picked_endes[chd_ende]) continue;
-      int chd_lvl = dvc_level[chd_ende];
-      dvc_tmp_picked_adj[k] = true;
-      has_chd = true;
-      min_chd_lvl = min(min_chd_lvl, chd_lvl);
-    }
-
-    // reduction to get min child level across warp
-    min_chd_lvl = warpReduceMin(min_chd_lvl);
-    unsigned int chd_mask = __ballot_sync(0xffffffff, has_chd);
-    has_chd = chd_mask != 0;
-
-    // --- compute cond and given_lvl (same as before, all lanes do the same)
-    bool cond = (is_td) ? (has_par) : (has_chd);
-    int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-    bool local_overlap = false;
-
-    for (uint32_t k = p_start + lane_id; k < p_end && !local_overlap; k += 32) {
-      if (!dvc_tmp_picked_inv_adj[k]) continue;
-      const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-      for (uint32_t kk = c_start; kk < c_end; kk++) {
-        if (!dvc_tmp_picked_adj[kk]) continue;
-        const uint32_t chd_ende = dvc_global_adj_1D[kk];
-        if (par_ende == chd_ende) {
-          local_overlap = true;
-          break;
-        }
-      }
-    }
-
-    unsigned overlap_mask = __ballot_sync(0xffffffff, local_overlap);
-    bool has_overlap_b = overlap_mask != 0;
-    bool valid = (cond) && (max_par_lvl < min_chd_lvl)
-                && (!has_overlap_b) && (given_lvl >= 0);
-
-    unsigned valid_mask = __ballot_sync(0xffffffff, valid);
-    bool warp_valid = (valid_mask != 0);
-
-    if (warp_valid) {
-      if (lane_id == 0) {
-        dvc_picked_endes[ende] = true;
-        dvc_level[ende] = given_lvl;
-        *update = true;
-      }
-
-      for (uint32_t k = p_start + lane_id; k < p_end; k += 32) {
-        if (!dvc_tmp_picked_inv_adj[k]) continue;
-        const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-        dvc_picked_inv_adj[k] = true;
-        uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
-        uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
-        for (uint32_t kk = par_start; kk < par_end; kk++) {
-          const uint32_t tar_ende = dvc_global_adj_1D[kk];
-          if (tar_ende == ende) {
-            dvc_picked_adj[kk] = true;
-            break;
-          }
-        }
-      }
-
-      for (uint32_t k = c_start + lane_id; k < c_end; k += 32) {
-        if (!dvc_tmp_picked_adj[k]) continue;
-        const uint32_t chd_ende = dvc_global_adj_1D[k];
-        dvc_picked_adj[k] = true;
-        uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
-        uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
-        for (uint32_t kk = chd_start; kk < chd_end; kk++) {
-          const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
-          if (tar_ende == ende) {
-            dvc_picked_inv_adj[kk] = true;
-            break;
-          }
-        }
-      }
-    }
-  }
-#endif
-
-
-// __inline__ __device__ int blockReduceMax(int val) {
-//   static __shared__ int shared[NUM_THREAD_DAG_CONSTR / 32]; // one per warp
-//   int lane = threadIdx.x % 32;
-//   int wid  = threadIdx.x / 32;
-//   // Warp reduce first
-//   for (int offset = 16; offset > 0; offset /= 2)
-//     val = max(val, __shfl_down_sync(0xffffffff, val, offset));
-//   // Write warp results to shared memory
-//   if (lane == 0) shared[wid] = val;
-//   __syncthreads();
-//   // Read from first warp only
-//   val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : INT_MIN;
-//   // Final reduction within first warp
-//   if (wid == 0) {
-//     for (int offset = 16; offset > 0; offset /= 2)
-//       val = max(val, __shfl_down_sync(0xffffffff, val, offset));
-//   }
-//   return val;
-// }
-
-// __inline__ __device__ int blockReduceMin(int val) {
-//   static __shared__ int shared[NUM_THREAD_DAG_CONSTR / 32];
-//   int lane = threadIdx.x % 32;
-//   int wid  = threadIdx.x / 32;
-//   for (int offset = 16; offset > 0; offset /= 2)
-//     val = min(val, __shfl_down_sync(0xffffffff, val, offset));
-//   if (lane == 0) shared[wid] = val;
-//   __syncthreads();
-//   val = (threadIdx.x < blockDim.x / 32) ? shared[lane] : INT_MAX;
-//   if (wid == 0) {
-//     for (int offset = 16; offset > 0; offset /= 2)
-//       val = min(val, __shfl_down_sync(0xffffffff, val, offset));
-//   }
-//   return val;
-// }
-
-// __global__ void _gpu_insertion_kl_block(
-//   const bool is_td,
-//   const uint32_t num_ende,
-//   uint32_t* dvc_picked_endes,
-//   const uint32_t* dvc_global_adj_1D_ptr,
-//   const uint32_t* dvc_global_adj_1D,
-//   const uint32_t* dvc_global_inv_adj_1D_ptr,
-//   const uint32_t* dvc_global_inv_adj_1D,
-//   uint32_t* dvc_tmp_picked_adj,
-//   uint32_t* dvc_tmp_picked_inv_adj,
-//   uint32_t* dvc_picked_adj,
-//   uint32_t* dvc_picked_inv_adj,
-//   int* dvc_level,
-//   bool* update)
-// {
-//   const uint32_t ende = blockIdx.x;
-//   if (ende >= num_ende) return;
-//   if (dvc_picked_endes[ende]) return;
-
-//   int tid = threadIdx.x;
-//   bool has_par = false, has_chd = false;
-//   int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-
-//   // --------------------------
-//   // find max parent level
-//   // --------------------------
-//   uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
-//   uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
-//   for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
-//     uint32_t par_ende = dvc_global_inv_adj_1D[k];
-//     if (!dvc_picked_endes[par_ende]) continue;
-//     int par_lvl = dvc_level[par_ende];
-//     dvc_tmp_picked_inv_adj[k] = true;
-//     has_par = true;
-//     max_par_lvl = max(max_par_lvl, par_lvl);
-//   }
-//   max_par_lvl = blockReduceMax(max_par_lvl);
-//   unsigned int par_mask = __ballot_sync(0xffffffff, has_par);
-//   has_par = par_mask != 0;
-
-//   // --------------------------
-//   // find min child level
-//   // --------------------------
-//   uint32_t c_start = dvc_global_adj_1D_ptr[ende];
-//   uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
-//   for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
-//     uint32_t chd_ende = dvc_global_adj_1D[k];
-//     if (!dvc_picked_endes[chd_ende]) continue;
-//     int chd_lvl = dvc_level[chd_ende];
-//     dvc_tmp_picked_adj[k] = true;
-//     has_chd = true;
-//     min_chd_lvl = min(min_chd_lvl, chd_lvl);
-//   }
-//   min_chd_lvl = blockReduceMin(min_chd_lvl);
-//   unsigned int chd_mask = __ballot_sync(0xffffffff, has_chd);
-//   has_chd = chd_mask != 0;
-
-//   // --------------------------
-//   // cycle check
-//   // --------------------------
-//   bool cond = (is_td) ? (has_par) : (has_chd);
-//   int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-//   bool local_overlap = false;
-//   for (uint32_t k = p_start + tid; k < p_end && !local_overlap; k += blockDim.x) {
-//     if (!dvc_tmp_picked_inv_adj[k]) continue;
-//     const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-//     for (uint32_t kk = c_start; kk < c_end; kk++) {
-//       if (!dvc_tmp_picked_adj[kk]) continue;
-//       const uint32_t chd_ende = dvc_global_adj_1D[kk];
-//       if (par_ende == chd_ende) { local_overlap = true; break; }
-//     }
-//   }
-
-//   unsigned overlap_mask = __ballot_sync(0xffffffff, local_overlap);
-//   bool has_overlap_b = overlap_mask != 0;
-
-//   bool valid = (cond) && (max_par_lvl < min_chd_lvl)
-//               && (!has_overlap_b) && (given_lvl >= 0);
-
-//   // unsigned valid_mask = __ballot_sync(0xffffffff, valid);
-//   // bool block_valid = (valid_mask != 0);
-//   bool block_valid = __any_sync(0xffffffff, valid);
-
-
-//   // --------------------------
-//   // updates
-//   // --------------------------
-//   if (block_valid) {
-//     if (tid == 0) {
-//       dvc_picked_endes[ende] = true;
-//       dvc_level[ende] = given_lvl;
-//       *update = true;
-//     }
-
-//     // update inv_adj
-//     for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
-//       if (!dvc_tmp_picked_inv_adj[k]) continue;
-//       const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-//       dvc_picked_inv_adj[k] = true;
-//       uint32_t par_start = dvc_global_adj_1D_ptr[par_ende];
-//       uint32_t par_end   = dvc_global_adj_1D_ptr[par_ende + 1];
-//       for (uint32_t kk = par_start; kk < par_end; kk++) {
-//         const uint32_t tar_ende = dvc_global_adj_1D[kk];
-//         if (tar_ende == ende) {
-//           dvc_picked_adj[kk] = true;
-//           break;
-//         }
-//       }
-//     }
-
-//     // update adj
-//     for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
-//       if (!dvc_tmp_picked_adj[k]) continue;
-//       const uint32_t chd_ende = dvc_global_adj_1D[k];
-//       dvc_picked_adj[k] = true;
-//       uint32_t chd_start = dvc_global_inv_adj_1D_ptr[chd_ende];
-//       uint32_t chd_end   = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
-//       for (uint32_t kk = chd_start; kk < chd_end; kk++) {
-//         const uint32_t tar_ende = dvc_global_inv_adj_1D[kk];
-//         if (tar_ende == ende) {
-//           dvc_picked_inv_adj[kk] = true;
-//           break;
-//         }
-//       }
-//     }
-//   }
-// }
-
-// ============================================================
-// === Faster intra-block reductions (merged max+min) =========
-// ============================================================
-
-__inline__ __device__ void blockReduceMaxMin(int& max_val, int& min_val) {
-  int lane = threadIdx.x & 31;
-  int wid  = threadIdx.x >> 5;
-
-  // --- Warp-level reduce ---
-  for (int offset = 16; offset > 0; offset >>= 1) {
-    max_val = max(max_val, __shfl_down_sync(0xffffffff, max_val, offset));
-    min_val = min(min_val, __shfl_down_sync(0xffffffff, min_val, offset));
-  }
-
-  // --- Warp results to shared ---
-  __shared__ int warp_max[32];
-  __shared__ int warp_min[32];
-  if (lane == 0) {
-    warp_max[wid] = max_val;
-    warp_min[wid] = min_val;
-  }
-  __syncthreads();
-
-  // --- Final reduction by warp 0 only ---
-  if (wid == 0) {
-    max_val = (lane < (blockDim.x >> 5)) ? warp_max[lane] : INT_MIN;
-    min_val = (lane < (blockDim.x >> 5)) ? warp_min[lane] : INT_MAX;
-    for (int offset = 16; offset > 0; offset >>= 1) {
-      max_val = max(max_val, __shfl_down_sync(0xffffffff, max_val, offset));
-      min_val = min(min_val, __shfl_down_sync(0xffffffff, min_val, offset));
-    }
-  }
-  // Broadcast final values to all threads in block
-  max_val = __shfl_sync(0xffffffff, max_val, 0);
-  min_val = __shfl_sync(0xffffffff, min_val, 0);
-}
-
-// ============================================================
-// === Optimized _gpu_insertion_kl_block_fast =================
-// ============================================================
-__global__ void _gpu_insertion_kl_block(
-  const bool is_td,
-  const uint32_t num_ende,
-  uint32_t* dvc_picked_endes,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_global_inv_adj_1D_ptr,
-  const uint32_t* dvc_global_inv_adj_1D,
-  uint32_t* dvc_tmp_picked_adj,
-  uint32_t* dvc_tmp_picked_inv_adj,
-  uint32_t* dvc_picked_adj,
-  uint32_t* dvc_picked_inv_adj,
-  int* dvc_level,
-  bool* dvc_new_inserted,
-  bool* update)
-{
-  const uint32_t ende = blockIdx.x;
-  if (ende >= num_ende) return;
-  if (dvc_picked_endes[ende]) return;
-
-  const int tid = threadIdx.x;
-  bool has_par = false, has_chd = false;
-  int max_par_lvl = -1, min_chd_lvl = INT_MAX;
-
-  // ============================================================
-  // === 1. Scan parent edges ===================================
-  // ============================================================
-  uint32_t p_start = dvc_global_inv_adj_1D_ptr[ende];
-  uint32_t p_end   = dvc_global_inv_adj_1D_ptr[ende + 1];
-
-  for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
-    uint32_t par_ende = dvc_global_inv_adj_1D[k];
-    if (!dvc_picked_endes[par_ende]) continue;
-    has_par = true;
-    int par_lvl = dvc_level[par_ende];
-    dvc_tmp_picked_inv_adj[k] = true;
-    max_par_lvl = max(max_par_lvl, par_lvl);
-  }
-
-  // ============================================================
-  // === 2. Scan child edges ====================================
-  // ============================================================
-  uint32_t c_start = dvc_global_adj_1D_ptr[ende];
-  uint32_t c_end   = dvc_global_adj_1D_ptr[ende + 1];
-
-  for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
-    uint32_t chd_ende = dvc_global_adj_1D[k];
-    if (!dvc_picked_endes[chd_ende]) continue;
-    has_chd = true;
-    int chd_lvl = dvc_level[chd_ende];
-    dvc_tmp_picked_adj[k] = true;
-    min_chd_lvl = min(min_chd_lvl, chd_lvl);
-  }
-
-  // ============================================================
-  // === 3. Combined reduction for max/min ======================
-  // ============================================================
-  blockReduceMaxMin(max_par_lvl, min_chd_lvl);
-
-  has_par = __any_sync(0xffffffff, has_par);
-  has_chd = __any_sync(0xffffffff, has_chd);
-
-  // ============================================================
-  // === 4. Cycle detection (optional shared bitmap) ============
-  // ============================================================
-  bool local_overlap = false;
-#if FAST_BITMAP_CHECK
-  // --- Shared bitmap trick (lower bits as hash) ---
-  const uint32_t bitMap_size = 256;
-  __shared__ uint8_t chd_flags[bitMap_size];
-  for (int i = tid; i < bitMap_size; i += blockDim.x) 
-    chd_flags[i] = 0;
-  __syncthreads();
-
-  for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x)
-    if (dvc_tmp_picked_adj[k])
-      chd_flags[dvc_global_adj_1D[k] & 255] = 1;
-  __syncthreads();
-
-  for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x)
-    if (dvc_tmp_picked_inv_adj[k] && chd_flags[dvc_global_inv_adj_1D[k] & 255])
-      local_overlap = true;
-      
-#else
-  // --- Default O(deg^2) safe check ---
-  for (uint32_t k = p_start + tid; k < p_end && !local_overlap; k += blockDim.x) {
-    if (!dvc_tmp_picked_inv_adj[k]) continue;
-    const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-    for (uint32_t kk = c_start; kk < c_end; kk++) {
-      if (!dvc_tmp_picked_adj[kk]) continue;
-      if (par_ende == dvc_global_adj_1D[kk]) { local_overlap = true; break; }
-    }
-  }
-#endif
-
-  bool has_overlap_b = __any_sync(0xffffffff, local_overlap);
-
-  // ============================================================
-  // === 5. Compute validity & early exit =======================
-  // ============================================================
-  bool cond = is_td ? has_par : has_chd;
-  int given_lvl = is_td ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-  bool valid = cond && (max_par_lvl < min_chd_lvl)
-              && !has_overlap_b && (given_lvl >= 0);
-
-  bool block_valid = __any_sync(0xffffffff, valid);
-  if (!block_valid) return;   // early break
-
-  // ============================================================
-  // === 6. Apply updates =======================================
-  // ============================================================
-  if (tid == 0) {
-    dvc_picked_endes[ende] = true;
-    dvc_level[ende] = given_lvl;
-    *update = true;
-    dvc_new_inserted[ende] = true;
-  }
-
-  // --- update inv_adj ---
-  for (uint32_t k = p_start + tid; k < p_end; k += blockDim.x) {
-    if (!dvc_tmp_picked_inv_adj[k]) continue;
-    const uint32_t par_ende = dvc_global_inv_adj_1D[k];
-    dvc_picked_inv_adj[k] = true;
-    uint32_t ps = dvc_global_adj_1D_ptr[par_ende];
-    uint32_t pe = dvc_global_adj_1D_ptr[par_ende + 1];
-    for (uint32_t kk = ps; kk < pe; kk++) {
-      if (dvc_global_adj_1D[kk] == ende) {
-        dvc_picked_adj[kk] = true;
-        break;
-      }
-    }
-  }
-
-  // --- update adj ---
-  for (uint32_t k = c_start + tid; k < c_end; k += blockDim.x) {
-    if (!dvc_tmp_picked_adj[k]) continue;
-    const uint32_t chd_ende = dvc_global_adj_1D[k];
-    dvc_picked_adj[k] = true;
-    uint32_t cs = dvc_global_inv_adj_1D_ptr[chd_ende];
-    uint32_t ce = dvc_global_inv_adj_1D_ptr[chd_ende + 1];
-    for (uint32_t kk = cs; kk < ce; kk++) {
-      if (dvc_global_inv_adj_1D[kk] == ende) {
-        dvc_picked_inv_adj[kk] = true;
-        break;
-      }
-    }
-  }
-}
-
-
-bool G_EXT::_gpu_insertion(const bool is_td)
-{
-#ifdef PRINT_LOG
-  if (is_td) {
-    printf("\n_gpu_insertion: _top_down_insertion()\n");
-  } else {
-    printf("\n_gpu_insertion: _bottom_up_insertion()\n");
-  }
-#endif
-
-  bool updated = false;
-  
-  cudaMemset(_dvc_tmp_picked_adj, 0, _global_adj_1D.size()*sizeof(uint32_t));
-  cudaMemset(_dvc_tmp_picked_inv_adj, 0, _global_inv_adj_1D.size()*sizeof(uint32_t));
-  cudaMemset(_dvc_new_inserted, 0, _num_ende * sizeof(bool));
-
-  if (DAG_KERNEL == 0) {
-    // 一個 thread 負責一個 enode
-    int blocks = (_num_ende + threads - 1) / threads;
-    _gpu_insertion_kl<<<blocks,threads>>>(
-      is_td,
-      _num_ende, 
-      _dvc_picked_endes,
-      _dvc_global_adj_1D_ptr,
-      _dvc_global_adj_1D,
-      _dvc_global_inv_adj_1D_ptr,
-      _dvc_global_inv_adj_1D,
-      _dvc_tmp_picked_adj,
-      _dvc_tmp_picked_inv_adj,
-      _dvc_picked_adj,
-      _dvc_picked_inv_adj,    
-      _dvc_level,
-      _dvc_update);
-    cudaCheckErrors("_gpu_insertion_kl failed");
-  } else if (DAG_KERNEL == 1) {
-    // 一個 warp 負責一個 enode
-    int blocks = ((_num_ende*32) + threads - 1) / threads;
-    _gpu_insertion_kl_warp<<<blocks,threads>>>(
-      is_td,
-      _num_ende, 
-      _dvc_picked_endes,
-      _dvc_global_adj_1D_ptr,
-      _dvc_global_adj_1D,
-      _dvc_global_inv_adj_1D_ptr,
-      _dvc_global_inv_adj_1D,
-      _dvc_tmp_picked_adj,
-      _dvc_tmp_picked_inv_adj,
-      _dvc_picked_adj,
-      _dvc_picked_inv_adj,    
-      _dvc_level,
-      _dvc_update);
-    cudaCheckErrors("_gpu_insertion_kl_warp failed");  
-  } else { // DAG_KERNEL == 2
-    // 一個 block 負責一個 enode
-    _gpu_insertion_kl_block<<<_num_ende, NUM_THREAD_DAG_CONSTR>>>(
-      is_td,
-      _num_ende,
-      _dvc_picked_endes,
-      _dvc_global_adj_1D_ptr,
-      _dvc_global_adj_1D,
-      _dvc_global_inv_adj_1D_ptr,
-      _dvc_global_inv_adj_1D,
-      _dvc_tmp_picked_adj,
-      _dvc_tmp_picked_inv_adj,
-      _dvc_picked_adj,
-      _dvc_picked_inv_adj,
-      _dvc_level,
-      _dvc_new_inserted,
-      _dvc_update);
-    cudaCheckErrors("_gpu_insertion_kl_block failed");
-  }
-
-  cudaMemcpy(&updated, _dvc_update, 1*sizeof(bool), cudaMemcpyDeviceToHost);
-
-  return updated;
-}
-
-__global__ void _gpu_intersection(const uint32_t num_ende,
-  uint32_t* dvc_from_roots,
-  uint32_t* dvc_to_leaves,
-  uint32_t* dvc_in_subgraph)
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num_ende) return;
-  dvc_in_subgraph[t_idx] = dvc_from_roots[t_idx] && dvc_to_leaves[t_idx];
-}
-
-void G_EXT::_gpu_clear_redundant_endes() 
-{
-  // 1. reachable from _roots
-  _gpu_mark_reachable(
-    _roots,
-    _dvc_roots,
-    _dvc_global_adj_1D,
-    _dvc_global_adj_1D_ptr,
-    _dvc_picked_adj,
-    _dvc_from_roots);
-
-  // // 2. can reach _leaves
-  // _gpu_mark_reachable(
-  //   _leaves,
-  //   _dvc_leaves,
-  //   _dvc_global_inv_adj_1D,
-  //   _dvc_global_inv_adj_1D_ptr,
-  //   _dvc_picked_inv_adj,
-  //   _dvc_from_leaves);
-
-  // // 3. intersection
-  // int blocks = (_num_ende + threads - 1) / threads;
-  // _gpu_intersection<<<blocks,threads>>>(
-  //   _num_ende, 
-  //   _dvc_from_roots, 
-  //   _dvc_from_leaves, 
-  //   _dvc_in_subgraph);
-  // cudaCheckErrors("_gpu_intersection failed");
-}
-
-__global__ void _init_q2(const uint32_t sz, 
-  const uint32_t* starts,
-  const uint32_t* dvc_picked_endes,
-  uint32_t* visited,
-  uint32_t* q,
-  uint32_t* q_sz)
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= sz) return;
-  
-  const uint32_t s = starts[t_idx];
-  if (dvc_picked_endes[s] && !visited[s]) {
-    q[t_idx] = s;
-    visited[s] = true;
-  }
-  if (t_idx == 0) 
-    *q_sz = sz;
-}
-
-__global__ void _gpu_mark_reachable_kl(const uint32_t num,
-  const uint32_t* dvc_global_adj_1D_ptr,
-  const uint32_t* dvc_global_adj_1D,
-  const uint32_t* dvc_picked_adj,
-  uint32_t* dvc_visited,
-  uint32_t* q_sp, 
-  uint32_t* q,
-  uint32_t* q_sz)
-{
-  uint32_t t_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (t_idx >= num) return;
-
-  uint32_t u = q[*q_sp + t_idx];
-  for (uint32_t k = dvc_global_adj_1D_ptr[u]; k < dvc_global_adj_1D_ptr[u+1]; k++) {
-    if (!dvc_picked_adj[k]) continue;
-    const uint32_t v = dvc_global_adj_1D[k];
-    uint32_t old = atomicCAS(&dvc_visited[v], 0u, 1u); // 0: false; 1: true
-    if (old == 0u) {
-      uint32_t pos = atomicAdd(q_sz, 1);
-      q[pos] = v;
-    }     
-  }
-}
-
-void G_EXT::_gpu_mark_reachable(
-  const std::vector<uint32_t>& starts_v,
-  const uint32_t* starts,
-  const uint32_t* global_adj_1D,
-  const uint32_t* global_adj_1D_ptr,
-  const uint32_t* picked_adj,
-  uint32_t* visited)
-{
-  cudaMemset(_dvc_q, 0, _num_ende*sizeof(uint32_t));
-  cudaMemset(_dvc_q_sz, 0, 1*sizeof(uint32_t));
-  cudaMemset(_dvc_q_sp, 0, 1*sizeof(uint32_t));
-
-  // init queue
-  const uint32_t start_N = starts_v.size();
-  int blocks = (start_N + threads - 1) / threads;
-  _init_q2<<<blocks,threads>>>(start_N, 
-    starts,
-    _dvc_picked_endes,
-    visited,
-    _dvc_q, 
-    _dvc_q_sz);
-  cudaCheckErrors("_init_q2 failed");
-
-  // Actually is BFS
-  uint32_t q_sz = start_N;
-  uint32_t q_sp = 0;
-  uint32_t num = q_sz - q_sp;
-
-  while (num > 0) {
-    cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice); // start point
-    blocks = (num + threads - 1) / threads;
-
-    _gpu_mark_reachable_kl<<<blocks, threads>>>(
-      num,
-      global_adj_1D_ptr,
-      global_adj_1D,
-      picked_adj,
-      visited,
-      _dvc_q_sp, 
-      _dvc_q,
-      _dvc_q_sz);
-    cudaCheckErrors("_gpu_mark_reachable_kl failed");
-
-    cudaMemcpy(&q_sz, _dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    q_sp += num;
-    num = q_sz - q_sp;
-  }
-}
-
-void G_EXT::_copy_pickedende_back(std::vector<bool>& picked_endes_tmp)
-{
-  std::vector<uint32_t> tmp; tmp.resize(_num_ende, 0);
-  picked_endes_tmp.assign(_num_ende, false);
-  cudaMemcpy(tmp.data(), _dvc_picked_endes, _num_ende*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-  for (uint32_t i = 0; i < _num_ende; i++) {
-    if (tmp[i]) {
-      picked_endes_tmp[i] = true;
-    }
-  }
-}
-
-void G_EXT::_copy_best_ende_of_ecls_back(std::vector<uint32_t>& best_ende_of_ecls)
-{
-  cudaMemcpy(best_ende_of_ecls.data(), _dvc_best_ende_of_ecls, best_ende_of_ecls.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost);
-}
-
 
 // =========================== ILP Solver functions =========================== // 
 
@@ -3966,67 +2311,3 @@ void G_EXT::_print_levelization(
   printf("\n"); 
 }
 
-
-#ifdef DUMP_NEW_JSON
-  #include <random>
-  #include <fstream>
-  #include <iomanip>
-  #include <nlohmann/json.hpp>
-
-  void G_EXT::_dump_to_egg_json(
-    const std::string& out_path,
-    uint32_t num_ecls,
-    uint32_t num_ende,
-    const std::vector<std::string>& ende_name,
-    const std::vector<std::string>& ende_op,
-    const std::vector<float>& ende_cost,
-    const std::vector<uint32_t>& ende_ecls,
-    const std::vector<uint32_t>& ende_child,
-    const std::vector<uint32_t>& ende_child_ptr,
-    const std::vector<uint32_t>& root_eclass_id)
-  {
-    std::vector<std::vector<uint32_t>> ecls_its_ende(num_ecls);
-    for (uint32_t i = 0; i < num_ende; ++i) {
-      ecls_its_ende[ende_ecls[i]].push_back(i);
-    }
-
-    nlohmann::json j_out; nlohmann::json j_nodes; std::mt19937 rng(42); 
-
-    for (uint32_t ende = 0; ende < num_ende; ++ende) {
-      std::string node_name = ende_name[ende];
-
-      nlohmann::json node_json;
-      node_json["op"] = ende_op[ende];
-      node_json["cost"] = ende_cost[ende];
-
-      node_json["eclass"] = std::to_string(ende_ecls[ende]);
-
-      std::vector<std::string> children;
-      for (uint32_t k = ende_child_ptr[ende]; k < ende_child_ptr[ende + 1]; ++k) {
-        uint32_t child_ecls = ende_child[k];
-
-        if (ecls_its_ende[child_ecls].empty()) continue;
-
-        std::uniform_int_distribution<size_t> dist(0, ecls_its_ende[child_ecls].size() - 1);
-        uint32_t rep_ende = ecls_its_ende[child_ecls][dist(rng)];
-
-        children.push_back(ende_name[rep_ende]);
-      }
-
-      node_json["children"] = children;
-      j_nodes[node_name] = node_json;
-    }
-
-    std::vector<std::string> root_eclasses;
-    for (uint32_t r : root_eclass_id) {
-      root_eclasses.push_back(std::to_string(r));
-    }
-
-    j_out["nodes"] = j_nodes;
-    j_out["root_eclasses"] = root_eclasses;
-
-    std::ofstream ofs(out_path);
-    ofs << std::setw(2) << j_out << std::endl;
-    std::cout << "[INFO] Wrote egg-compatible JSON to: " << out_path << std::endl;
-  }
-#endif

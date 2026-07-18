@@ -22,15 +22,28 @@ int main(int argc, char *argv[]) {
   
   // === Parse arguments ===
   std::string input_path = argv[1];
-  int DAG_KERNEL = (argc > 2) ? std::stoi(argv[2]) : 0;
-  int NUM_THREAD_DAG_CONSTR = (argc > 3) ? std::stoi(argv[3]) : 256;
-  // int EXTEND_MUL = (argc > 4) ? std::stoi(argv[4]) : 128;
+  int dag_kernel_value = (argc > 2) ? std::stoi(argv[2]) : 0;
 
+  if (dag_kernel_value < 0 || dag_kernel_value > 2) {
+    std::cerr
+      << "Invalid DAG_KERNEL: " << dag_kernel_value << "\n"
+      << "Valid values are:\n"
+      << "  0: Thread\n"
+      << "  1: Warp\n"
+      << "  2: Block\n";
+    return 1;
+  }
+
+  DagKernel dag_kernel = static_cast<DagKernel>(dag_kernel_value);
+
+  uint32_t num_thread_dag_constr = (argc > 3)
+      ? static_cast<uint32_t>(std::stoul(argv[3]))
+      : 1u;
+  
   std::cout << "-------------------------------------\n";
   std::cout << "Input file: " << input_path << "\n";
-  std::cout << "DAG_KERNEL: " << DAG_KERNEL << "\n";
-  std::cout << "NUM_THREAD_DAG_CONSTR: " << NUM_THREAD_DAG_CONSTR << "\n";
-  // std::cout << "EXTEND_MUL: " << EXTEND_MUL << "\n";
+  std::cout << "DAG_KERNEL: " << dag_kernel_value << "\n";
+  std::cout << "NUM_THREAD_DAG_CONSTR: " << num_thread_dag_constr << "\n";  
   std::cout << "-------------------------------------\n";
 
 
@@ -42,12 +55,8 @@ int main(int argc, char *argv[]) {
   duration_read = end - start;
   std::cout << "Read Time: " << g_ext.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
-
-    // (use ILP, ILP tim limit (sec), DAG_KERNEL, NUM_THREAD_DAG_CONSTR)
-    // g_ext.run(false, 360, DAG_KERNEL, NUM_THREAD_DAG_CONSTR);
-    g_ext.run(true, 360, DAG_KERNEL, NUM_THREAD_DAG_CONSTR);
-
-
+  // (use ILP, ILP tim limit (sec), DAG_KERNEL, NUM_THREAD_DAG_CONSTR)
+  g_ext.run(true, 360, dag_kernel, num_thread_dag_constr);    
 
   return 0;
 }
