@@ -95,18 +95,14 @@ public:
         picked_endes_tmp); 
     }
 
-    // // GPU version starts
-    // auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
-    // printf("GPU version cost:\n\tunder tree code model = %.2lf, \
-    //   \n\tunder DAG cost model = %.2lf\n", 
-    //   best_tree_cost_gpu, dag_cost_gpu);
-    //   // auto t_parse_start = std::chrono::high_resolution_clock::now();
-    // _copy_pickedende_back(picked_endes);
-    // _copy_best_ende_of_ecls_back(best_ende_of_ecls);
-    //   // auto t_parse_end = std::chrono::high_resolution_clock::now();
-    //   // std::chrono::duration<double> d = t_parse_end - t_parse_start;
-    //   // std::cout << "D2H_runtime: " << round_to((d.count()) * 1000, 0.001) << " (ms)\n";
-    // cudaDeviceSynchronize();
+    // GPU version starts
+    auto [best_tree_cost_gpu, dag_cost_gpu] = _gpu_tree_construction();
+    printf("GPU version cost:\n\tunder tree code model = %.2lf, \
+      \n\tunder DAG cost model = %.2lf\n", 
+      best_tree_cost_gpu, dag_cost_gpu);
+    _copy_pickedende_back(picked_endes);
+    _copy_best_ende_of_ecls_back(best_ende_of_ecls);
+    cudaDeviceSynchronize();
     
     // _gpu_DAG_construction(); 
     // if (ILP_solver) {
