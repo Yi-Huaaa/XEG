@@ -49,7 +49,7 @@
 namespace {
 
 constexpr uint32_t kGpuReachabilityThreads = 256u;
-constexpr uint32_t kGpuDagBatchSize = 1024u;
+constexpr uint32_t kGpuDagBatchSize = 512u;
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -2709,33 +2709,173 @@ void G_EXT::_gpu_free_dag_buffers() noexcept
   cuda_free_and_null(_dvc_dag_new_inserted);
 }
 
+// void G_EXT::_gpu_DAG_construction()
+// {
+//   float gpu_dag_core_time_ms = 0.0f;
+//   float gpu_filter_time_ms = 0.0f;
+//   float gpu_dag_total_time_ms = 0.0f;
+
+//   cudaEvent_t start_gpu = nullptr;
+//   cudaEvent_t after_core_gpu = nullptr;
+//   cudaEvent_t stop_gpu = nullptr;
+
+//   CUDA_CHECK(cudaEventCreate(&start_gpu));
+//   CUDA_CHECK(cudaEventCreate(&after_core_gpu));
+//   CUDA_CHECK(cudaEventCreate(&stop_gpu));
+
+//   CUDA_CHECK(cudaEventRecord(start_gpu));
+
+//   // ============================================================
+//   // Algorithm 2 initialization
+//   //
+//   // Initial top-down levelization of the GPU tree result.
+//   // States 1 and 2 are both treated as selected.
+//   // At Step 3 only states 0 and 1 exist.
+//   // ============================================================
+//   _gpu_dag_levelize(true);
+
+//   uint32_t host_u0 = 1u;
+//   uint32_t outer_iteration = 0u;
+
+//   while (host_u0 > 0u) {
+//     CUDA_CHECK(cudaMemset(
+//       _dvc_dag_u0,
+//       0,
+//       sizeof(uint32_t)));
+
+//     // Bottom-up insertion
+//     _gpu_dag_insert_thread(false);
+
+//     uint32_t bottom_up_proposed = 0u;
+
+//     CUDA_CHECK(cudaMemcpy(
+//       &bottom_up_proposed,
+//       _dvc_dag_u0,
+//       sizeof(uint32_t),
+//       cudaMemcpyDeviceToHost));
+
+//     _gpu_dag_levelize(false);
+//     _gpu_dag_finalize_tentative(false);
+
+//     uint32_t bottom_up_survived = 0u;
+
+//     CUDA_CHECK(cudaMemcpy(
+//       &bottom_up_survived,
+//       _dvc_dag_u0,
+//       sizeof(uint32_t),
+//       cudaMemcpyDeviceToHost));
+
+//     // Top-down insertion
+//     _gpu_dag_insert_thread(true);
+
+//     uint32_t after_top_down_insert = 0u;
+
+//     CUDA_CHECK(cudaMemcpy(
+//       &after_top_down_insert,
+//       _dvc_dag_u0,
+//       sizeof(uint32_t),
+//       cudaMemcpyDeviceToHost));
+
+//     _gpu_dag_levelize(true);
+//     _gpu_dag_finalize_tentative(true);
+
+//     uint32_t after_both_phases = 0u;
+
+//     CUDA_CHECK(cudaMemcpy(
+//       &after_both_phases,
+//       _dvc_dag_u0,
+//       sizeof(uint32_t),
+//       cudaMemcpyDeviceToHost));
+
+//     const uint32_t top_down_proposed =
+//       after_top_down_insert - bottom_up_survived;
+
+//     const uint32_t top_down_survived =
+//       after_both_phases - bottom_up_survived;
+
+//     const uint32_t bottom_up_rollback =
+//       bottom_up_proposed - bottom_up_survived;
+
+//     const uint32_t top_down_rollback =
+//       top_down_proposed - top_down_survived;
+
+//     host_u0 = after_both_phases;
+//     ++outer_iteration;
+
+//     printf(
+//       "[GPU DAG] iteration=%u, "
+//       "BU proposed=%u survived=%u rollback=%u, "
+//       "TD proposed=%u survived=%u rollback=%u, "
+//       "total survived=%u\n",
+//       outer_iteration,
+//       bottom_up_proposed,
+//       bottom_up_survived,
+//       bottom_up_rollback,
+//       top_down_proposed,
+//       top_down_survived,
+//       top_down_rollback,
+//       after_both_phases);
+//   }
+
+//   // Match the CPU post-processing semantics:
+//   //
+//   // keep _dvc_picked_endes unchanged and separately mark
+//   // selected e-nodes that lie on a selected
+//   // root-to-global-leaf path.
+//   CUDA_CHECK(cudaEventRecord(after_core_gpu));
+//   _gpu_filter_root_to_leaf();
+
+//   CUDA_CHECK(cudaEventRecord(stop_gpu));
+//   CUDA_CHECK(cudaEventSynchronize(stop_gpu));
+
+//   CUDA_CHECK(cudaEventElapsedTime(
+//     &gpu_dag_core_time_ms,
+//     start_gpu,
+//     after_core_gpu));
+
+//   CUDA_CHECK(cudaEventElapsedTime(
+//     &gpu_filter_time_ms,
+//     after_core_gpu,
+//     stop_gpu));
+
+//   CUDA_CHECK(cudaEventElapsedTime(
+//     &gpu_dag_total_time_ms,
+//     start_gpu,
+//     stop_gpu));
+
+//   CUDA_CHECK(cudaEventDestroy(start_gpu));
+//   CUDA_CHECK(cudaEventDestroy(after_core_gpu));
+//   CUDA_CHECK(cudaEventDestroy(stop_gpu));
+
+//   printf(
+//     "GPU DAG core runtime: %.2f (ms)\n",
+//     gpu_dag_core_time_ms);
+
+//   printf(
+//     "GPU root-to-leaf filtering runtime: %.2f (ms)\n",
+//     gpu_filter_time_ms);
+
+//   printf(
+//     "GPU DAG total runtime: %.2f (ms)\n",
+//     gpu_dag_total_time_ms);
+// }
+
 void G_EXT::_gpu_DAG_construction()
 {
-  float gpu_dag_core_time_ms = 0.0f;
-  float gpu_filter_time_ms = 0.0f;
   float gpu_dag_total_time_ms = 0.0f;
 
   cudaEvent_t start_gpu = nullptr;
-  cudaEvent_t after_core_gpu = nullptr;
   cudaEvent_t stop_gpu = nullptr;
 
   CUDA_CHECK(cudaEventCreate(&start_gpu));
-  CUDA_CHECK(cudaEventCreate(&after_core_gpu));
   CUDA_CHECK(cudaEventCreate(&stop_gpu));
 
   CUDA_CHECK(cudaEventRecord(start_gpu));
 
-  // ============================================================
-  // Algorithm 2 initialization
-  //
   // Initial top-down levelization of the GPU tree result.
-  // States 1 and 2 are both treated as selected.
-  // At Step 3 only states 0 and 1 exist.
-  // ============================================================
   _gpu_dag_levelize(true);
 
   uint32_t host_u0 = 1u;
-  uint32_t outer_iteration = 0u;
 
   while (host_u0 > 0u) {
     CUDA_CHECK(cudaMemset(
@@ -2743,100 +2883,32 @@ void G_EXT::_gpu_DAG_construction()
       0,
       sizeof(uint32_t)));
 
-    // Bottom-up insertion
+    // Bottom-up insertion.
+    // All insertion batches finish before levelization.
     _gpu_dag_insert_thread(false);
-
-    uint32_t bottom_up_proposed = 0u;
-
-    CUDA_CHECK(cudaMemcpy(
-      &bottom_up_proposed,
-      _dvc_dag_u0,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
 
     _gpu_dag_levelize(false);
     _gpu_dag_finalize_tentative(false);
 
-    uint32_t bottom_up_survived = 0u;
-
-    CUDA_CHECK(cudaMemcpy(
-      &bottom_up_survived,
-      _dvc_dag_u0,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
-
-    // Top-down insertion
+    // Top-down insertion.
+    // _dvc_dag_u0 continues accumulating surviving insertions.
     _gpu_dag_insert_thread(true);
-
-    uint32_t after_top_down_insert = 0u;
-
-    CUDA_CHECK(cudaMemcpy(
-      &after_top_down_insert,
-      _dvc_dag_u0,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
 
     _gpu_dag_levelize(true);
     _gpu_dag_finalize_tentative(true);
 
-    uint32_t after_both_phases = 0u;
-
+    // Required for outer-loop termination.
     CUDA_CHECK(cudaMemcpy(
-      &after_both_phases,
+      &host_u0,
       _dvc_dag_u0,
       sizeof(uint32_t),
       cudaMemcpyDeviceToHost));
-
-    const uint32_t top_down_proposed =
-      after_top_down_insert - bottom_up_survived;
-
-    const uint32_t top_down_survived =
-      after_both_phases - bottom_up_survived;
-
-    const uint32_t bottom_up_rollback =
-      bottom_up_proposed - bottom_up_survived;
-
-    const uint32_t top_down_rollback =
-      top_down_proposed - top_down_survived;
-
-    host_u0 = after_both_phases;
-    ++outer_iteration;
-
-    printf(
-      "[GPU DAG] iteration=%u, "
-      "BU proposed=%u survived=%u rollback=%u, "
-      "TD proposed=%u survived=%u rollback=%u, "
-      "total survived=%u\n",
-      outer_iteration,
-      bottom_up_proposed,
-      bottom_up_survived,
-      bottom_up_rollback,
-      top_down_proposed,
-      top_down_survived,
-      top_down_rollback,
-      after_both_phases);
   }
 
-  // Match the CPU post-processing semantics:
-  //
-  // keep _dvc_picked_endes unchanged and separately mark
-  // selected e-nodes that lie on a selected
-  // root-to-global-leaf path.
-  CUDA_CHECK(cudaEventRecord(after_core_gpu));
   _gpu_filter_root_to_leaf();
 
   CUDA_CHECK(cudaEventRecord(stop_gpu));
   CUDA_CHECK(cudaEventSynchronize(stop_gpu));
-
-  CUDA_CHECK(cudaEventElapsedTime(
-    &gpu_dag_core_time_ms,
-    start_gpu,
-    after_core_gpu));
-
-  CUDA_CHECK(cudaEventElapsedTime(
-    &gpu_filter_time_ms,
-    after_core_gpu,
-    stop_gpu));
 
   CUDA_CHECK(cudaEventElapsedTime(
     &gpu_dag_total_time_ms,
@@ -2844,16 +2916,7 @@ void G_EXT::_gpu_DAG_construction()
     stop_gpu));
 
   CUDA_CHECK(cudaEventDestroy(start_gpu));
-  CUDA_CHECK(cudaEventDestroy(after_core_gpu));
   CUDA_CHECK(cudaEventDestroy(stop_gpu));
-
-  printf(
-    "GPU DAG core runtime: %.2f (ms)\n",
-    gpu_dag_core_time_ms);
-
-  printf(
-    "GPU root-to-leaf filtering runtime: %.2f (ms)\n",
-    gpu_filter_time_ms);
 
   printf(
     "GPU DAG total runtime: %.2f (ms)\n",
