@@ -1,0 +1,35 @@
+{
+  "nodes": {
+    "n0": {
+      "op": "root",
+      "cost": 1,
+      "eclass": "c0",
+      "children": ["n1", "n3", "n4"]
+    },
+    "n1": {
+      "op": "middle",
+      "cost": 1,
+      "eclass": "c1",
+      "children": ["n2"]
+    },
+    "n2": {
+      "op": "leaf",
+      "cost": 1,
+      "eclass": "c2",
+      "children": []
+    },
+    "n3": {
+      "op": "candidate_a",
+      "cost": 1,
+      "eclass": "c3",
+      "children": ["n2", "n4"]
+    },
+    "n4": {
+      "op": "candidate_b",
+      "cost": 1,
+      "eclass": "c4",
+      "children": ["n2", "n3"]
+    }
+  },
+  "root_eclasses": ["c0"]
+}

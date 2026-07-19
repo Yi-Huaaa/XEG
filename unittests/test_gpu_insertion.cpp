@@ -284,3 +284,133 @@ TEST_CASE(
 
   DOCTEST_CHECK(result.u0 == 0u);
 }
+
+TEST_CASE(
+  "GPU insertion handles multiple independent candidates")
+{
+  G_EXT g_ext;
+
+  g_ext.read(
+    test_data_path(
+      "parallel_candidates.json"));
+
+  const std::vector<uint32_t> initial_state = {
+    1u, 1u, 1u, 0u, 0u
+  };
+
+  const std::vector<int> initial_level = {
+    0, 1, 2, -1, -1
+  };
+
+  const auto result =
+    g_ext.unittest_gpu_insert_once(
+      initial_state,
+      initial_level,
+      false);
+
+  check_vector_equal(
+    result.selected_state,
+    std::vector<uint32_t>{
+      1u, 1u, 1u, 2u, 2u
+    });
+
+  check_vector_equal(
+    result.level,
+    std::vector<int>{
+      0, 1, 2, 1, 1
+    });
+
+  DOCTEST_CHECK(result.u0 == 2u);
+}
+
+
+TEST_CASE(
+  "GPU live optimistic insertion permits valid concurrent outcomes")
+{
+  G_EXT g_ext;
+
+  g_ext.read(
+    test_data_path(
+      "optimistic_cycle_pair.json"));
+
+  const std::vector<uint32_t> initial_state = {
+    1u, 1u, 1u, 0u, 0u
+  };
+
+  const std::vector<int> initial_level = {
+    0, 1, 2, -1, -1
+  };
+
+  const auto result =
+    g_ext.unittest_gpu_insert_once(
+      initial_state,
+      initial_level,
+      false);
+
+  DOCTEST_REQUIRE(
+    result.selected_state.size() == 5u);
+
+  DOCTEST_REQUIRE(
+    result.level.size() == 5u);
+
+  // Original stable nodes must remain unchanged.
+  DOCTEST_CHECK(
+    result.selected_state[0] == 1u);
+
+  DOCTEST_CHECK(
+    result.selected_state[1] == 1u);
+
+  DOCTEST_CHECK(
+    result.selected_state[2] == 1u);
+
+  DOCTEST_CHECK(result.level[0] == 0);
+  DOCTEST_CHECK(result.level[1] == 1);
+  DOCTEST_CHECK(result.level[2] == 2);
+
+  // Finalization has not run yet. Each candidate is either
+  // still unselected or has tentatively published state 2.
+  const bool candidate_3_has_valid_state =
+    result.selected_state[3] == 0u ||
+    result.selected_state[3] == 2u;
+
+  const bool candidate_4_has_valid_state =
+    result.selected_state[4] == 0u ||
+    result.selected_state[4] == 2u;
+
+  DOCTEST_CHECK(
+    candidate_3_has_valid_state);
+
+  DOCTEST_CHECK(
+    candidate_4_has_valid_state);
+
+  const uint32_t tentative_count =
+    static_cast<uint32_t>(
+      result.selected_state[3] == 2u)
+    +
+    static_cast<uint32_t>(
+      result.selected_state[4] == 2u);
+
+  // At least one candidate must publish. Depending on the
+  // thread interleaving, either one or both can publish.
+  DOCTEST_CHECK(tentative_count >= 1u);
+  DOCTEST_CHECK(tentative_count <= 2u);
+
+  DOCTEST_CHECK(
+    result.u0 == tentative_count);
+
+  for (size_t candidate = 3;
+       candidate <= 4;
+       ++candidate) {
+    DOCTEST_CAPTURE(candidate);
+
+    if (result.selected_state[candidate] == 2u) {
+      DOCTEST_CHECK(
+        result.level[candidate] == 1);
+    }
+    else {
+      DOCTEST_CHECK(
+        result.level[candidate] == -1);
+    }
+  }
+}
+
