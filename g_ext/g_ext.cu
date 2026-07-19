@@ -2024,6 +2024,51 @@ __global__ void _gpu_dag_reverse_level_kl(
     num_levels - level[u] - 1;
 }
 
+// Finalize tentative nodes after one complete Kahn
+// levelization pass.
+//
+// selected_state:
+//   0 = unselected
+//   1 = stable selected
+//   2 = tentative selected
+//
+// A tentative node with residual degree greater than zero
+// was not processed by Kahn levelization and is rolled back.
+//
+// A tentative node with zero residual degree survived and
+// becomes a stable selected node.
+__global__ void _gpu_dag_finalize_tentative_kl(
+  const uint32_t num_endes,
+  uint32_t* selected_state,
+  const uint32_t* residual_degree,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t u =
+    blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  if (selected_state[u] != 2u) {
+    return;
+  }
+
+  if (residual_degree[u] == 0u) {
+    selected_state[u] = 1u;
+    return;
+  }
+
+  selected_state[u] = 0u;
+  level[u] = -1;
+
+  // u0 counts successful insertions in the current outer
+  // iteration. A rolled-back tentative insertion must be
+  // removed from that count.
+  atomicSub(u0, 1u);
+}
+
 void G_EXT::_gpu_dag_levelize(
   const bool is_top_down)
 {
@@ -2152,6 +2197,43 @@ void G_EXT::_gpu_dag_levelize(
     cudaCheckErrors(
       "_gpu_dag_reverse_level_kl failed");
   }
+}
+
+void G_EXT::_gpu_dag_finalize_tentative(
+  const bool is_top_down_levelization)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_indegree == nullptr ||
+      _dvc_inv_indegree == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_finalize_tentative requires "
+      "initialized GPU DAG buffers");
+  }
+
+  const uint32_t* residual_degree =
+    is_top_down_levelization
+      ? _dvc_indegree
+      : _dvc_inv_indegree;
+
+  const uint32_t blocks =
+    (_num_ende + threads - 1) / threads;
+
+  _gpu_dag_finalize_tentative_kl
+    <<<blocks, threads>>>(
+      _num_ende,
+      _dvc_picked_endes,
+      residual_degree,
+      _dvc_level,
+      _dvc_dag_u0);
+
+  cudaCheckErrors(
+    "_gpu_dag_finalize_tentative_kl failed");
 }
 
 void G_EXT::_gpu_allocate_dag_buffers()
@@ -2476,6 +2558,141 @@ G_EXT::unittest_gpu_insert_once(
       _dvc_level,
       static_cast<size_t>(_num_ende) *
         sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.u0,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    _gpu_free_dag_buffers();
+
+    return result;
+  }
+  catch (...) {
+    _gpu_free_dag_buffers();
+    throw;
+  }
+}
+
+G_EXT::GpuFinalizeResult
+G_EXT::unittest_gpu_levelize_and_finalize(
+  const std::vector<uint32_t>& selected_state,
+  const bool is_top_down_levelization,
+  const uint32_t initial_u0)
+{
+  if (_ende_name.empty()) {
+    throw std::logic_error(
+      "unittest_gpu_levelize_and_finalize "
+      "requires read() to be called first");
+  }
+
+  if (selected_state.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "selected_state size does not match "
+      "the number of e-nodes");
+  }
+
+  uint32_t tentative_count = 0u;
+
+  for (uint32_t ende = 0;
+       ende < _num_ende;
+       ++ende) {
+    if (selected_state[ende] > 2u) {
+      throw std::invalid_argument(
+        "selected_state must contain only "
+        "0, 1, or 2");
+    }
+
+    if (selected_state[ende] == 2u) {
+      ++tentative_count;
+    }
+  }
+
+  // Every rolled-back tentative node decrements u0 once.
+  // Therefore initial_u0 must be large enough to represent
+  // all currently tentative nodes.
+  if (initial_u0 < tentative_count) {
+    throw std::invalid_argument(
+      "initial_u0 must be at least the number "
+      "of tentative state-2 nodes");
+  }
+
+  // GPU tree construction currently owns allocation of
+  // the immutable CSR and shared working buffers.
+  if (_dvc_picked_endes == nullptr) {
+    (void)_gpu_tree_construction();
+  }
+
+  _gpu_allocate_dag_buffers();
+  _gpu_initialize_dag_buffers();
+
+  try {
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_picked_endes,
+      selected_state.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyHostToDevice));
+
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_dag_u0,
+      &initial_u0,
+      sizeof(uint32_t),
+      cudaMemcpyHostToDevice));
+
+    _gpu_dag_levelize(
+      is_top_down_levelization);
+
+    _gpu_dag_finalize_tentative(
+      is_top_down_levelization);
+
+    GpuFinalizeResult result;
+
+    result.selected_state.resize(
+      _num_ende,
+      0u);
+
+    result.residual_degree.resize(
+      _num_ende,
+      0u);
+
+    result.level.resize(
+      _num_ende,
+      -1);
+
+    CUDA_CHECK(cudaMemcpy(
+      result.selected_state.data(),
+      _dvc_picked_endes,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    const uint32_t* degree_device =
+      is_top_down_levelization
+        ? _dvc_indegree
+        : _dvc_inv_indegree;
+
+    CUDA_CHECK(cudaMemcpy(
+      result.residual_degree.data(),
+      degree_device,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.level.data(),
+      _dvc_level,
+      static_cast<size_t>(_num_ende) *
+        sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.num_levels,
+      _dvc_max_level,
+      sizeof(int),
       cudaMemcpyDeviceToHost));
 
     CUDA_CHECK(cudaMemcpy(

@@ -67,6 +67,14 @@ public:
     uint32_t u0 = 0;
   };
 
+  struct GpuFinalizeResult {
+    std::vector<uint32_t> selected_state;
+    std::vector<uint32_t> residual_degree;
+    std::vector<int> level;
+    int num_levels = 0;
+    uint32_t u0 = 0;
+  };  
+  
   struct GpuLevelizationResult {
     std::vector<uint32_t> selected_state;
     std::vector<uint32_t> residual_degree;
@@ -81,6 +89,12 @@ public:
     const std::vector<uint32_t>& selected_state,
     const std::vector<int>& level,
     bool is_top_down_insertion);
+
+  GpuFinalizeResult
+  unittest_gpu_levelize_and_finalize(
+    const std::vector<uint32_t>& selected_state,
+    bool is_top_down_levelization,
+    uint32_t initial_u0);
 
   GpuLevelizationResult unittest_gpu_levelize(
     const std::vector<uint32_t>& selected_state,
@@ -320,6 +334,17 @@ private:
   //   proposed level = min child level - 1
   void _gpu_dag_insert_thread(
     bool is_top_down_insertion);  
+  // Finalize tentative state-2 nodes after levelization.
+  //
+  // residual degree == 0:
+  //   state 2 -> state 1
+  //
+  // residual degree > 0:
+  //   state 2 -> state 0
+  //   level = -1
+  //   u0--
+  void _gpu_dag_finalize_tentative(
+    bool is_top_down_levelization);    
   // GPU Kahn levelization using one append-only queue.
   // is_top_down = true:
   //   roots -> leaves
