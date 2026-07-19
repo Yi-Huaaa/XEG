@@ -1660,11 +1660,270 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   return std::make_pair(tree_ret, dag_ret);
 }
 
+// Construct the selected-subgraph degree and append all
+// zero-degree selected e-nodes to the initial queue.
+//
+// selected_state:
+//   0 = unselected
+//   1 = stable selected
+//   2 = tentative selected
+//
+// Any nonzero state participates in levelization.
+__global__ void _gpu_dag_init_levelization_queue_kl(
+  const uint32_t num_endes,
+  const uint32_t* selected_state,
+  const uint32_t* incoming_adj,
+  const uint32_t* incoming_adj_ptr,
+  uint32_t* degree,
+  int* level,
+  uint32_t* queue,
+  uint32_t* queue_size)
+{
+  const uint32_t u = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  level[u] = -1;
+
+  if (selected_state[u] == 0u) {
+    degree[u] = 0u;
+    return;
+  }
+
+  uint32_t selected_degree = 0u;
+
+  const uint32_t start = incoming_adj_ptr[u];
+  const uint32_t end = incoming_adj_ptr[u + 1];
+
+  for (uint32_t k = start; k < end; ++k) {
+    const uint32_t neighbor = incoming_adj[k];
+
+    if (selected_state[neighbor] != 0u) {
+      ++selected_degree;
+    }
+  }
+
+  degree[u] = selected_degree;
+
+  if (selected_degree == 0u) {
+    const uint32_t position =
+      atomicAdd(queue_size, 1u);
+
+    queue[position] = u;
+  }
+}
+
+// Process exactly one queue slice:
+//
+//   queue[queue_begin,
+//         queue_begin + queue_count)
+//
+// Newly discovered zero-degree nodes are appended after the
+// current queue tail and are processed by the next launch.
+__global__ void _gpu_dag_process_queue_slice_kl(
+  const uint32_t queue_count,
+  const uint32_t queue_begin,
+  uint32_t* queue,
+  uint32_t* queue_size,
+  const uint32_t* selected_state,
+  const uint32_t* traversal_adj,
+  const uint32_t* traversal_adj_ptr,
+  uint32_t* degree,
+  int* level,
+  const int current_level)
+{
+  const uint32_t index =
+    blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (index >= queue_count) {
+    return;
+  }
+
+  const uint32_t u =
+    queue[queue_begin + index];
+
+  level[u] = current_level;
+
+  const uint32_t start = traversal_adj_ptr[u];
+  const uint32_t end = traversal_adj_ptr[u + 1];
+
+  for (uint32_t k = start; k < end; ++k) {
+    const uint32_t v = traversal_adj[k];
+
+    if (selected_state[v] == 0u) {
+      continue;
+    }
+
+    const uint32_t old_degree =
+      atomicSub(&degree[v], 1u);
+
+    if (old_degree == 1u) {
+      const uint32_t position =
+        atomicAdd(queue_size, 1u);
+
+      queue[position] = v;
+    }
+  }
+}
+
+__global__ void _gpu_dag_reverse_level_kl(
+  const uint32_t num_endes,
+  const uint32_t* selected_state,
+  int* level,
+  const int num_levels)
+{
+  const uint32_t u =
+    blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (u >= num_endes ||
+      selected_state[u] == 0u ||
+      level[u] < 0) {
+    return;
+  }
+
+  level[u] =
+    num_levels - level[u] - 1;
+}
+
+void G_EXT::_gpu_dag_levelize(
+  const bool is_top_down)
+{
+  // Top-down:
+  //   incoming dependencies = selected parents
+  //   traversal = parent -> child
+  //
+  // Bottom-up:
+  //   incoming dependencies = selected children
+  //   traversal = child -> parent
+
+  const uint32_t* incoming_adj =
+    is_top_down
+      ? _dvc_global_inv_adj_1D
+      : _dvc_global_adj_1D;
+
+  const uint32_t* incoming_adj_ptr =
+    is_top_down
+      ? _dvc_global_inv_adj_1D_ptr
+      : _dvc_global_adj_1D_ptr;
+
+  const uint32_t* traversal_adj =
+    is_top_down
+      ? _dvc_global_adj_1D
+      : _dvc_global_inv_adj_1D;
+
+  const uint32_t* traversal_adj_ptr =
+    is_top_down
+      ? _dvc_global_adj_1D_ptr
+      : _dvc_global_inv_adj_1D_ptr;
+
+  uint32_t* degree =
+    is_top_down
+      ? _dvc_indegree
+      : _dvc_inv_indegree;
+
+  // Reuse the append-only queue allocated by tree construction.
+  // Queue contents do not need to be cleared.
+  CUDA_CHECK(cudaMemset(
+    _dvc_q_sz,
+    0,
+    sizeof(uint32_t)));
+
+  const uint32_t node_blocks =
+    (_num_ende + threads - 1) / threads;
+
+  _gpu_dag_init_levelization_queue_kl
+    <<<node_blocks, threads>>>(
+      _num_ende,
+      _dvc_picked_endes,
+      incoming_adj,
+      incoming_adj_ptr,
+      degree,
+      _dvc_level,
+      _dvc_q,
+      _dvc_q_sz);
+
+  cudaCheckErrors(
+    "_gpu_dag_init_levelization_queue_kl failed");
+
+  uint32_t queue_size = 0u;
+
+  CUDA_CHECK(cudaMemcpy(
+    &queue_size,
+    _dvc_q_sz,
+    sizeof(uint32_t),
+    cudaMemcpyDeviceToHost));
+
+  uint32_t queue_begin = 0u;
+  uint32_t queue_count = queue_size;
+  int current_level = 0;
+
+  while (queue_count > 0u) {
+    const uint32_t queue_blocks =
+      (queue_count + threads - 1) / threads;
+
+    _gpu_dag_process_queue_slice_kl
+      <<<queue_blocks, threads>>>(
+        queue_count,
+        queue_begin,
+        _dvc_q,
+        _dvc_q_sz,
+        _dvc_picked_endes,
+        traversal_adj,
+        traversal_adj_ptr,
+        degree,
+        _dvc_level,
+        current_level);
+
+    cudaCheckErrors(
+      "_gpu_dag_process_queue_slice_kl failed");
+
+    uint32_t new_queue_size = 0u;
+
+    CUDA_CHECK(cudaMemcpy(
+      &new_queue_size,
+      _dvc_q_sz,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    if (new_queue_size > _num_ende) {
+      throw std::logic_error(
+        "GPU DAG levelization queue exceeded number of e-nodes");
+    }
+
+    queue_begin += queue_count;
+    queue_size = new_queue_size;
+    queue_count = queue_size - queue_begin;
+    ++current_level;
+  }
+
+  CUDA_CHECK(cudaMemcpy(
+    _dvc_max_level,
+    &current_level,
+    sizeof(int),
+    cudaMemcpyHostToDevice));
+
+  if (!is_top_down && current_level > 0) {
+    _gpu_dag_reverse_level_kl
+      <<<node_blocks, threads>>>(
+        _num_ende,
+        _dvc_picked_endes,
+        _dvc_level,
+        current_level);
+
+    cudaCheckErrors(
+      "_gpu_dag_reverse_level_kl failed");
+  }
+}
+
 void G_EXT::_gpu_allocate_dag_buffers()
 {
   // Validate the shared buffers produced by GPU tree construction.
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_q == nullptr ||
+      _dvc_q_sz == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||      
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_indegree == nullptr ||
       _dvc_inv_indegree == nullptr ||
@@ -1695,10 +1954,6 @@ void G_EXT::_gpu_allocate_dag_buffers()
   cuda_malloc_array(_dvc_dag_insert_decision, _num_ende);
   cuda_malloc_array(_dvc_dag_candidate_level, _num_ende);
   cuda_malloc_array(_dvc_dag_u0, 1);
-  cuda_malloc_array(_dvc_dag_frontier, _num_ende);
-  cuda_malloc_array(_dvc_dag_next_frontier, _num_ende);
-  cuda_malloc_array(_dvc_dag_frontier_size, 1);
-  cuda_malloc_array(_dvc_dag_next_frontier_size, 1);
 }
 
 void G_EXT::_gpu_initialize_dag_buffers()
@@ -1706,11 +1961,8 @@ void G_EXT::_gpu_initialize_dag_buffers()
   if (_dvc_dag_new_inserted == nullptr ||
       _dvc_dag_insert_decision == nullptr ||
       _dvc_dag_candidate_level == nullptr ||
-      _dvc_dag_u0 == nullptr ||
-      _dvc_dag_frontier == nullptr ||
-      _dvc_dag_next_frontier == nullptr ||
-      _dvc_dag_frontier_size == nullptr ||
-      _dvc_dag_next_frontier_size == nullptr) {
+      _dvc_dag_u0 == nullptr) 
+  {
     throw std::logic_error(
       "_gpu_initialize_dag_buffers called before DAG allocation");
   }
@@ -1744,14 +1996,6 @@ void G_EXT::_gpu_initialize_dag_buffers()
   CUDA_CHECK(cudaMemset(_dvc_dag_u0, 0,
     sizeof(uint32_t)));
 
-  // Only frontier sizes need initialization.
-  // Frontier contents will be overwritten before they are read.
-  CUDA_CHECK(cudaMemset(_dvc_dag_frontier_size, 0,
-    sizeof(uint32_t)));
-
-  CUDA_CHECK(cudaMemset(_dvc_dag_next_frontier_size, 0,
-    sizeof(uint32_t)));
-
   // Reuse the filtering buffers already allocated by tree construction.
   CUDA_CHECK(cudaMemset(_dvc_from_roots, 0,
     static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
@@ -1765,12 +2009,6 @@ void G_EXT::_gpu_initialize_dag_buffers()
 
 void G_EXT::_gpu_free_dag_buffers() noexcept
 {
-  cuda_free_and_null(_dvc_dag_next_frontier_size);
-  cuda_free_and_null(_dvc_dag_frontier_size);
-
-  cuda_free_and_null(_dvc_dag_next_frontier);
-  cuda_free_and_null(_dvc_dag_frontier);
-
   cuda_free_and_null(_dvc_dag_u0);
   cuda_free_and_null(_dvc_dag_candidate_level);
   cuda_free_and_null(_dvc_dag_insert_decision);
@@ -1780,31 +2018,103 @@ void G_EXT::_gpu_free_dag_buffers() noexcept
 void G_EXT::_gpu_DAG_construction()
 {
   float gpu_dag_time_ms = 0.0f;
+
   cudaEvent_t start_gpu = nullptr;
   cudaEvent_t stop_gpu = nullptr;
 
-  cudaEventCreate(&start_gpu);
-  cudaEventCreate(&stop_gpu);
+  CUDA_CHECK(cudaEventCreate(&start_gpu));
+  CUDA_CHECK(cudaEventCreate(&stop_gpu));
 
-  cudaEventRecord(start_gpu);
+  CUDA_CHECK(cudaEventRecord(start_gpu));
 
-  // Intentionally empty during Step 1 and Step 2.
-  // _dvc_picked_endes therefore remains the tree solution.
+  // ============================================================
+  // Algorithm 2 initialization
+  //
+  // Initial top-down levelization of the GPU tree result.
+  // States 1 and 2 are both treated as selected.
+  // At Step 3 only states 0 and 1 exist.
+  // ============================================================
+  _gpu_dag_levelize(true);
 
-  cudaEventRecord(stop_gpu);
-  cudaEventSynchronize(stop_gpu);
-  cudaEventElapsedTime(
+  uint32_t host_u0 = 1u;
+  uint32_t outer_iteration = 0u;
+
+  while (host_u0 > 0u) {
+    // Counts tentative insertions that survive rollback during
+    // this complete TD/BU outer iteration.
+    CUDA_CHECK(cudaMemset(
+      _dvc_dag_u0,
+      0,
+      sizeof(uint32_t)));
+
+    // ----------------------------------------------------------
+    // TODO Step 4:
+    // Bottom-up insertion using the current TD levels.
+    //
+    // Successful candidates:
+    //   state 0 -> state 2
+    // ----------------------------------------------------------
+
+    // ----------------------------------------------------------
+    // Bottom-up levelization.
+    //
+    // Step 4 will subsequently finalize tentative nodes:
+    //   residual degree > 0: state 2 -> state 0
+    //   residual degree = 0: state 2 -> state 1
+    // ----------------------------------------------------------
+    _gpu_dag_levelize(false);
+
+    // TODO Step 4:
+    // finalize / rollback tentative nodes
+
+    // ----------------------------------------------------------
+    // TODO Step 4:
+    // Top-down insertion using the current BU levels.
+    // ----------------------------------------------------------
+
+    // ----------------------------------------------------------
+    // Top-down levelization.
+    // ----------------------------------------------------------
+    _gpu_dag_levelize(true);
+
+    // TODO Step 4:
+    // finalize / rollback tentative nodes
+
+    CUDA_CHECK(cudaMemcpy(
+      &host_u0,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    ++outer_iteration;
+
+#ifdef PRINT_LOG
+    printf(
+      "[GPU DAG] iteration=%u, surviving insertions=%u\n",
+      outer_iteration,
+      host_u0);
+#endif
+  }
+
+  // TODO Step 5:
+  // root-to-leaf filtering
+
+  CUDA_CHECK(cudaEventRecord(stop_gpu));
+  CUDA_CHECK(cudaEventSynchronize(stop_gpu));
+
+  CUDA_CHECK(cudaEventElapsedTime(
     &gpu_dag_time_ms,
     start_gpu,
-    stop_gpu);
+    stop_gpu));
 
-  cudaEventDestroy(start_gpu);
-  cudaEventDestroy(stop_gpu);
+  CUDA_CHECK(cudaEventDestroy(start_gpu));
+  CUDA_CHECK(cudaEventDestroy(stop_gpu));
 
   printf(
     "GPU DAG construction runtime: %.2f (ms)\n",
     gpu_dag_time_ms);
 }
+
 
 void G_EXT::_copy_pickedende_back(
   std::vector<bool>& picked_endes_out)

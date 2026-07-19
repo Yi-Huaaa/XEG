@@ -160,7 +160,6 @@ public:
     _gpu_free_dag_buffers();
     // GPU version ends    
 
-    // _gpu_DAG_construction(); 
     // if (ILP_solver) {
     //   _cpsat_solver(
     //     ILP_time_limit, 
@@ -174,6 +173,22 @@ public:
     // }
     // // GPU version ends
   }
+  
+  // ============================================================
+  // Unit-test interface
+  // ============================================================
+
+  struct GpuLevelizationResult {
+    std::vector<uint32_t> selected_state;
+    std::vector<uint32_t> residual_degree;
+    std::vector<int> level;
+    int num_levels;
+  };
+
+  GpuLevelizationResult unittest_gpu_levelize(
+    const std::vector<uint32_t>& selected_state,
+    bool is_top_down);
+
 
 private:
   /* Read */
@@ -272,6 +287,12 @@ private:
       const std::vector<bool>& picked_endes);
   // GPU version
   void _gpu_DAG_construction();
+  // GPU Kahn levelization using one append-only queue.
+  // is_top_down = true:
+  //   roots -> leaves
+  // is_top_down = false:
+  //   leaves -> roots, followed by level reversal
+  void _gpu_dag_levelize(bool is_top_down);
 
   // GPU DAG memory lifecycle
   void _gpu_allocate_dag_buffers();
@@ -435,13 +456,6 @@ private:
   uint32_t* _dvc_dag_insert_decision = nullptr;
   int* _dvc_dag_candidate_level = nullptr;
   uint32_t* _dvc_dag_u0 = nullptr;
-
-  uint32_t* _dvc_dag_frontier = nullptr;
-  uint32_t* _dvc_dag_next_frontier = nullptr;
-  uint32_t* _dvc_dag_frontier_size = nullptr;
-  uint32_t* _dvc_dag_next_frontier_size = nullptr;
-    
-  
 }; // class G_EXT
 
 
