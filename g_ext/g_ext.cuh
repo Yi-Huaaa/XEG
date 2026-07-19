@@ -48,6 +48,23 @@ public:
     _read_input(input_path); 
   }
 
+  // ============================================================
+  // Unit-test interface
+  //
+  // These wrappers expose selected internal GPU operations for
+  // deterministic unit tests. They are not used by run().
+  // ============================================================
+  struct GpuLevelizationResult {
+    std::vector<uint32_t> selected_state;
+    std::vector<uint32_t> residual_degree;
+    std::vector<int> level;
+    int num_levels = 0;
+  };
+
+  GpuLevelizationResult unittest_gpu_levelize(
+    const std::vector<uint32_t>& selected_state,
+    bool is_top_down);  
+
   /* run */
   double round_to(double value, double precision = 1.0) {
     return std::round(value / precision) * precision;
@@ -173,22 +190,6 @@ public:
     // }
     // // GPU version ends
   }
-  
-  // ============================================================
-  // Unit-test interface
-  // ============================================================
-
-  struct GpuLevelizationResult {
-    std::vector<uint32_t> selected_state;
-    std::vector<uint32_t> residual_degree;
-    std::vector<int> level;
-    int num_levels;
-  };
-
-  GpuLevelizationResult unittest_gpu_levelize(
-    const std::vector<uint32_t>& selected_state,
-    bool is_top_down);
-
 
 private:
   /* Read */

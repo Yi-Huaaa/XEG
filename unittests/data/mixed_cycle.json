@@ -1,0 +1,47 @@
+{
+  "nodes": {
+    "n0": {
+      "op": "node0",
+      "cost": 1,
+      "eclass": "c0",
+      "children": ["n1", "n2"]
+    },
+    "n1": {
+      "op": "node1",
+      "cost": 1,
+      "eclass": "c1",
+      "children": ["n3"]
+    },
+    "n2": {
+      "op": "node2",
+      "cost": 1,
+      "eclass": "c2",
+      "children": ["n3"]
+    },
+    "n3": {
+      "op": "node3",
+      "cost": 1,
+      "eclass": "c3",
+      "children": []
+    },
+    "n4": {
+      "op": "node4",
+      "cost": 1,
+      "eclass": "c4",
+      "children": ["n5"]
+    },
+    "n5": {
+      "op": "node5",
+      "cost": 1,
+      "eclass": "c5",
+      "children": ["n6"]
+    },
+    "n6": {
+      "op": "node6",
+      "cost": 1,
+      "eclass": "c6",
+      "children": ["n4"]
+    }
+  },
+  "root_eclasses": ["c0", "c4"]
+}

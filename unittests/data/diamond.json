@@ -1,0 +1,29 @@
+{
+  "nodes": {
+    "n0": {
+      "op": "node0",
+      "cost": 1,
+      "eclass": "c0",
+      "children": ["n1", "n2"]
+    },
+    "n1": {
+      "op": "node1",
+      "cost": 1,
+      "eclass": "c1",
+      "children": ["n3"]
+    },
+    "n2": {
+      "op": "node2",
+      "cost": 1,
+      "eclass": "c2",
+      "children": ["n3"]
+    },
+    "n3": {
+      "op": "node3",
+      "cost": 1,
+      "eclass": "c3",
+      "children": []
+    }
+  },
+  "root_eclasses": ["c0"]
+}

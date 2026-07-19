@@ -2116,6 +2116,112 @@ void G_EXT::_gpu_DAG_construction()
 }
 
 
+G_EXT::GpuLevelizationResult
+G_EXT::unittest_gpu_levelize(
+  const std::vector<uint32_t>& selected_state,
+  const bool is_top_down)
+{
+  if (_ende_name.empty()) {
+    throw std::logic_error(
+      "unittest_gpu_levelize requires read() "
+      "to be called first");
+  }
+
+  if (selected_state.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "selected_state size does not match "
+      "the number of e-nodes");
+  }
+
+  for (uint32_t ende = 0;
+       ende < _num_ende;
+       ++ende) {
+    if (selected_state[ende] > 2u) {
+      throw std::invalid_argument(
+        "selected_state must contain only "
+        "0, 1, or 2");
+    }
+  }
+
+  // The current implementation allocates and initializes all
+  // shared GPU graph buffers inside GPU tree construction.
+  //
+  // Only run it once for this G_EXT object. Subsequent calls
+  // reuse the same immutable CSR and shared buffers.
+  if (_dvc_picked_endes == nullptr) {
+    (void)_gpu_tree_construction();
+  }
+
+  _gpu_allocate_dag_buffers();
+  _gpu_initialize_dag_buffers();
+
+  try {
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_picked_endes,
+      selected_state.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyHostToDevice));
+
+    _gpu_dag_levelize(is_top_down);
+
+    GpuLevelizationResult result;
+
+    result.selected_state.resize(
+      _num_ende,
+      0u);
+
+    result.residual_degree.resize(
+      _num_ende,
+      0u);
+
+    result.level.resize(
+      _num_ende,
+      -1);
+
+    CUDA_CHECK(cudaMemcpy(
+      result.selected_state.data(),
+      _dvc_picked_endes,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    const uint32_t* degree_device =
+      is_top_down
+        ? _dvc_indegree
+        : _dvc_inv_indegree;
+
+    CUDA_CHECK(cudaMemcpy(
+      result.residual_degree.data(),
+      degree_device,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.level.data(),
+      _dvc_level,
+      static_cast<size_t>(_num_ende) *
+        sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.num_levels,
+      _dvc_max_level,
+      sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    _gpu_free_dag_buffers();
+
+    return result;
+  }
+  catch (...) {
+    _gpu_free_dag_buffers();
+    throw;
+  }
+}
+
 void G_EXT::_copy_pickedende_back(
   std::vector<bool>& picked_endes_out)
 {
