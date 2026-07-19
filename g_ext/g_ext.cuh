@@ -265,39 +265,11 @@ public:
     }
 
 
-
-
-
     _gpu_allocate_dag_buffers();
     _gpu_initialize_dag_buffers();
 
-    // Temporary diagnostic:
-    // run GPU DAG construction from the CPU tree.
-    std::vector<uint32_t> cpu_tree_state(
-      _num_ende,
-      0u);
-
-    for (uint32_t ende = 0u;
-         ende < _num_ende;
-         ++ende) {
-      cpu_tree_state[ende] =
-        picked_endes_tmp[ende] ? 1u : 0u;
-    }
-
-    const cudaError_t copy_err = cudaMemcpy(
-      _dvc_picked_endes,
-      cpu_tree_state.data(),
-      static_cast<size_t>(_num_ende) *
-        sizeof(uint32_t),
-      cudaMemcpyHostToDevice);
-
-    if (copy_err != cudaSuccess) {
-      throw std::runtime_error(
-        std::string(
-          "Failed to copy CPU tree to GPU: ") +
-        cudaGetErrorString(copy_err));
-    }
-
+    // _dvc_picked_endes still contains the GPU tree produced by
+    // _gpu_tree_construction().
     _gpu_DAG_construction();
 
     if (ILP_solver) {
@@ -488,7 +460,12 @@ private:
       const std::vector<bool>& picked_endes);
   // GPU version
   void _gpu_DAG_construction();
-  // Thread-level live optimistic insertion.
+  // Thread-level batched live optimistic insertion.
+  //
+  // One call scans all e-node slots through sequential kernel
+  // launches of kGpuDagBatchSize slots. Earlier batches publish
+  // tentative state-2 nodes that later batches may observe.
+  // Levelization/finalization occurs only after all batches finish.
   //
   // is_top_down_insertion = true:
   //   require at least one selected parent
