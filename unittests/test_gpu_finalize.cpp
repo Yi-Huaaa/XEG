@@ -25,11 +25,11 @@ void check_vector_equal(
   const std::vector<T>& actual,
   const std::vector<T>& expected)
 {
-  REQUIRE(actual.size() == expected.size());
+  DOCTEST_REQUIRE(actual.size() == expected.size());
 
   for (size_t i = 0; i < actual.size(); ++i) {
-    CAPTURE(i);
-    CHECK(actual[i] == expected[i]);
+    DOCTEST_CAPTURE(i);
+    DOCTEST_CHECK(actual[i] == expected[i]);
   }
 }
 
@@ -37,8 +37,8 @@ void check_all_zero(
   const std::vector<uint32_t>& values)
 {
   for (size_t i = 0; i < values.size(); ++i) {
-    CAPTURE(i);
-    CHECK(values[i] == 0u);
+    DOCTEST_CAPTURE(i);
+    DOCTEST_CHECK(values[i] == 0u);
   }
 }
 
@@ -53,7 +53,7 @@ TEST_CASE(
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
 
@@ -77,11 +77,11 @@ TEST_CASE(
     check_all_zero(
       result.residual_degree);
 
-    CHECK(result.num_levels == 3);
+    DOCTEST_CHECK(result.num_levels == 3);
 
     // The tentative node survived, so it remains counted
     // as a successful insertion.
-    CHECK(result.u0 == 1u);
+    DOCTEST_CHECK(result.u0 == 1u);
   }
 }
 
@@ -111,7 +111,7 @@ TEST_CASE(
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
 
@@ -136,10 +136,10 @@ TEST_CASE(
       result.level,
       expected_level);
 
-    CHECK(result.num_levels == 3);
+    DOCTEST_CHECK(result.num_levels == 3);
 
     // All three tentative cycle nodes were rolled back.
-    CHECK(result.u0 == 0u);
+    DOCTEST_CHECK(result.u0 == 0u);
   }
 }
 
@@ -165,7 +165,7 @@ TEST_CASE(
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
 
@@ -190,10 +190,10 @@ TEST_CASE(
       result.level,
       expected_level);
 
-    CHECK(result.num_levels == 0);
+    DOCTEST_CHECK(result.num_levels == 0);
 
     // Only the state-2 node was rolled back.
-    CHECK(result.u0 == 0u);
+    DOCTEST_CHECK(result.u0 == 0u);
   }
 }
 
@@ -206,7 +206,7 @@ TEST_CASE(
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
 
@@ -225,6 +225,6 @@ TEST_CASE(
 
     // One current tentative node rolled back.
     // Three previously counted surviving insertions remain.
-    CHECK(result.u0 == 3u);
+    DOCTEST_CHECK(result.u0 == 3u);
   }
 }

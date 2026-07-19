@@ -25,11 +25,11 @@ void check_vector_equal(
   const std::vector<T>& actual,
   const std::vector<T>& expected)
 {
-  REQUIRE(actual.size() == expected.size());
+  DOCTEST_REQUIRE(actual.size() == expected.size());
 
   for (size_t i = 0; i < actual.size(); ++i) {
-    CAPTURE(i);
-    CHECK(actual[i] == expected[i]);
+    DOCTEST_CAPTURE(i);
+    DOCTEST_CHECK(actual[i] == expected[i]);
   }
 }
 
@@ -66,7 +66,7 @@ TEST_CASE(
     result.level,
     std::vector<int>{0, 1});
 
-  CHECK(result.u0 == 1u);
+  DOCTEST_CHECK(result.u0 == 1u);
 }
 
 
@@ -100,7 +100,7 @@ TEST_CASE(
     result.level,
     std::vector<int>{0, 1});
 
-  CHECK(result.u0 == 1u);
+  DOCTEST_CHECK(result.u0 == 1u);
 }
 
 
@@ -108,7 +108,7 @@ TEST_CASE(
   "GPU insertion rejects nodes without selected neighbors")
 {
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
 
@@ -137,7 +137,7 @@ TEST_CASE(
       result.level,
       initial_level);
 
-    CHECK(result.u0 == 0u);
+    DOCTEST_CHECK(result.u0 == 0u);
   }
 }
 
@@ -154,7 +154,7 @@ TEST_CASE(
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
 
@@ -175,7 +175,7 @@ TEST_CASE(
       result.level,
       initial_level);
 
-    CHECK(result.u0 == 0u);
+    DOCTEST_CHECK(result.u0 == 0u);
   }
 }
 
@@ -192,7 +192,7 @@ TEST_CASE(
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
 
@@ -213,7 +213,7 @@ TEST_CASE(
       result.level,
       initial_level);
 
-    CHECK(result.u0 == 0u);
+    DOCTEST_CHECK(result.u0 == 0u);
   }
 }
 
@@ -248,7 +248,7 @@ TEST_CASE(
     result.level,
     std::vector<int>{0, 1});
 
-  CHECK(result.u0 == 1u);
+  DOCTEST_CHECK(result.u0 == 1u);
 }
 
 
@@ -282,5 +282,5 @@ TEST_CASE(
     result.level,
     initial_level);
 
-  CHECK(result.u0 == 0u);
+  DOCTEST_CHECK(result.u0 == 0u);
 }

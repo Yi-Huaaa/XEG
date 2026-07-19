@@ -21,11 +21,11 @@ void check_vector_equal(
   const std::vector<T>& actual,
   const std::vector<T>& expected)
 {
-  REQUIRE(actual.size() == expected.size());
+  DOCTEST_REQUIRE(actual.size() == expected.size());
 
   for (size_t i = 0; i < actual.size(); ++i) {
-    CAPTURE(i);
-    CHECK(actual[i] == expected[i]);
+    DOCTEST_CAPTURE(i);
+    DOCTEST_CHECK(actual[i] == expected[i]);
   }
 }
 
@@ -33,8 +33,8 @@ void check_all_zero(
   const std::vector<uint32_t>& values)
 {
   for (size_t i = 0; i < values.size(); ++i) {
-    CAPTURE(i);
-    CHECK(values[i] == 0u);
+    DOCTEST_CAPTURE(i);
+    DOCTEST_CHECK(values[i] == 0u);
   }
 }
 
@@ -52,7 +52,7 @@ TEST_CASE("GPU levelization handles a chain")
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
     g_ext.read(test_data_path("chain.json"));
@@ -73,7 +73,7 @@ TEST_CASE("GPU levelization handles a chain")
     check_all_zero(
       result.residual_degree);
 
-    CHECK(result.num_levels == 3);
+    DOCTEST_CHECK(result.num_levels == 3);
   }
 }
 
@@ -89,7 +89,7 @@ TEST_CASE("GPU levelization handles a diamond")
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
     g_ext.read(test_data_path("diamond.json"));
@@ -110,7 +110,7 @@ TEST_CASE("GPU levelization handles a diamond")
     check_all_zero(
       result.residual_degree);
 
-    CHECK(result.num_levels == 3);
+    DOCTEST_CHECK(result.num_levels == 3);
   }
 }
 
@@ -131,7 +131,7 @@ TEST_CASE("GPU levelization ignores unselected e-nodes")
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
     g_ext.read(test_data_path("diamond.json"));
@@ -152,7 +152,7 @@ TEST_CASE("GPU levelization ignores unselected e-nodes")
     check_all_zero(
       result.residual_degree);
 
-    CHECK(result.num_levels == 3);
+    DOCTEST_CHECK(result.num_levels == 3);
   }
 }
 
@@ -168,7 +168,7 @@ TEST_CASE("GPU levelization treats state 2 as selected")
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
     g_ext.read(test_data_path("chain.json"));
@@ -189,7 +189,7 @@ TEST_CASE("GPU levelization treats state 2 as selected")
     check_all_zero(
       result.residual_degree);
 
-    CHECK(result.num_levels == 3);
+    DOCTEST_CHECK(result.num_levels == 3);
   }
 }
 
@@ -205,7 +205,7 @@ TEST_CASE("GPU levelization leaves cycle nodes unresolved")
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
     g_ext.read(test_data_path("cycle.json"));
@@ -223,16 +223,16 @@ TEST_CASE("GPU levelization leaves cycle nodes unresolved")
       result.level,
       expected_level);
 
-    REQUIRE(result.residual_degree.size() == 3);
+    DOCTEST_REQUIRE(result.residual_degree.size() == 3);
 
     for (size_t i = 0;
          i < result.residual_degree.size();
          ++i) {
-      CAPTURE(i);
-      CHECK(result.residual_degree[i] > 0u);
+      DOCTEST_CAPTURE(i);
+      DOCTEST_CHECK(result.residual_degree[i] > 0u);
     }
 
-    CHECK(result.num_levels == 0);
+    DOCTEST_CHECK(result.num_levels == 0);
   }
 }
 
@@ -252,7 +252,7 @@ TEST_CASE(
   };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
     g_ext.read(
@@ -281,7 +281,7 @@ TEST_CASE(
     check_all_zero(
       result.residual_degree);
 
-    CHECK(result.num_levels == 4);
+    DOCTEST_CHECK(result.num_levels == 4);
   }
 }
 
@@ -302,7 +302,7 @@ TEST_CASE(
     };
 
   for (const bool is_top_down : {true, false}) {
-    CAPTURE(is_top_down);
+    DOCTEST_CAPTURE(is_top_down);
 
     G_EXT g_ext;
     g_ext.read(
@@ -325,6 +325,6 @@ TEST_CASE(
       result.residual_degree,
       expected_residual_degree);
 
-    CHECK(result.num_levels == 3);
+    DOCTEST_CHECK(result.num_levels == 3);
   }
 }

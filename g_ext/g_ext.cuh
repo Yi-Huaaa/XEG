@@ -75,6 +75,14 @@ public:
     uint32_t u0 = 0;
   };  
   
+  struct GpuDagConstructionResult {
+    std::vector<uint32_t> selected_state;
+    std::vector<uint32_t> residual_degree;
+    std::vector<int> level;
+    int num_levels = 0;
+    uint32_t final_u0 = 0;
+  };
+
   struct GpuLevelizationResult {
     std::vector<uint32_t> selected_state;
     std::vector<uint32_t> residual_degree;
@@ -95,6 +103,10 @@ public:
     const std::vector<uint32_t>& selected_state,
     bool is_top_down_levelization,
     uint32_t initial_u0);
+
+  GpuDagConstructionResult
+  unittest_gpu_construct_dag(
+    const std::vector<uint32_t>& selected_state);
 
   GpuLevelizationResult unittest_gpu_levelize(
     const std::vector<uint32_t>& selected_state,
@@ -185,30 +197,17 @@ public:
       best_tree_cost_gpu,
       dag_cost_gpu);
 
-    // Preserve GPU tree result independently from the CPU oracle.
-    std::vector<bool> gpu_tree_selected;
-    std::vector<uint32_t> gpu_best_ende_of_ecls;
-
-    _copy_pickedende_back(gpu_tree_selected);
-    _copy_best_ende_of_ecls_back(gpu_best_ende_of_ecls);
-
-    // Allocate and initialize only DAG-construction memory.
+    // Allocate and initialize DAG-construction memory.
+    //
+    // _dvc_picked_endes already contains the GPU tree result
+    // produced by Algorithm 1.
     _gpu_allocate_dag_buffers();
     _gpu_initialize_dag_buffers();
 
-    // Currently this is allowed to be a no-op stub.
+    // Expand the GPU tree result into an acyclic selected DAG.
     _gpu_DAG_construction();
 
-    std::vector<bool> gpu_dag_selected;
-    _copy_pickedende_back(gpu_dag_selected);
-
-    // 之後為了效能要刪掉
-    if (gpu_tree_selected != gpu_dag_selected) {
-      throw std::logic_error(
-        "No-op GPU DAG construction modified the GPU tree solution");
-    }
-
-    // Only free memory owned exclusively by the new DAG implementation.
+    // Only free memory owned exclusively by GPU DAG construction.
     _gpu_free_dag_buffers();
     // GPU version ends    
 

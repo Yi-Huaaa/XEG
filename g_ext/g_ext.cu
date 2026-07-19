@@ -2359,45 +2359,62 @@ void G_EXT::_gpu_DAG_construction()
   uint32_t outer_iteration = 0u;
 
   while (host_u0 > 0u) {
-    // Counts tentative insertions that survive rollback during
-    // this complete TD/BU outer iteration.
+    // Count insertions that survive rollback across both
+    // insertion phases of this outer iteration.
     CUDA_CHECK(cudaMemset(
       _dvc_dag_u0,
       0,
       sizeof(uint32_t)));
 
-    // ----------------------------------------------------------
-    // TODO Step 4:
-    // Bottom-up insertion using the current TD levels.
+    // ==========================================================
+    // Phase A
+    //
+    // Current levels were produced by top-down levelization.
+    //
+    // Perform bottom-up insertion:
+    //   require at least one selected child
+    //   proposed level = min child level - 1
     //
     // Successful candidates:
     //   state 0 -> state 2
-    // ----------------------------------------------------------
+    //   u0++
+    // ==========================================================
+    _gpu_dag_insert_thread(false);
 
-    // ----------------------------------------------------------
-    // Bottom-up levelization.
+    // Recompute levels from leaves toward roots.
     //
-    // Step 4 will subsequently finalize tentative nodes:
-    //   residual degree > 0: state 2 -> state 0
-    //   residual degree = 0: state 2 -> state 1
-    // ----------------------------------------------------------
+    // Both stable state 1 and tentative state 2 nodes
+    // participate in levelization.
     _gpu_dag_levelize(false);
 
-    // TODO Step 4:
-    // finalize / rollback tentative nodes
+    // Tentative nodes:
+    //
+    //   residual degree == 0:
+    //     state 2 -> state 1
+    //
+    //   residual degree > 0:
+    //     state 2 -> state 0
+    //     level = -1
+    //     u0--
+    _gpu_dag_finalize_tentative(false);
 
-    // ----------------------------------------------------------
-    // TODO Step 4:
-    // Top-down insertion using the current BU levels.
-    // ----------------------------------------------------------
+    // ==========================================================
+    // Phase B
+    //
+    // Current levels were produced by bottom-up levelization.
+    //
+    // Perform top-down insertion:
+    //   require at least one selected parent
+    //   proposed level = max parent level + 1
+    // ==========================================================
+    _gpu_dag_insert_thread(true);
 
-    // ----------------------------------------------------------
-    // Top-down levelization.
-    // ----------------------------------------------------------
+    // Recompute levels from roots toward leaves.
     _gpu_dag_levelize(true);
 
-    // TODO Step 4:
-    // finalize / rollback tentative nodes
+    // Finalize or roll back candidates introduced by the
+    // second insertion phase.
+    _gpu_dag_finalize_tentative(true);
 
     CUDA_CHECK(cudaMemcpy(
       &host_u0,
@@ -2409,7 +2426,8 @@ void G_EXT::_gpu_DAG_construction()
 
 #ifdef PRINT_LOG
     printf(
-      "[GPU DAG] iteration=%u, surviving insertions=%u\n",
+      "[GPU DAG] iteration=%u, "
+      "surviving insertions=%u\n",
       outer_iteration,
       host_u0);
 #endif
@@ -2697,6 +2715,115 @@ G_EXT::unittest_gpu_levelize_and_finalize(
 
     CUDA_CHECK(cudaMemcpy(
       &result.u0,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    _gpu_free_dag_buffers();
+
+    return result;
+  }
+  catch (...) {
+    _gpu_free_dag_buffers();
+    throw;
+  }
+}
+
+G_EXT::GpuDagConstructionResult
+G_EXT::unittest_gpu_construct_dag(
+  const std::vector<uint32_t>& selected_state)
+{
+  if (_ende_name.empty()) {
+    throw std::logic_error(
+      "unittest_gpu_construct_dag requires "
+      "read() to be called first");
+  }
+
+  if (selected_state.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "selected_state size does not match "
+      "the number of e-nodes");
+  }
+
+  // Full DAG construction starts from the stable tree
+  // produced by Algorithm 1. State 2 must not be present
+  // before the first insertion phase.
+  for (uint32_t ende = 0;
+       ende < _num_ende;
+       ++ende) {
+    if (selected_state[ende] > 1u) {
+      throw std::invalid_argument(
+        "initial DAG construction state must "
+        "contain only 0 or 1");
+    }
+  }
+
+  // GPU tree construction currently owns allocation of
+  // immutable CSR and shared GPU working buffers.
+  if (_dvc_picked_endes == nullptr) {
+    (void)_gpu_tree_construction();
+  }
+
+  _gpu_allocate_dag_buffers();
+  _gpu_initialize_dag_buffers();
+
+  try {
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_picked_endes,
+      selected_state.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyHostToDevice));
+
+    _gpu_DAG_construction();
+
+    GpuDagConstructionResult result;
+
+    result.selected_state.resize(
+      _num_ende,
+      0u);
+
+    result.residual_degree.resize(
+      _num_ende,
+      0u);
+
+    result.level.resize(
+      _num_ende,
+      -1);
+
+    CUDA_CHECK(cudaMemcpy(
+      result.selected_state.data(),
+      _dvc_picked_endes,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    // _gpu_DAG_construction() finishes with top-down
+    // levelization, so _dvc_indegree contains the final
+    // top-down residual degree.
+    CUDA_CHECK(cudaMemcpy(
+      result.residual_degree.data(),
+      _dvc_indegree,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.level.data(),
+      _dvc_level,
+      static_cast<size_t>(_num_ende) *
+        sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.num_levels,
+      _dvc_max_level,
+      sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.final_u0,
       _dvc_dag_u0,
       sizeof(uint32_t),
       cudaMemcpyDeviceToHost));

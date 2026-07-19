@@ -26,11 +26,11 @@ void check_vector_equal(
   const std::vector<T>& actual,
   const std::vector<T>& expected)
 {
-  REQUIRE(actual.size() == expected.size());
+  DOCTEST_REQUIRE(actual.size() == expected.size());
 
   for (size_t i = 0; i < actual.size(); ++i) {
-    CAPTURE(i);
-    CHECK(actual[i] == expected[i]);
+    DOCTEST_CAPTURE(i);
+    DOCTEST_CHECK(actual[i] == expected[i]);
   }
 }
 
@@ -38,17 +38,17 @@ void check_csr_sorted_and_unique(
   const std::vector<uint32_t>& adjacency,
   const std::vector<uint32_t>& pointer)
 {
-  REQUIRE_FALSE(pointer.empty());
+  DOCTEST_REQUIRE_FALSE(pointer.empty());
 
-  CHECK(pointer.front() == 0u);
-  CHECK(
+  DOCTEST_CHECK(pointer.front() == 0u);
+  DOCTEST_CHECK(
     pointer.back()
     == static_cast<uint32_t>(adjacency.size()));
 
   for (size_t node = 0;
        node + 1 < pointer.size();
        ++node) {
-    CAPTURE(node);
+    DOCTEST_CAPTURE(node);
 
     const uint32_t begin_index =
       pointer[node];
@@ -56,8 +56,8 @@ void check_csr_sorted_and_unique(
     const uint32_t end_index =
       pointer[node + 1];
 
-    REQUIRE(begin_index <= end_index);
-    REQUIRE(end_index <= adjacency.size());
+    DOCTEST_REQUIRE(begin_index <= end_index);
+    DOCTEST_REQUIRE(end_index <= adjacency.size());
 
     const auto begin =
       adjacency.begin() + begin_index;
@@ -65,9 +65,9 @@ void check_csr_sorted_and_unique(
     const auto end =
       adjacency.begin() + end_index;
 
-    CHECK(std::is_sorted(begin, end));
+    DOCTEST_CHECK(std::is_sorted(begin, end));
 
-    CHECK(
+    DOCTEST_CHECK(
       std::adjacent_find(begin, end)
       == end);
   }
@@ -166,7 +166,7 @@ TEST_CASE(
   const auto csr =
     g_ext.unittest_get_csr_snapshot();
 
-  REQUIRE(
+  DOCTEST_REQUIRE(
     csr.forward_ptr.size()
     == csr.inverse_ptr.size());
 
@@ -182,10 +182,10 @@ TEST_CASE(
       const uint32_t v =
         csr.forward_adj[index];
 
-      CAPTURE(u);
-      CAPTURE(v);
+      DOCTEST_CAPTURE(u);
+      DOCTEST_CAPTURE(v);
 
-      REQUIRE(v < num_nodes);
+      DOCTEST_REQUIRE(v < num_nodes);
 
       const auto inverse_begin =
         csr.inverse_adj.begin()
@@ -195,7 +195,7 @@ TEST_CASE(
         csr.inverse_adj.begin()
         + csr.inverse_ptr[v + 1];
 
-      CHECK(
+      DOCTEST_CHECK(
         std::binary_search(
           inverse_begin,
           inverse_end,
@@ -212,10 +212,10 @@ TEST_CASE(
       const uint32_t u =
         csr.inverse_adj[index];
 
-      CAPTURE(u);
-      CAPTURE(v);
+      DOCTEST_CAPTURE(u);
+      DOCTEST_CAPTURE(v);
 
-      REQUIRE(u < num_nodes);
+      DOCTEST_REQUIRE(u < num_nodes);
 
       const auto forward_begin =
         csr.forward_adj.begin()
@@ -225,7 +225,7 @@ TEST_CASE(
         csr.forward_adj.begin()
         + csr.forward_ptr[u + 1];
 
-      CHECK(
+      DOCTEST_CHECK(
         std::binary_search(
           forward_begin,
           forward_end,
