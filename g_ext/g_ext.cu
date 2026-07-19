@@ -2115,6 +2115,39 @@ void G_EXT::_gpu_DAG_construction()
     gpu_dag_time_ms);
 }
 
+G_EXT::CsrGraphSnapshot
+G_EXT::unittest_get_csr_snapshot() const
+{
+  if (_ende_name.empty()) {
+    throw std::logic_error(
+      "unittest_get_csr_snapshot requires "
+      "read() to be called first");
+  }
+
+  if (_global_adj_1D_ptr.size()
+        != static_cast<size_t>(_num_ende) + 1 ||
+      _global_inv_adj_1D_ptr.size()
+        != static_cast<size_t>(_num_ende) + 1) {
+    throw std::logic_error(
+      "CSR pointer arrays are not initialized");
+  }
+
+  CsrGraphSnapshot result;
+
+  result.forward_adj =
+    _global_adj_1D;
+
+  result.forward_ptr =
+    _global_adj_1D_ptr;
+
+  result.inverse_adj =
+    _global_inv_adj_1D;
+
+  result.inverse_ptr =
+    _global_inv_adj_1D_ptr;
+
+  return result;
+}
 
 G_EXT::GpuLevelizationResult
 G_EXT::unittest_gpu_levelize(

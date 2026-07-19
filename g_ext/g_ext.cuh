@@ -54,6 +54,13 @@ public:
   // These wrappers expose selected internal GPU operations for
   // deterministic unit tests. They are not used by run().
   // ============================================================
+  struct CsrGraphSnapshot {
+    std::vector<uint32_t> forward_adj;
+    std::vector<uint32_t> forward_ptr;
+    std::vector<uint32_t> inverse_adj;
+    std::vector<uint32_t> inverse_ptr;
+  };
+
   struct GpuLevelizationResult {
     std::vector<uint32_t> selected_state;
     std::vector<uint32_t> residual_degree;
@@ -61,9 +68,12 @@ public:
     int num_levels = 0;
   };
 
+  CsrGraphSnapshot
+  unittest_get_csr_snapshot() const;
+
   GpuLevelizationResult unittest_gpu_levelize(
     const std::vector<uint32_t>& selected_state,
-    bool is_top_down);  
+    bool is_top_down);
 
   /* run */
   double round_to(double value, double precision = 1.0) {
