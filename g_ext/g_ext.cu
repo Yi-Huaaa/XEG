@@ -47,6 +47,9 @@
   } while (0)    
  
 namespace {
+
+constexpr uint32_t kGpuReachabilityThreads = 256u;
+
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
 {
@@ -2069,6 +2072,133 @@ __global__ void _gpu_dag_finalize_tentative_kl(
   atomicSub(u0, 1u);
 }
 
+// Seed an append-only reachability queue.
+//
+// Only selected start nodes participate. atomicCAS on
+// visited guarantees that each e-node is appended at most once,
+// even if the start list contains duplicates.
+__global__ void _gpu_reachability_seed_kl(
+  const uint32_t num_endes,
+  const uint32_t num_starts,
+  const uint32_t* starts,
+  const uint32_t* selected_state,
+  uint32_t* visited,
+  uint32_t* queue,
+  uint32_t* queue_size)
+{
+  const uint32_t index =
+    blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (index >= num_starts) {
+    return;
+  }
+
+  const uint32_t u = starts[index];
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  if (selected_state[u] == 0u) {
+    return;
+  }
+
+  if (atomicCAS(
+        &visited[u],
+        0u,
+        1u) == 0u) {
+    const uint32_t position =
+      atomicAdd(queue_size, 1u);
+
+    queue[position] = u;
+  }
+}
+
+
+// Process one append-only reachability queue slice:
+//
+//   queue[queue_begin,
+//         queue_begin + queue_count)
+//
+// Newly discovered selected nodes are appended after the
+// current queue tail. They are processed by the next launch.
+//
+// selected_state is immutable during root-to-leaf filtering,
+// so ordinary device loads are sufficient.
+__global__ void _gpu_reachability_process_queue_slice_kl(
+  const uint32_t queue_count,
+  const uint32_t queue_begin,
+  uint32_t* queue,
+  uint32_t* queue_size,
+  const uint32_t* selected_state,
+  const uint32_t* adjacency,
+  const uint32_t* adjacency_ptr,
+  uint32_t* visited)
+{
+  const uint32_t index =
+    blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (index >= queue_count) {
+    return;
+  }
+
+  const uint32_t u =
+    queue[queue_begin + index];
+
+  const uint32_t start =
+    adjacency_ptr[u];
+
+  const uint32_t end =
+    adjacency_ptr[u + 1u];
+
+  for (uint32_t k = start; k < end; ++k) {
+    const uint32_t v = adjacency[k];
+
+    if (selected_state[v] == 0u) {
+      continue;
+    }
+
+    // Only the first thread that changes visited[v]
+    // from 0 to 1 may append v to the queue.
+    if (atomicCAS(
+          &visited[v],
+          0u,
+          1u) == 0u) {
+      const uint32_t position =
+        atomicAdd(queue_size, 1u);
+
+      queue[position] = v;
+    }
+  }
+}
+
+
+// Match the CPU get_nodes_in_subgraph() semantics.
+//
+// Do not modify selected_state. The final filtered graph is
+// represented separately by in_subgraph.
+__global__ void _gpu_build_in_subgraph_kl(
+  const uint32_t num_endes,
+  const uint32_t* selected_state,
+  const uint32_t* from_roots,
+  const uint32_t* from_leaves,
+  uint32_t* in_subgraph)
+{
+  const uint32_t u =
+    blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  in_subgraph[u] =
+    selected_state[u] != 0u &&
+    from_roots[u] != 0u &&
+    from_leaves[u] != 0u
+      ? 1u
+      : 0u;
+}
+
 void G_EXT::_gpu_dag_levelize(
   const bool is_top_down)
 {
@@ -2236,6 +2366,238 @@ void G_EXT::_gpu_dag_finalize_tentative(
     "_gpu_dag_finalize_tentative_kl failed");
 }
 
+void G_EXT::_gpu_mark_reachable(
+  const uint32_t* starts,
+  const uint32_t num_starts,
+  const uint32_t* adjacency,
+  const uint32_t* adjacency_ptr,
+  uint32_t* visited)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_q == nullptr ||
+      _dvc_q_sz == nullptr ||
+      adjacency_ptr == nullptr ||
+      visited == nullptr) {
+    throw std::logic_error(
+      "_gpu_mark_reachable requires initialized "
+      "GPU graph and queue buffers");
+  }
+
+  // A null adjacency data pointer is legal when the graph has
+  // no edges because every CSR segment is empty. adjacency_ptr
+  // remains required.
+  if (num_starts > 0u && starts == nullptr) {
+    throw std::logic_error(
+      "_gpu_mark_reachable received a null start buffer");
+  }
+
+  // Queue contents do not need to be cleared. Reset only the
+  // append position.
+  CUDA_CHECK(cudaMemset(
+    _dvc_q_sz,
+    0,
+    sizeof(uint32_t)));
+
+  if (num_starts == 0u) {
+    return;
+  }
+
+  const uint32_t seed_blocks =
+    (num_starts +
+     kGpuReachabilityThreads - 1u) /
+    kGpuReachabilityThreads;
+
+  _gpu_reachability_seed_kl
+    <<<seed_blocks, kGpuReachabilityThreads>>>(
+      _num_ende,
+      num_starts,
+      starts,
+      _dvc_picked_endes,
+      visited,
+      _dvc_q,
+      _dvc_q_sz);
+
+  cudaCheckErrors(
+    "_gpu_reachability_seed_kl failed");
+
+  uint32_t queue_size = 0u;
+
+  CUDA_CHECK(cudaMemcpy(
+    &queue_size,
+    _dvc_q_sz,
+    sizeof(uint32_t),
+    cudaMemcpyDeviceToHost));
+
+  if (queue_size > _num_ende) {
+    throw std::logic_error(
+      "GPU reachability seed queue exceeded "
+      "the number of e-nodes");
+  }
+
+  uint32_t queue_begin = 0u;
+
+  while (queue_begin < queue_size) {
+    const uint32_t queue_count =
+      queue_size - queue_begin;
+
+    const uint32_t queue_blocks =
+      (queue_count +
+       kGpuReachabilityThreads - 1u) /
+      kGpuReachabilityThreads;
+
+    _gpu_reachability_process_queue_slice_kl
+      <<<queue_blocks, kGpuReachabilityThreads>>>(
+        queue_count,
+        queue_begin,
+        _dvc_q,
+        _dvc_q_sz,
+        _dvc_picked_endes,
+        adjacency,
+        adjacency_ptr,
+        visited);
+
+    cudaCheckErrors(
+      "_gpu_reachability_process_queue_slice_kl failed");
+
+    uint32_t new_queue_size = 0u;
+
+    CUDA_CHECK(cudaMemcpy(
+      &new_queue_size,
+      _dvc_q_sz,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    if (new_queue_size < queue_size) {
+      throw std::logic_error(
+        "GPU reachability append-only queue shrank");
+    }
+
+    if (new_queue_size > _num_ende) {
+      throw std::logic_error(
+        "GPU reachability queue exceeded "
+        "the number of e-nodes");
+    }
+
+    // Everything before the old queue tail has now been
+    // processed. Newly appended entries form the next slice.
+    queue_begin = queue_size;
+    queue_size = new_queue_size;
+  }
+}
+
+void G_EXT::_gpu_build_in_subgraph()
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_from_roots == nullptr ||
+      _dvc_from_leaves == nullptr ||
+      _dvc_in_subgraph == nullptr) {
+    throw std::logic_error(
+      "_gpu_build_in_subgraph requires initialized "
+      "GPU filtering buffers");
+  }
+
+  const uint32_t blocks =
+    (_num_ende +
+     kGpuReachabilityThreads - 1u) /
+    kGpuReachabilityThreads;
+
+  _gpu_build_in_subgraph_kl
+    <<<blocks, kGpuReachabilityThreads>>>(
+      _num_ende,
+      _dvc_picked_endes,
+      _dvc_from_roots,
+      _dvc_from_leaves,
+      _dvc_in_subgraph);
+
+  cudaCheckErrors(
+    "_gpu_build_in_subgraph_kl failed");
+}
+
+void G_EXT::_gpu_filter_root_to_leaf()
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_from_roots == nullptr ||
+      _dvc_from_leaves == nullptr ||
+      _dvc_in_subgraph == nullptr) {
+    throw std::logic_error(
+      "_gpu_filter_root_to_leaf requires initialized "
+      "GPU graph and filtering buffers");
+  }
+
+  if (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) {
+    throw std::logic_error(
+      "GPU forward adjacency buffer is missing");
+  }
+
+  if (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) {
+    throw std::logic_error(
+      "GPU inverse adjacency buffer is missing");
+  }
+
+  if (!_roots.empty() &&
+      _dvc_roots == nullptr) {
+    throw std::logic_error(
+      "GPU root buffer is missing");
+  }
+
+  if (!_leaves.empty() &&
+      _dvc_leaves == nullptr) {
+    throw std::logic_error(
+      "GPU leaf buffer is missing");
+  }
+
+  // Each traversal owns a separate visited array.
+  CUDA_CHECK(cudaMemset(
+    _dvc_from_roots,
+    0,
+    static_cast<size_t>(_num_ende) *
+      sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(
+    _dvc_from_leaves,
+    0,
+    static_cast<size_t>(_num_ende) *
+      sizeof(uint32_t)));
+
+  // Forward traversal:
+  //
+  // selected roots -> selected descendants
+  _gpu_mark_reachable(
+    _dvc_roots,
+    static_cast<uint32_t>(_roots.size()),
+    _dvc_global_adj_1D,
+    _dvc_global_adj_1D_ptr,
+    _dvc_from_roots);
+
+  // Reverse traversal:
+  //
+  // selected global leaves -> selected ancestors
+  _gpu_mark_reachable(
+    _dvc_leaves,
+    static_cast<uint32_t>(_leaves.size()),
+    _dvc_global_inv_adj_1D,
+    _dvc_global_inv_adj_1D_ptr,
+    _dvc_from_leaves);
+
+  _gpu_build_in_subgraph();
+}
+
 void G_EXT::_gpu_allocate_dag_buffers()
 {
   // Validate the shared buffers produced by GPU tree construction.
@@ -2336,12 +2698,16 @@ void G_EXT::_gpu_free_dag_buffers() noexcept
 
 void G_EXT::_gpu_DAG_construction()
 {
-  float gpu_dag_time_ms = 0.0f;
+  float gpu_dag_core_time_ms = 0.0f;
+  float gpu_filter_time_ms = 0.0f;
+  float gpu_dag_total_time_ms = 0.0f;
 
   cudaEvent_t start_gpu = nullptr;
+  cudaEvent_t after_core_gpu = nullptr;
   cudaEvent_t stop_gpu = nullptr;
 
   CUDA_CHECK(cudaEventCreate(&start_gpu));
+  CUDA_CHECK(cudaEventCreate(&after_core_gpu));
   CUDA_CHECK(cudaEventCreate(&stop_gpu));
 
   CUDA_CHECK(cudaEventRecord(start_gpu));
@@ -2359,97 +2725,92 @@ void G_EXT::_gpu_DAG_construction()
   uint32_t outer_iteration = 0u;
 
   while (host_u0 > 0u) {
-    // Count insertions that survive rollback across both
-    // insertion phases of this outer iteration.
     CUDA_CHECK(cudaMemset(
       _dvc_dag_u0,
       0,
       sizeof(uint32_t)));
 
-    // ==========================================================
-    // Phase A
-    //
-    // Current levels were produced by top-down levelization.
-    //
-    // Perform bottom-up insertion:
-    //   require at least one selected child
-    //   proposed level = min child level - 1
-    //
-    // Successful candidates:
-    //   state 0 -> state 2
-    //   u0++
-    // ==========================================================
     _gpu_dag_insert_thread(false);
-
-    // Recompute levels from leaves toward roots.
-    //
-    // Both stable state 1 and tentative state 2 nodes
-    // participate in levelization.
     _gpu_dag_levelize(false);
-
-    // Tentative nodes:
-    //
-    //   residual degree == 0:
-    //     state 2 -> state 1
-    //
-    //   residual degree > 0:
-    //     state 2 -> state 0
-    //     level = -1
-    //     u0--
     _gpu_dag_finalize_tentative(false);
 
-    // ==========================================================
-    // Phase B
-    //
-    // Current levels were produced by bottom-up levelization.
-    //
-    // Perform top-down insertion:
-    //   require at least one selected parent
-    //   proposed level = max parent level + 1
-    // ==========================================================
-    _gpu_dag_insert_thread(true);
-
-    // Recompute levels from roots toward leaves.
-    _gpu_dag_levelize(true);
-
-    // Finalize or roll back candidates introduced by the
-    // second insertion phase.
-    _gpu_dag_finalize_tentative(true);
+    uint32_t after_bottom_up = 0u;
 
     CUDA_CHECK(cudaMemcpy(
-      &host_u0,
+      &after_bottom_up,
       _dvc_dag_u0,
       sizeof(uint32_t),
       cudaMemcpyDeviceToHost));
 
+    _gpu_dag_insert_thread(true);
+    _gpu_dag_levelize(true);
+    _gpu_dag_finalize_tentative(true);
+
+    uint32_t after_both = 0u;
+
+    CUDA_CHECK(cudaMemcpy(
+      &after_both,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    host_u0 = after_both;
+
+    const uint32_t top_down_insertions =
+      after_both - after_bottom_up;
+
     ++outer_iteration;
 
-#ifdef PRINT_LOG
     printf(
       "[GPU DAG] iteration=%u, "
-      "surviving insertions=%u\n",
+      "bottom_up=%u, top_down=%u, total=%u\n",
       outer_iteration,
-      host_u0);
-#endif
+      after_bottom_up,
+      top_down_insertions,
+      after_both);
   }
 
-  // TODO Step 5:
-  // root-to-leaf filtering
+  // Match the CPU post-processing semantics:
+  //
+  // keep _dvc_picked_endes unchanged and separately mark
+  // selected e-nodes that lie on a selected
+  // root-to-global-leaf path.
+  CUDA_CHECK(cudaEventRecord(after_core_gpu));
+  _gpu_filter_root_to_leaf();
 
   CUDA_CHECK(cudaEventRecord(stop_gpu));
   CUDA_CHECK(cudaEventSynchronize(stop_gpu));
 
   CUDA_CHECK(cudaEventElapsedTime(
-    &gpu_dag_time_ms,
+    &gpu_dag_core_time_ms,
+    start_gpu,
+    after_core_gpu));
+
+  CUDA_CHECK(cudaEventElapsedTime(
+    &gpu_filter_time_ms,
+    after_core_gpu,
+    stop_gpu));
+
+  CUDA_CHECK(cudaEventElapsedTime(
+    &gpu_dag_total_time_ms,
     start_gpu,
     stop_gpu));
 
   CUDA_CHECK(cudaEventDestroy(start_gpu));
+  CUDA_CHECK(cudaEventDestroy(after_core_gpu));
   CUDA_CHECK(cudaEventDestroy(stop_gpu));
 
   printf(
-    "GPU DAG construction runtime: %.2f (ms)\n",
-    gpu_dag_time_ms);
+    "GPU DAG core runtime: %.2f (ms)\n",
+    gpu_dag_core_time_ms);
+
+  printf(
+    "GPU root-to-leaf filtering runtime: %.2f (ms)\n",
+    gpu_filter_time_ms);
+
+  printf(
+    "GPU DAG total runtime: %.2f (ms)\n",
+    gpu_dag_total_time_ms);
 }
 
 G_EXT::CsrGraphSnapshot
@@ -2792,6 +3153,10 @@ G_EXT::unittest_gpu_construct_dag(
       _num_ende,
       -1);
 
+    result.in_subgraph.resize(
+      _num_ende,
+      0u);
+
     CUDA_CHECK(cudaMemcpy(
       result.selected_state.data(),
       _dvc_picked_endes,
@@ -2817,6 +3182,13 @@ G_EXT::unittest_gpu_construct_dag(
       cudaMemcpyDeviceToHost));
 
     CUDA_CHECK(cudaMemcpy(
+      result.in_subgraph.data(),
+      _dvc_in_subgraph,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
       &result.num_levels,
       _dvc_max_level,
       sizeof(int),
@@ -2836,6 +3208,104 @@ G_EXT::unittest_gpu_construct_dag(
     _gpu_free_dag_buffers();
     throw;
   }
+}
+
+G_EXT::GpuRootToLeafFilterResult
+G_EXT::unittest_gpu_filter_root_to_leaf(
+  const std::vector<uint32_t>& selected_state)
+{
+  if (_ende_name.empty()) {
+    throw std::logic_error(
+      "unittest_gpu_filter_root_to_leaf requires "
+      "read() to be called first");
+  }
+
+  if (selected_state.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "selected_state size does not match "
+      "the number of e-nodes");
+  }
+
+  // Root-to-leaf filtering runs after DAG construction has
+  // finalized every tentative node. Therefore its input must
+  // contain only stable states 0 and 1.
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    if (selected_state[ende] > 1u) {
+      throw std::invalid_argument(
+        "root-to-leaf filtering input must "
+        "contain only states 0 or 1");
+    }
+  }
+
+  // GPU tree construction owns the immutable CSR, roots,
+  // leaves, queue, and filtering buffers.
+  if (_dvc_picked_endes == nullptr) {
+    (void)_gpu_tree_construction();
+  }
+
+  if (_num_ende > 0u) {
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_picked_endes,
+      selected_state.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyHostToDevice));
+  }
+
+  _gpu_filter_root_to_leaf();
+
+  GpuRootToLeafFilterResult result;
+
+  result.selected_state.resize(
+    _num_ende,
+    0u);
+
+  result.from_roots.resize(
+    _num_ende,
+    0u);
+
+  result.from_leaves.resize(
+    _num_ende,
+    0u);
+
+  result.in_subgraph.resize(
+    _num_ende,
+    0u);
+
+  if (_num_ende > 0u) {
+    CUDA_CHECK(cudaMemcpy(
+      result.selected_state.data(),
+      _dvc_picked_endes,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.from_roots.data(),
+      _dvc_from_roots,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.from_leaves.data(),
+      _dvc_from_leaves,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.in_subgraph.data(),
+      _dvc_in_subgraph,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+  }
+
+  return result;
 }
 
 G_EXT::GpuLevelizationResult

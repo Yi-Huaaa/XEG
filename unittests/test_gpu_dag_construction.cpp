@@ -120,6 +120,27 @@ void check_selected_edges_respect_levels(
   }
 }
 
+void check_in_subgraph_is_selected_subset(
+  const std::vector<uint32_t>& selected_state,
+  const std::vector<uint32_t>& in_subgraph)
+{
+  DOCTEST_REQUIRE(
+    in_subgraph.size() ==
+    selected_state.size());
+
+  for (size_t u = 0u;
+       u < selected_state.size();
+       ++u) {
+    DOCTEST_CAPTURE(u);
+    DOCTEST_CHECK(in_subgraph[u] <= 1u);
+
+    if (in_subgraph[u] != 0u) {
+      DOCTEST_CHECK(
+        selected_state[u] != 0u);
+    }
+  }
+}
+
 }  // namespace
 
 
@@ -180,6 +201,10 @@ TEST_CASE(
 
   DOCTEST_CHECK(result.num_levels == 3);
   DOCTEST_CHECK(result.final_u0 == 0u);
+
+  check_in_subgraph_is_selected_subset(
+    result.selected_state,
+    result.in_subgraph);
 }
 
 
@@ -230,6 +255,10 @@ TEST_CASE(
 
   DOCTEST_CHECK(result.num_levels == 2);
   DOCTEST_CHECK(result.final_u0 == 0u);
+
+  check_in_subgraph_is_selected_subset(
+    result.selected_state,
+    result.in_subgraph);
 }
 
 
@@ -267,6 +296,10 @@ TEST_CASE(
 
   DOCTEST_CHECK(result.num_levels == 3);
   DOCTEST_CHECK(result.final_u0 == 0u);
+
+  check_in_subgraph_is_selected_subset(
+    result.selected_state,
+    result.in_subgraph);
 }
 
 TEST_CASE(
@@ -314,6 +347,10 @@ TEST_CASE(
 
   DOCTEST_CHECK(result.num_levels == 3);
   DOCTEST_CHECK(result.final_u0 == 0u);
+
+  check_in_subgraph_is_selected_subset(
+    result.selected_state,
+    result.in_subgraph);
 }
 
 
@@ -412,4 +449,168 @@ TEST_CASE(
 
   DOCTEST_CHECK(result.num_levels == 3);
   DOCTEST_CHECK(result.final_u0 == 0u);
+
+  check_in_subgraph_is_selected_subset(
+    result.selected_state,
+    result.in_subgraph);
+}
+
+TEST_CASE(
+  "GPU root-to-leaf filtering removes both kinds of redundant nodes")
+{
+  G_EXT g_ext;
+
+  g_ext.read(
+    test_data_path(
+      "filter_branches.json"));
+
+  const std::vector<uint32_t> selected_state = {
+    1u,  // n0: selected root
+    1u,  // n1: valid middle
+    1u,  // n2: reachable from root, but no selected path to leaf
+    1u,  // n3: selected global leaf
+    0u,  // n4
+    0u,  // n5
+    1u,  // n6: disconnected selected component
+    1u,  // n7: disconnected selected global leaf
+    0u   // n8: unselected root alternative
+  };
+
+  const auto result =
+    g_ext.unittest_gpu_filter_root_to_leaf(
+      selected_state);
+
+  // Filtering must not modify the DAG-construction result.
+  check_vector_equal(
+    result.selected_state,
+    selected_state);
+
+  check_vector_equal(
+    result.from_roots,
+    std::vector<uint32_t>{
+      1u, 1u, 1u, 1u, 0u, 0u, 0u, 0u, 0u
+    });
+
+  check_vector_equal(
+    result.from_leaves,
+    std::vector<uint32_t>{
+      1u, 1u, 0u, 1u, 0u, 0u, 1u, 1u, 0u
+    });
+
+  check_vector_equal(
+    result.in_subgraph,
+    std::vector<uint32_t>{
+      1u, 1u, 0u, 1u, 0u, 0u, 0u, 0u, 0u
+    });
+}
+
+TEST_CASE(
+  "GPU root-to-leaf filtering retains a complete selected graph")
+{
+  G_EXT g_ext;
+
+  g_ext.read(
+    test_data_path(
+      "filter_branches.json"));
+
+  const std::vector<uint32_t> selected_state = {
+    1u, 1u, 1u, 1u, 1u,
+    1u, 1u, 1u, 1u
+  };
+
+  const auto result =
+    g_ext.unittest_gpu_filter_root_to_leaf(
+      selected_state);
+
+  const std::vector<uint32_t> all_selected(
+    9u,
+    1u);
+
+  check_vector_equal(
+    result.selected_state,
+    all_selected);
+
+  check_vector_equal(
+    result.from_roots,
+    all_selected);
+
+  check_vector_equal(
+    result.from_leaves,
+    all_selected);
+
+  check_vector_equal(
+    result.in_subgraph,
+    all_selected);
+}
+
+TEST_CASE(
+  "GPU DAG construction filters a disconnected selected component")
+{
+  G_EXT g_ext;
+
+  g_ext.read(
+    test_data_path(
+      "filter_branches.json"));
+
+  // Initial selected graph:
+  //
+  // n0 -> n1 -> n3
+  //  |
+  //  +--> n2
+  //
+  // n6 -> n7 is selected but disconnected from every
+  // selected root because its root alternative n8 is unselected.
+  //
+  // Full DAG construction should insert n4 and n5:
+  //
+  // n0 -> n2 -> n4 -> n5
+  //
+  // Filtering must then retain n0..n5 while excluding the
+  // disconnected selected component n6 -> n7.
+  const std::vector<uint32_t> initial_state = {
+    1u,  // n0
+    1u,  // n1
+    1u,  // n2
+    1u,  // n3
+    0u,  // n4
+    0u,  // n5
+    1u,  // n6
+    1u,  // n7
+    0u   // n8
+  };
+
+  const auto result =
+    g_ext.unittest_gpu_construct_dag(
+      initial_state);
+
+  // DAG construction preserves the disconnected selected
+  // component and inserts the missing root-connected branch.
+  check_vector_equal(
+    result.selected_state,
+    std::vector<uint32_t>{
+      1u, 1u, 1u, 1u, 1u,
+      1u, 1u, 1u, 0u
+    });
+
+  // Root-to-leaf filtering does not modify selected_state.
+  // It records only nodes lying on a selected path from a
+  // selected root to a global leaf.
+  check_vector_equal(
+    result.in_subgraph,
+    std::vector<uint32_t>{
+      1u, 1u, 1u, 1u, 1u,
+      1u, 0u, 0u, 0u
+    });
+
+  check_in_subgraph_is_selected_subset(
+    result.selected_state,
+    result.in_subgraph);
+
+  for (uint32_t state :
+       result.selected_state) {
+    DOCTEST_CHECK(state != 2u);
+  }
+
+  DOCTEST_CHECK(
+    result.final_u0 == 0u);
 }

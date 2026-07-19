@@ -1,0 +1,59 @@
+{
+  "nodes": {
+    "n0": {
+      "op": "selected_root",
+      "cost": 1,
+      "eclass": "c0",
+      "children": ["n1", "n2"]
+    },
+    "n1": {
+      "op": "valid_middle",
+      "cost": 1,
+      "eclass": "c1",
+      "children": ["n3"]
+    },
+    "n2": {
+      "op": "dead_end_middle",
+      "cost": 1,
+      "eclass": "c2",
+      "children": ["n4"]
+    },
+    "n3": {
+      "op": "selected_leaf",
+      "cost": 1,
+      "eclass": "c3",
+      "children": []
+    },
+    "n4": {
+      "op": "unselected_middle",
+      "cost": 1,
+      "eclass": "c4",
+      "children": ["n5"]
+    },
+    "n5": {
+      "op": "unselected_leaf",
+      "cost": 1,
+      "eclass": "c5",
+      "children": []
+    },
+    "n6": {
+      "op": "disconnected_middle",
+      "cost": 1,
+      "eclass": "c6",
+      "children": ["n7"]
+    },
+    "n7": {
+      "op": "disconnected_leaf",
+      "cost": 1,
+      "eclass": "c7",
+      "children": []
+    },
+    "n8": {
+      "op": "unselected_root_alternative",
+      "cost": 1,
+      "eclass": "c0",
+      "children": ["n6"]
+    }
+  },
+  "root_eclasses": ["c0"]
+}

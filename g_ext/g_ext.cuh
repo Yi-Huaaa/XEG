@@ -79,8 +79,16 @@ public:
     std::vector<uint32_t> selected_state;
     std::vector<uint32_t> residual_degree;
     std::vector<int> level;
+    std::vector<uint32_t> in_subgraph;
     int num_levels = 0;
     uint32_t final_u0 = 0;
+  };
+
+  struct GpuRootToLeafFilterResult {
+    std::vector<uint32_t> selected_state;
+    std::vector<uint32_t> from_roots;
+    std::vector<uint32_t> from_leaves;
+    std::vector<uint32_t> in_subgraph;
   };
 
   struct GpuLevelizationResult {
@@ -111,6 +119,10 @@ public:
   GpuLevelizationResult unittest_gpu_levelize(
     const std::vector<uint32_t>& selected_state,
     bool is_top_down);
+
+  GpuRootToLeafFilterResult
+  unittest_gpu_filter_root_to_leaf(
+    const std::vector<uint32_t>& selected_state);
 
   /* run */
   double round_to(double value, double precision = 1.0) {
@@ -167,13 +179,45 @@ public:
       best_tree_cost_cpu, dag_cost_cpu);
 
     std::vector<bool> picked_endes_tmp = picked_endes;
+
     start = std::chrono::steady_clock::now();
-      _cpu_DAG_construction(picked_endes);  
-      // _cpu_DAG_construction_mt_bitmap(picked_endes);  
+
+    _cpu_DAG_construction(picked_endes);
+    // _cpu_DAG_construction_mt_bitmap(picked_endes);
+
     end = std::chrono::steady_clock::now();
     duration = end - start;
-    std::cout << "CPU DAG construction runtime: " << 
-      round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+
+    std::cout
+      << "CPU DAG construction runtime: "
+      << round_to(
+           duration.count() * 1000,
+           0.01)
+      << " (ms)\n";
+
+    // Debug statistics are outside the measured runtime.
+    uint32_t cpu_tree_selected = 0u;
+    uint32_t cpu_dag_selected = 0u;
+    uint32_t cpu_filtered = 0u;
+
+    for (bool selected : picked_endes_tmp) {
+      cpu_tree_selected += selected ? 1u : 0u;
+    }
+
+    for (bool selected : picked_endes) {
+      cpu_dag_selected += selected ? 1u : 0u;
+    }
+
+    for (bool selected : _in_subgraph) {
+      cpu_filtered += selected ? 1u : 0u;
+    }
+
+    printf(
+      "[CPU DAG Debug] tree=%u, expanded=%u, filtered=%u\n",
+      cpu_tree_selected,
+      cpu_dag_selected,
+      cpu_filtered);    
+
     if (ILP_solver) {
       _cpsat_solver(
         ILP_time_limit, 
@@ -197,31 +241,153 @@ public:
       best_tree_cost_gpu,
       dag_cost_gpu);
 
-    // Allocate and initialize DAG-construction memory.
-    //
-    // _dvc_picked_endes already contains the GPU tree result
-    // produced by Algorithm 1.
+    // Save the GPU tree solution before DAG construction
+    // expands _dvc_picked_endes.
+    std::vector<uint32_t> best_ende_of_ecls_gpu;
+    std::vector<bool> picked_endes_gpu;
+
+    if (ILP_solver) {
+      _copy_best_ende_of_ecls_back(
+        best_ende_of_ecls_gpu);
+
+      _copy_pickedende_back(
+        picked_endes_gpu);
+
+      uint32_t gpu_tree_selected = 0u;
+
+      for (bool selected : picked_endes_gpu) {
+        gpu_tree_selected += selected ? 1u : 0u;
+      }
+
+      printf(
+        "[GPU DAG Debug] tree=%u\n",
+        gpu_tree_selected);
+    }
+
+
+
+
+
     _gpu_allocate_dag_buffers();
     _gpu_initialize_dag_buffers();
 
-    // Expand the GPU tree result into an acyclic selected DAG.
+    // Temporary diagnostic:
+    // run GPU DAG construction from the CPU tree.
+    std::vector<uint32_t> cpu_tree_state(
+      _num_ende,
+      0u);
+
+    for (uint32_t ende = 0u;
+         ende < _num_ende;
+         ++ende) {
+      cpu_tree_state[ende] =
+        picked_endes_tmp[ende] ? 1u : 0u;
+    }
+
+    const cudaError_t copy_err = cudaMemcpy(
+      _dvc_picked_endes,
+      cpu_tree_state.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyHostToDevice);
+
+    if (copy_err != cudaSuccess) {
+      throw std::runtime_error(
+        std::string(
+          "Failed to copy CPU tree to GPU: ") +
+        cudaGetErrorString(copy_err));
+    }
+
     _gpu_DAG_construction();
 
-    // Only free memory owned exclusively by GPU DAG construction.
-    _gpu_free_dag_buffers();
-    // GPU version ends    
+    if (ILP_solver) {
+      // Copy the final GPU root-to-leaf filtering mask.
+      std::vector<uint32_t> in_subgraph_gpu(
+        _num_ende,
+        0u);
 
-    // if (ILP_solver) {
-    //   _cpsat_solver(
-    //     ILP_time_limit, 
-    //     _ecls_its_ende_newG_GPU, 
-    //     _ende_child, 
-    //     _ende_child_ptr, 
-    //     _root_eclass_id, 
-    //     _ende_cost,
-    //     best_ende_of_ecls, 
-    //     picked_endes_tmp);
-    // }
+      if (_num_ende > 0u) {
+        const cudaError_t err = cudaMemcpy(
+          in_subgraph_gpu.data(),
+          _dvc_in_subgraph,
+          static_cast<size_t>(_num_ende) *
+            sizeof(uint32_t),
+          cudaMemcpyDeviceToHost);
+
+        if (err != cudaSuccess) {
+          _gpu_free_dag_buffers();
+
+          throw std::runtime_error(
+            std::string(
+              "Failed to copy GPU in_subgraph: ") +
+            cudaGetErrorString(err));
+        }
+      }
+
+      // Copy the expanded GPU DAG selection for debugging.
+      // This happens after the GPU DAG timer has stopped.
+      std::vector<bool> gpu_dag_selected;
+      _copy_pickedende_back(
+        gpu_dag_selected);
+
+      uint32_t gpu_dag_selected_count = 0u;
+      uint32_t gpu_filtered_count = 0u;
+
+      for (bool selected : gpu_dag_selected) {
+        gpu_dag_selected_count +=
+          selected ? 1u : 0u;
+      }
+
+      for (uint32_t selected : in_subgraph_gpu) {
+        gpu_filtered_count +=
+          selected != 0u ? 1u : 0u;
+      }
+
+      printf(
+        "[GPU DAG Debug] expanded=%u, filtered=%u\n",
+        gpu_dag_selected_count,
+        gpu_filtered_count);
+
+      // Reconstruct the GPU DAG search space for ILP.
+      _ecls_its_ende_newG_GPU.assign(
+        _num_ecls,
+        std::vector<uint32_t>());
+
+      for (uint32_t ecls = 0u;
+           ecls < _num_ecls;
+           ++ecls) {
+        const auto& original_enodes =
+          _ecls_its_ende[ecls];
+
+        auto& gpu_dag_enodes =
+          _ecls_its_ende_newG_GPU[ecls];
+
+        gpu_dag_enodes.reserve(
+          original_enodes.size());
+
+        for (uint32_t ende : original_enodes) {
+          if (in_subgraph_gpu[ende] != 0u) {
+            gpu_dag_enodes.push_back(ende);
+          }
+        }
+      }
+    }
+
+
+    // Free only GPU DAG scratch memory.
+    _gpu_free_dag_buffers();
+
+    if (ILP_solver) {
+      _cpsat_solver(
+        ILP_time_limit,
+        _ecls_its_ende_newG_GPU,
+        _ende_child,
+        _ende_child_ptr,
+        _root_eclass_id,
+        _ende_cost,
+        best_ende_of_ecls_gpu,
+        picked_endes_gpu);
+    }
     // // GPU version ends
   }
 
@@ -362,6 +528,27 @@ private:
 
   void _copy_best_ende_of_ecls_back(
     std::vector<uint32_t>& best_ende_of_ecls_out);
+
+  // Mark selected e-nodes reachable from a set of starts.
+  //
+  // starts and adjacency use the same pruned e-node IDs as
+  // _dvc_picked_endes and the flattened GPU CSR.
+  void _gpu_mark_reachable(
+    const uint32_t* starts,
+    uint32_t num_starts,
+    const uint32_t* adjacency,
+    const uint32_t* adjacency_ptr,
+    uint32_t* visited);
+
+  // Compute:
+  //
+  // in_subgraph[u] =
+  //   selected[u] && from_roots[u] && from_leaves[u]
+  void _gpu_build_in_subgraph();
+
+  // Match the CPU root-to-leaf filtering semantics without
+  // modifying _dvc_picked_endes.
+  void _gpu_filter_root_to_leaf();
 
   /* ILP solver */ 
   void _cpsat_solver(
