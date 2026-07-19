@@ -1660,6 +1660,243 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   return std::make_pair(tree_ret, dag_ret);
 }
 
+// One GPU thread evaluates one unselected candidate.
+//
+// selected_state:
+//   0 = unselected
+//   1 = stable selected
+//   2 = tentative selected
+//
+// This is a live optimistic insertion kernel:
+// a thread may observe state-2 candidates published earlier
+// by other threads in the same kernel.
+__global__ void _gpu_dag_insert_thread_kl(
+  const uint32_t num_endes,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t u =
+    blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  // Atomic load because selected_state is updated live by
+  // other threads in this same kernel.
+  if (atomicAdd(&selected_state[u], 0u) != 0u) {
+    return;
+  }
+
+  uint32_t parent_position =
+    inverse_adj_ptr[u];
+
+  const uint32_t parent_end =
+    inverse_adj_ptr[u + 1];
+
+  uint32_t child_position =
+    forward_adj_ptr[u];
+
+  const uint32_t child_end =
+    forward_adj_ptr[u + 1];
+
+  bool has_selected_parent = false;
+  bool has_selected_child = false;
+  bool has_selected_overlap = false;
+
+  int max_parent_level = -1;
+  int min_child_level = INT_MAX;
+
+  // Both CSR segments are sorted and unique.
+  //
+  // Merge them with two pointers so that:
+  //   neighbor only in inverse CSR -> process as parent
+  //   neighbor only in forward CSR -> process as child
+  //   neighbor in both             -> exact overlap check
+  //
+  // Complexity:
+  //   O(parent_degree + child_degree)
+  while (parent_position < parent_end ||
+         child_position < child_end) {
+    const bool take_parent_only =
+      child_position >= child_end ||
+      (parent_position < parent_end &&
+       inverse_adj[parent_position]
+         < forward_adj[child_position]);
+
+    const bool take_child_only =
+      parent_position >= parent_end ||
+      (child_position < child_end &&
+       forward_adj[child_position]
+         < inverse_adj[parent_position]);
+
+    if (take_parent_only) {
+      const uint32_t parent =
+        inverse_adj[parent_position];
+
+      const uint32_t parent_state =
+        atomicAdd(&selected_state[parent], 0u);
+
+      if (parent_state != 0u) {
+        const int parent_level =
+          atomicAdd(&level[parent], 0);
+
+        if (parent_level >= 0) {
+          has_selected_parent = true;
+
+          if (parent_level > max_parent_level) {
+            max_parent_level = parent_level;
+          }
+        }
+      }
+
+      ++parent_position;
+      continue;
+    }
+
+    if (take_child_only) {
+      const uint32_t child =
+        forward_adj[child_position];
+
+      const uint32_t child_state =
+        atomicAdd(&selected_state[child], 0u);
+
+      if (child_state != 0u) {
+        const int child_level =
+          atomicAdd(&level[child], 0);
+
+        if (child_level >= 0) {
+          has_selected_child = true;
+
+          if (child_level < min_child_level) {
+            min_child_level = child_level;
+          }
+        }
+      }
+
+      ++child_position;
+      continue;
+    }
+
+    // The same enode appears in both sorted segments.
+    const uint32_t neighbor =
+      inverse_adj[parent_position];
+
+    const uint32_t neighbor_state =
+      atomicAdd(&selected_state[neighbor], 0u);
+
+    if (neighbor_state != 0u) {
+      const int neighbor_level =
+        atomicAdd(&level[neighbor], 0);
+
+      if (neighbor_level >= 0) {
+        has_selected_parent = true;
+        has_selected_child = true;
+        has_selected_overlap = true;
+
+        if (neighbor_level > max_parent_level) {
+          max_parent_level = neighbor_level;
+        }
+
+        if (neighbor_level < min_child_level) {
+          min_child_level = neighbor_level;
+        }
+      }
+    }
+
+    ++parent_position;
+    ++child_position;
+  }
+
+  if (has_selected_overlap) {
+    return;
+  }
+
+  if (max_parent_level >= min_child_level) {
+    return;
+  }
+
+  int proposed_level = -1;
+
+  if (is_top_down_insertion) {
+    if (!has_selected_parent) {
+      return;
+    }
+
+    proposed_level =
+      max_parent_level + 1;
+  }
+  else {
+    if (!has_selected_child) {
+      return;
+    }
+
+    proposed_level =
+      min_child_level - 1;
+  }
+
+  if (proposed_level < 0) {
+    return;
+  }
+
+  // Publish the proposed level before publishing state 2.
+  level[u] = proposed_level;
+
+  __threadfence();
+
+  // Exactly one successful committer increments u0.
+  if (atomicCAS(
+        &selected_state[u],
+        0u,
+        2u) == 0u) {
+    atomicAdd(u0, 1u);
+  }
+}
+
+void G_EXT::_gpu_dag_insert_thread(
+  const bool is_top_down_insertion)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_thread requires "
+      "initialized GPU DAG buffers");
+  }
+
+  const uint32_t blocks =
+    (_num_ende + threads - 1) / threads;
+
+  _gpu_dag_insert_thread_kl
+    <<<blocks, threads>>>(
+      _num_ende,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_thread_kl failed");
+}
+
 // Construct the selected-subgraph degree and append all
 // zero-degree selected e-nodes to the initial queue.
 //
@@ -2147,6 +2384,114 @@ G_EXT::unittest_get_csr_snapshot() const
     _global_inv_adj_1D_ptr;
 
   return result;
+}
+
+G_EXT::GpuInsertionResult
+G_EXT::unittest_gpu_insert_once(
+  const std::vector<uint32_t>& selected_state,
+  const std::vector<int>& input_level,
+  const bool is_top_down_insertion)
+{
+  if (_ende_name.empty()) {
+    throw std::logic_error(
+      "unittest_gpu_insert_once requires "
+      "read() to be called first");
+  }
+
+  if (selected_state.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "selected_state size does not match "
+      "the number of e-nodes");
+  }
+
+  if (input_level.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "level size does not match "
+      "the number of e-nodes");
+  }
+
+  for (uint32_t ende = 0;
+       ende < _num_ende;
+       ++ende) {
+    if (selected_state[ende] > 2u) {
+      throw std::invalid_argument(
+        "selected_state must contain only "
+        "0, 1, or 2");
+    }
+  }
+
+  // GPU tree construction currently owns allocation of
+  // the shared immutable CSR and working buffers.
+  if (_dvc_picked_endes == nullptr) {
+    (void)_gpu_tree_construction();
+  }
+
+  _gpu_allocate_dag_buffers();
+  _gpu_initialize_dag_buffers();
+
+  try {
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_picked_endes,
+      selected_state.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyHostToDevice));
+
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_level,
+      input_level.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(int),
+      cudaMemcpyHostToDevice));
+
+    CUDA_CHECK(cudaMemset(
+      _dvc_dag_u0,
+      0,
+      sizeof(uint32_t)));
+
+    _gpu_dag_insert_thread(
+      is_top_down_insertion);
+
+    GpuInsertionResult result;
+
+    result.selected_state.resize(
+      _num_ende,
+      0u);
+
+    result.level.resize(
+      _num_ende,
+      -1);
+
+    CUDA_CHECK(cudaMemcpy(
+      result.selected_state.data(),
+      _dvc_picked_endes,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.level.data(),
+      _dvc_level,
+      static_cast<size_t>(_num_ende) *
+        sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.u0,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    _gpu_free_dag_buffers();
+
+    return result;
+  }
+  catch (...) {
+    _gpu_free_dag_buffers();
+    throw;
+  }
 }
 
 G_EXT::GpuLevelizationResult

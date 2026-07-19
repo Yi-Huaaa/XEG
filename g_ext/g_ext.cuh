@@ -60,6 +60,12 @@ public:
     std::vector<uint32_t> inverse_adj;
     std::vector<uint32_t> inverse_ptr;
   };
+  
+  struct GpuInsertionResult {
+    std::vector<uint32_t> selected_state;
+    std::vector<int> level;
+    uint32_t u0 = 0;
+  };
 
   struct GpuLevelizationResult {
     std::vector<uint32_t> selected_state;
@@ -70,6 +76,11 @@ public:
 
   CsrGraphSnapshot
   unittest_get_csr_snapshot() const;
+  
+  GpuInsertionResult unittest_gpu_insert_once(
+    const std::vector<uint32_t>& selected_state,
+    const std::vector<int>& level,
+    bool is_top_down_insertion);
 
   GpuLevelizationResult unittest_gpu_levelize(
     const std::vector<uint32_t>& selected_state,
@@ -298,6 +309,17 @@ private:
       const std::vector<bool>& picked_endes);
   // GPU version
   void _gpu_DAG_construction();
+  // Thread-level live optimistic insertion.
+  //
+  // is_top_down_insertion = true:
+  //   require at least one selected parent
+  //   proposed level = max parent level + 1
+  //
+  // is_top_down_insertion = false:
+  //   require at least one selected child
+  //   proposed level = min child level - 1
+  void _gpu_dag_insert_thread(
+    bool is_top_down_insertion);  
   // GPU Kahn levelization using one append-only queue.
   // is_top_down = true:
   //   roots -> leaves

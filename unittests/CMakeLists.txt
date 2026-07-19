@@ -9,6 +9,7 @@ find_package(Threads REQUIRED)
 list(APPEND g_ext_UNITTESTS
   test_basics
   test_csr_invariants
+  test_gpu_insertion
   test_gpu_levelization
 )
 
