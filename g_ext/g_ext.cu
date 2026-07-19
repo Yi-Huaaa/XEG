@@ -2730,44 +2730,78 @@ void G_EXT::_gpu_DAG_construction()
       0,
       sizeof(uint32_t)));
 
+    // Bottom-up insertion
     _gpu_dag_insert_thread(false);
+
+    uint32_t bottom_up_proposed = 0u;
+
+    CUDA_CHECK(cudaMemcpy(
+      &bottom_up_proposed,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
     _gpu_dag_levelize(false);
     _gpu_dag_finalize_tentative(false);
 
-    uint32_t after_bottom_up = 0u;
+    uint32_t bottom_up_survived = 0u;
 
     CUDA_CHECK(cudaMemcpy(
-      &after_bottom_up,
+      &bottom_up_survived,
       _dvc_dag_u0,
       sizeof(uint32_t),
       cudaMemcpyDeviceToHost));
 
+    // Top-down insertion
     _gpu_dag_insert_thread(true);
+
+    uint32_t after_top_down_insert = 0u;
+
+    CUDA_CHECK(cudaMemcpy(
+      &after_top_down_insert,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
     _gpu_dag_levelize(true);
     _gpu_dag_finalize_tentative(true);
 
-    uint32_t after_both = 0u;
+    uint32_t after_both_phases = 0u;
 
     CUDA_CHECK(cudaMemcpy(
-      &after_both,
+      &after_both_phases,
       _dvc_dag_u0,
       sizeof(uint32_t),
       cudaMemcpyDeviceToHost));
 
-    host_u0 = after_both;
+    const uint32_t top_down_proposed =
+      after_top_down_insert - bottom_up_survived;
 
-    const uint32_t top_down_insertions =
-      after_both - after_bottom_up;
+    const uint32_t top_down_survived =
+      after_both_phases - bottom_up_survived;
 
+    const uint32_t bottom_up_rollback =
+      bottom_up_proposed - bottom_up_survived;
+
+    const uint32_t top_down_rollback =
+      top_down_proposed - top_down_survived;
+
+    host_u0 = after_both_phases;
     ++outer_iteration;
 
     printf(
       "[GPU DAG] iteration=%u, "
-      "bottom_up=%u, top_down=%u, total=%u\n",
+      "BU proposed=%u survived=%u rollback=%u, "
+      "TD proposed=%u survived=%u rollback=%u, "
+      "total survived=%u\n",
       outer_iteration,
-      after_bottom_up,
-      top_down_insertions,
-      after_both);
+      bottom_up_proposed,
+      bottom_up_survived,
+      bottom_up_rollback,
+      top_down_proposed,
+      top_down_survived,
+      top_down_rollback,
+      after_both_phases);
   }
 
   // Match the CPU post-processing semantics:
