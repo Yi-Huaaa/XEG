@@ -1,6 +1,5 @@
 #include "g_ext.cuh"
 
-#define threads 512 // num GPU threads
 #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
 
 /* DEBUG */
@@ -48,6 +47,7 @@
  
 namespace {
 
+constexpr uint32_t kGpuThreads = 512u;
 constexpr uint32_t kGpuReachabilityThreads = 256u;
 constexpr uint32_t kGpuDagBatchSize = 256u;
 
@@ -909,7 +909,7 @@ bool G_EXT::_insertion(const bool is_td,
   bool update = false;
 
   // Step 1: 初始化 cycle revert 標記
-  // 將所有 _new_inserted 設為 false，只捕捉「這一輪」剛被平行的 threads 插入的點
+  // 將所有 _new_inserted 設為 false，只捕捉「這一輪」剛被平行的 kGpuThreads 插入的點
   _new_inserted.assign(_num_ende, false);
 
   // Step 3: 解放平行運算
@@ -1478,7 +1478,7 @@ __global__ void _gpu_warm_up(
 
 std::pair<double, double> G_EXT::_gpu_tree_construction() 
 {
-  int blocks = (_num_ende + threads - 1) / threads;
+  int blocks = (_num_ende + kGpuThreads - 1) / kGpuThreads;
 
   // Local memory 
   float* dvc_ende_cost; 
@@ -1580,7 +1580,7 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   cudaCheckErrors("cudaMemcpy failed");
 
 
-  _gpu_warm_up<<<blocks,threads>>>(_num_ende, _dvc_level); // Note: place this GPU kernel here as the warm-up for GPU; w/o this, the kernel runtime below will be extremely long. Need to remrmber!
+  _gpu_warm_up<<<blocks,kGpuThreads>>>(_num_ende, _dvc_level); // Note: place this GPU kernel here as the warm-up for GPU; w/o this, the kernel runtime below will be extremely long. Need to remrmber!
 
   float gpuTime = 0.;
   cudaEvent_t startGPU, stopGPU;
@@ -1588,11 +1588,11 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   cudaEventCreate(&stopGPU);    
   cudaEventRecord(startGPU);
 
-  blocks = (_num_ende + threads - 1) / threads;
+  blocks = (_num_ende + kGpuThreads - 1) / kGpuThreads;
   while (h_update) {
     h_update = false;
     cudaMemcpy(_dvc_update, &h_update, sizeof(bool), cudaMemcpyHostToDevice);
-    _gpu_tree_construction_kernel<<<blocks, threads>>>(_num_ende,
+    _gpu_tree_construction_kernel<<<blocks, kGpuThreads>>>(_num_ende,
       dvc_ende_cost,
       dvc_ende_ecls,
       dvc_ende_child,
@@ -1612,8 +1612,8 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   double tree_ret = 0.0; 
   cudaMemcpy(&tree_ret, dvc_tree_ret, 1*sizeof(double), cudaMemcpyDeviceToHost);
   
-  blocks = (_num_ecls + threads - 1) / threads;
-  _resolve_best_ende<<<blocks, threads>>>(
+  blocks = (_num_ecls + kGpuThreads - 1) / kGpuThreads;
+  _resolve_best_ende<<<blocks, kGpuThreads>>>(
     _num_ecls,
     _dvc_ecls_its_ende_1D,
     _dvc_ecls_its_ende_1D_ptr,
@@ -1639,8 +1639,8 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
 
   while (num > 0) {
     cudaMemcpy(_dvc_q_sp, &q_sp, sizeof(uint32_t), cudaMemcpyHostToDevice);
-    blocks = (num + threads - 1) / threads;
-    _get_dag_cost<<<blocks, threads>>>(
+    blocks = (num + kGpuThreads - 1) / kGpuThreads;
+    _get_dag_cost<<<blocks, kGpuThreads>>>(
       num,
       dvc_ende_cost,
       dvc_ende_child,
@@ -1720,7 +1720,7 @@ __global__ void _gpu_dag_insert_thread_kl(
   }
 
   // Atomic load because selected_state is updated live by
-  // other threads in this same kernel.
+  // other kGpuThreads in this same kernel.
   if (atomicAdd(&selected_state[u], 0u) != 0u) {
     return;
   }
@@ -2278,10 +2278,10 @@ void G_EXT::_gpu_dag_levelize(
     sizeof(uint32_t)));
 
   const uint32_t node_blocks =
-    (_num_ende + threads - 1) / threads;
+    (_num_ende + kGpuThreads - 1) / kGpuThreads;
 
   _gpu_dag_init_levelization_queue_kl
-    <<<node_blocks, threads>>>(
+    <<<node_blocks, kGpuThreads>>>(
       _num_ende,
       _dvc_picked_endes,
       incoming_adj,
@@ -2308,10 +2308,10 @@ void G_EXT::_gpu_dag_levelize(
 
   while (queue_count > 0u) {
     const uint32_t queue_blocks =
-      (queue_count + threads - 1) / threads;
+      (queue_count + kGpuThreads - 1) / kGpuThreads;
 
     _gpu_dag_process_queue_slice_kl
-      <<<queue_blocks, threads>>>(
+      <<<queue_blocks, kGpuThreads>>>(
         queue_count,
         queue_begin,
         _dvc_q,
@@ -2353,7 +2353,7 @@ void G_EXT::_gpu_dag_levelize(
 
   if (!is_top_down && current_level > 0) {
     _gpu_dag_reverse_level_kl
-      <<<node_blocks, threads>>>(
+      <<<node_blocks, kGpuThreads>>>(
         _num_ende,
         _dvc_picked_endes,
         _dvc_level,
@@ -2387,10 +2387,10 @@ void G_EXT::_gpu_dag_finalize_tentative(
       : _dvc_inv_indegree;
 
   const uint32_t blocks =
-    (_num_ende + threads - 1) / threads;
+    (_num_ende + kGpuThreads - 1) / kGpuThreads;
 
   _gpu_dag_finalize_tentative_kl
-    <<<blocks, threads>>>(
+    <<<blocks, kGpuThreads>>>(
       _num_ende,
       _dvc_picked_endes,
       residual_degree,
