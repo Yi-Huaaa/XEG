@@ -1,6 +1,6 @@
 #include "g_ext.cuh"
 
-#define threads 1024 // num GPU threads
+#define threads 512 // num GPU threads
 #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
 
 /* DEBUG */
@@ -2881,69 +2881,6 @@ void G_EXT::_gpu_DAG_construction()
     "GPU DAG total runtime: %.2f (ms)\n",
     gpu_dag_total_time_ms);
 }
-
-// void G_EXT::_gpu_DAG_construction()
-// {
-//   float gpu_dag_total_time_ms = 0.0f;
-
-//   cudaEvent_t start_gpu = nullptr;
-//   cudaEvent_t stop_gpu = nullptr;
-
-//   CUDA_CHECK(cudaEventCreate(&start_gpu));
-//   CUDA_CHECK(cudaEventCreate(&stop_gpu));
-
-//   CUDA_CHECK(cudaEventRecord(start_gpu));
-
-//   // Initial top-down levelization of the GPU tree result.
-//   _gpu_dag_levelize(true);
-
-//   uint32_t host_u0 = 1u;
-
-//   while (host_u0 > 0u) {
-//     CUDA_CHECK(cudaMemset(
-//       _dvc_dag_u0,
-//       0,
-//       sizeof(uint32_t)));
-
-//     // Bottom-up insertion.
-//     // All insertion batches finish before levelization.
-//     _gpu_dag_insert_thread(false);
-
-//     _gpu_dag_levelize(false);
-//     _gpu_dag_finalize_tentative(false);
-
-//     // Top-down insertion.
-//     // _dvc_dag_u0 continues accumulating surviving insertions.
-//     _gpu_dag_insert_thread(true);
-
-//     _gpu_dag_levelize(true);
-//     _gpu_dag_finalize_tentative(true);
-
-//     // Required for outer-loop termination.
-//     CUDA_CHECK(cudaMemcpy(
-//       &host_u0,
-//       _dvc_dag_u0,
-//       sizeof(uint32_t),
-//       cudaMemcpyDeviceToHost));
-//   }
-
-//   _gpu_filter_root_to_leaf();
-
-//   CUDA_CHECK(cudaEventRecord(stop_gpu));
-//   CUDA_CHECK(cudaEventSynchronize(stop_gpu));
-
-//   CUDA_CHECK(cudaEventElapsedTime(
-//     &gpu_dag_total_time_ms,
-//     start_gpu,
-//     stop_gpu));
-
-//   CUDA_CHECK(cudaEventDestroy(start_gpu));
-//   CUDA_CHECK(cudaEventDestroy(stop_gpu));
-
-//   printf(
-//     "GPU DAG total runtime: %.2f (ms)\n",
-//     gpu_dag_total_time_ms);
-// }
 
 G_EXT::CsrGraphSnapshot
 G_EXT::unittest_get_csr_snapshot() const
