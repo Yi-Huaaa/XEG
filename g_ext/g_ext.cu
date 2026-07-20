@@ -51,6 +51,15 @@ constexpr uint32_t kGpuThreads = 512u;
 constexpr uint32_t kGpuReachabilityThreads = 256u;
 constexpr uint32_t kGpuDagBatchSize = 256u;
 
+// Controls all optional GPU DAG diagnostics:
+//   1. per-iteration proposal/survival/rollback logs
+//   2. CUDA event timing
+//   3. GPU DAG runtime summaries
+//
+// The device-to-host copy required for outer-loop termination
+// remains enabled regardless of this flag.
+constexpr bool kEnableGpuDagIterationLog = true;
+
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
 {
@@ -2733,18 +2742,38 @@ void G_EXT::_gpu_free_dag_buffers() noexcept
 
 void G_EXT::_gpu_DAG_construction()
 {
-  float gpu_dag_core_time_ms = 0.0f;
-  float gpu_filter_time_ms = 0.0f;
+  // ============================================================
+  // Total DAG timing
+  //
+  // Total runtime is always measured and printed, regardless of
+  // kEnableGpuDagIterationLog, because it is the primary metric
+  // used for performance optimization.
+  // ============================================================
   float gpu_dag_total_time_ms = 0.0f;
 
   cudaEvent_t start_gpu = nullptr;
-  cudaEvent_t after_core_gpu = nullptr;
   cudaEvent_t stop_gpu = nullptr;
 
   CUDA_CHECK(cudaEventCreate(&start_gpu));
-  CUDA_CHECK(cudaEventCreate(&after_core_gpu));
   CUDA_CHECK(cudaEventCreate(&stop_gpu));
 
+  // ============================================================
+  // Optional detailed timing
+  //
+  // These objects are used only when detailed GPU DAG logging
+  // is enabled. [[maybe_unused]] is a compile-time annotation and
+  // has no runtime overhead.
+  // ============================================================
+  [[maybe_unused]] float gpu_dag_core_time_ms = 0.0f;
+  [[maybe_unused]] float gpu_filter_time_ms = 0.0f;
+
+  [[maybe_unused]] cudaEvent_t after_core_gpu = nullptr;
+
+  if constexpr (kEnableGpuDagIterationLog) {
+    CUDA_CHECK(cudaEventCreate(&after_core_gpu));
+  }
+
+  // Start total DAG construction timing.
   CUDA_CHECK(cudaEventRecord(start_gpu));
 
   // ============================================================
@@ -2752,55 +2781,78 @@ void G_EXT::_gpu_DAG_construction()
   //
   // Initial top-down levelization of the GPU tree result.
   // States 1 and 2 are both treated as selected.
-  // At Step 3 only states 0 and 1 exist.
+  // At this point only states 0 and 1 should exist.
   // ============================================================
   _gpu_dag_levelize(true);
 
   uint32_t host_u0 = 1u;
-  uint32_t outer_iteration = 0u;
+
+  // Used only by the optional per-iteration log.
+  [[maybe_unused]] uint32_t outer_iteration = 0u;
 
   while (host_u0 > 0u) {
+    // u0 counts the insertions that survive during the current
+    // outer iteration.
     CUDA_CHECK(cudaMemset(
       _dvc_dag_u0,
       0,
       sizeof(uint32_t)));
 
+    // ==========================================================
     // Bottom-up insertion
+    // ==========================================================
     _gpu_dag_insert_thread(false);
 
-    uint32_t bottom_up_proposed = 0u;
+    // This value is required only for detailed logging.
+    [[maybe_unused]] uint32_t bottom_up_proposed = 0u;
 
-    CUDA_CHECK(cudaMemcpy(
-      &bottom_up_proposed,
-      _dvc_dag_u0,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
+    if constexpr (kEnableGpuDagIterationLog) {
+      CUDA_CHECK(cudaMemcpy(
+        &bottom_up_proposed,
+        _dvc_dag_u0,
+        sizeof(uint32_t),
+        cudaMemcpyDeviceToHost));
+    }
 
     _gpu_dag_levelize(false);
     _gpu_dag_finalize_tentative(false);
 
-    uint32_t bottom_up_survived = 0u;
+    // This value is required only for detailed logging.
+    [[maybe_unused]] uint32_t bottom_up_survived = 0u;
 
-    CUDA_CHECK(cudaMemcpy(
-      &bottom_up_survived,
-      _dvc_dag_u0,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
+    if constexpr (kEnableGpuDagIterationLog) {
+      CUDA_CHECK(cudaMemcpy(
+        &bottom_up_survived,
+        _dvc_dag_u0,
+        sizeof(uint32_t),
+        cudaMemcpyDeviceToHost));
+    }
 
+    // ==========================================================
     // Top-down insertion
+    // ==========================================================
     _gpu_dag_insert_thread(true);
 
-    uint32_t after_top_down_insert = 0u;
+    // This value is required only for detailed logging.
+    [[maybe_unused]] uint32_t after_top_down_insert = 0u;
 
-    CUDA_CHECK(cudaMemcpy(
-      &after_top_down_insert,
-      _dvc_dag_u0,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
+    if constexpr (kEnableGpuDagIterationLog) {
+      CUDA_CHECK(cudaMemcpy(
+        &after_top_down_insert,
+        _dvc_dag_u0,
+        sizeof(uint32_t),
+        cudaMemcpyDeviceToHost));
+    }
 
     _gpu_dag_levelize(true);
     _gpu_dag_finalize_tentative(true);
 
+    // ==========================================================
+    // Required outer-loop termination copy
+    //
+    // This copy is part of the algorithm, not merely logging.
+    // It must remain enabled even when iteration logging is off.
+    // ==========================================================
     uint32_t after_both_phases = 0u;
 
     CUDA_CHECK(cudaMemcpy(
@@ -2809,77 +2861,109 @@ void G_EXT::_gpu_DAG_construction()
       sizeof(uint32_t),
       cudaMemcpyDeviceToHost));
 
-    const uint32_t top_down_proposed =
-      after_top_down_insert - bottom_up_survived;
-
-    const uint32_t top_down_survived =
-      after_both_phases - bottom_up_survived;
-
-    const uint32_t bottom_up_rollback =
-      bottom_up_proposed - bottom_up_survived;
-
-    const uint32_t top_down_rollback =
-      top_down_proposed - top_down_survived;
-
     host_u0 = after_both_phases;
-    ++outer_iteration;
 
-    printf(
-      "[GPU DAG] iteration=%u, "
-      "BU proposed=%u survived=%u rollback=%u, "
-      "TD proposed=%u survived=%u rollback=%u, "
-      "total survived=%u\n",
-      outer_iteration,
-      bottom_up_proposed,
-      bottom_up_survived,
-      bottom_up_rollback,
-      top_down_proposed,
-      top_down_survived,
-      top_down_rollback,
-      after_both_phases);
+    // ==========================================================
+    // Optional per-iteration diagnostics
+    // ==========================================================
+    if constexpr (kEnableGpuDagIterationLog) {
+      const uint32_t top_down_proposed =
+        after_top_down_insert -
+        bottom_up_survived;
+
+      const uint32_t top_down_survived =
+        after_both_phases -
+        bottom_up_survived;
+
+      const uint32_t bottom_up_rollback =
+        bottom_up_proposed -
+        bottom_up_survived;
+
+      const uint32_t top_down_rollback =
+        top_down_proposed -
+        top_down_survived;
+
+      ++outer_iteration;
+
+      printf(
+        "[GPU DAG] iteration=%u, "
+        "BU proposed=%u survived=%u rollback=%u, "
+        "TD proposed=%u survived=%u rollback=%u, "
+        "total survived=%u\n",
+        outer_iteration,
+        bottom_up_proposed,
+        bottom_up_survived,
+        bottom_up_rollback,
+        top_down_proposed,
+        top_down_survived,
+        top_down_rollback,
+        after_both_phases);
+    }
+  }
+
+  // ============================================================
+  // End of DAG construction core
+  //
+  // Record the core/filter boundary only when detailed logging
+  // is enabled.
+  // ============================================================
+  if constexpr (kEnableGpuDagIterationLog) {
+    CUDA_CHECK(cudaEventRecord(after_core_gpu));
   }
 
   // Match the CPU post-processing semantics:
   //
-  // keep _dvc_picked_endes unchanged and separately mark
-  // selected e-nodes that lie on a selected
-  // root-to-global-leaf path.
-  CUDA_CHECK(cudaEventRecord(after_core_gpu));
+  // Keep _dvc_picked_endes unchanged and separately mark selected
+  // e-nodes lying on a selected root-to-global-leaf path.
   _gpu_filter_root_to_leaf();
 
+  // ============================================================
+  // Stop total DAG timing
+  // ============================================================
   CUDA_CHECK(cudaEventRecord(stop_gpu));
   CUDA_CHECK(cudaEventSynchronize(stop_gpu));
 
-  CUDA_CHECK(cudaEventElapsedTime(
-    &gpu_dag_core_time_ms,
-    start_gpu,
-    after_core_gpu));
-
-  CUDA_CHECK(cudaEventElapsedTime(
-    &gpu_filter_time_ms,
-    after_core_gpu,
-    stop_gpu));
-
+  // Total runtime is always calculated.
   CUDA_CHECK(cudaEventElapsedTime(
     &gpu_dag_total_time_ms,
     start_gpu,
     stop_gpu));
 
-  CUDA_CHECK(cudaEventDestroy(start_gpu));
-  CUDA_CHECK(cudaEventDestroy(after_core_gpu));
-  CUDA_CHECK(cudaEventDestroy(stop_gpu));
+  // Detailed core/filter timing is calculated only when enabled.
+  if constexpr (kEnableGpuDagIterationLog) {
+    CUDA_CHECK(cudaEventElapsedTime(
+      &gpu_dag_core_time_ms,
+      start_gpu,
+      after_core_gpu));
 
-  printf(
-    "GPU DAG core runtime: %.2f (ms)\n",
-    gpu_dag_core_time_ms);
+    CUDA_CHECK(cudaEventElapsedTime(
+      &gpu_filter_time_ms,
+      after_core_gpu,
+      stop_gpu));
 
-  printf(
-    "GPU root-to-leaf filtering runtime: %.2f (ms)\n",
-    gpu_filter_time_ms);
+    printf(
+      "GPU DAG core runtime: %.2f (ms)\n",
+      gpu_dag_core_time_ms);
 
+    printf(
+      "GPU root-to-leaf filtering runtime: %.2f (ms)\n",
+      gpu_filter_time_ms);
+  }
+
+  // Total runtime is always printed.
   printf(
     "GPU DAG total runtime: %.2f (ms)\n",
     gpu_dag_total_time_ms);
+
+  // ============================================================
+  // Destroy timing events
+  // ============================================================
+  if constexpr (kEnableGpuDagIterationLog) {
+    CUDA_CHECK(cudaEventDestroy(after_core_gpu));
+  }
+
+  CUDA_CHECK(cudaEventDestroy(start_gpu));
+  CUDA_CHECK(cudaEventDestroy(stop_gpu));
 }
 
 G_EXT::CsrGraphSnapshot
