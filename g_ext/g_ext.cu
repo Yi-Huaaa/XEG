@@ -51,13 +51,65 @@ constexpr uint32_t kGpuThreads = 512u;
 constexpr uint32_t kGpuReachabilityThreads = 256u;
 constexpr uint32_t kGpuDagBatchSize = 256u;
 
+// Compile-time controller for GPU DAG levelization.
+//
+// Keep this false while verifying that controller separation
+// preserves the original host-driven implementation.
+// Change it to true only after the persistent path compiles
+// and the host-driven baseline still passes all tests.
+constexpr bool kEnableGpuDagHybridLevelization = true;
+
+// Single-block persistent levelization parameters.
+constexpr uint32_t kGpuDagPersistentThreads = 512u;
+
+// Enter persistent mode only after the current frontier and
+// the preceding frontiers have remained at or below this width.
+constexpr uint32_t
+  kGpuDagPersistentEnterFrontierThreshold = 128u;
+
+// Require this many consecutive small frontiers before entering
+// persistent mode. This prevents switching because of one short,
+// temporary dip in frontier width.
+constexpr uint32_t
+  kGpuDagPersistentRequiredSmallLevels = 16u;
+
+// The persistent kernel processes frontiers up to this width.
+// A wider frontier is left unprocessed and returned to the host,
+// which resumes with the existing multi-block kernel.
+//
+// With 512 threads, 1024 nodes require at most two node rounds.
+constexpr uint32_t
+  kGpuDagPersistentEmergencyExitThreshold = 1024u;
+
+static_assert(
+  kGpuDagPersistentThreads > 0u &&
+  kGpuDagPersistentThreads <= 1024u,
+  "Persistent block size must be a valid CUDA block size");
+
+static_assert(
+  kGpuDagPersistentThreads % 32u == 0u,
+  "Persistent block size should be a whole number of warps");
+
+static_assert(
+  kGpuDagPersistentEnterFrontierThreshold > 0u,
+  "Persistent entry threshold must be positive");
+
+static_assert(
+  kGpuDagPersistentRequiredSmallLevels > 0u,
+  "Persistent entry streak must be positive");
+
+static_assert(
+  kGpuDagPersistentEmergencyExitThreshold >=
+    kGpuDagPersistentEnterFrontierThreshold,
+  "Emergency threshold must not be below entry threshold");
+
 // Enables detailed GPU DAG diagnostics:
 //   1. per-iteration proposal/survival/rollback logs
 //   2. core/filter runtime breakdown
 //
 // GPU DAG total runtime and the outer-loop termination copy
 // remain enabled regardless of this flag.
-constexpr bool kEnableGpuDagIterationLog = false;
+constexpr bool kEnableGpuDagIterationLog = true;
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -2051,6 +2103,194 @@ __global__ void _gpu_dag_process_queue_slice_kl(
   }
 }
 
+// Process a sequence of complete Kahn frontiers inside one
+// persistent single-block kernel.
+//
+// The initial frontier is:
+//
+//   queue[initial_queue_begin,
+//         initial_queue_begin + initial_queue_count)
+//
+// Each frontier is a strict snapshot. Nodes appended while the
+// current frontier is processed are not consumed until every
+// thread finishes the current level and reaches __syncthreads().
+//
+// The kernel exits in one of three ways:
+//
+//   Completed:
+//     No next frontier remains. max_level is final.
+//
+//   FrontierTooWide:
+//     The next frontier has not been processed. The host may
+//     resume from the returned queue_begin, queue_count, and
+//     current_level with the original multi-block kernel.
+//
+//   InvalidQueueState:
+//     An append-only queue invariant was violated.
+__global__ void _gpu_dag_process_persistent_tail_kl(
+  const uint32_t num_endes,
+  const uint32_t initial_queue_begin,
+  const uint32_t initial_queue_count,
+  const int32_t initial_current_level,
+  const uint32_t emergency_exit_threshold,
+  uint32_t* queue,
+  uint32_t* queue_size,
+  const uint32_t* selected_state,
+  const uint32_t* traversal_adj,
+  const uint32_t* traversal_adj_ptr,
+  uint32_t* degree,
+  int* level,
+  int* max_level,
+  g_ext_detail::GpuDagPersistentState* persistent_state)
+{
+  __shared__ uint32_t frontier_begin;
+  __shared__ uint32_t frontier_count;
+  __shared__ int32_t current_level;
+  __shared__ uint32_t invalid_queue_state;
+
+  if (threadIdx.x == 0u) {
+    frontier_begin = initial_queue_begin;
+    frontier_count = initial_queue_count;
+    current_level = initial_current_level;
+    invalid_queue_state = 0u;
+  }
+
+  __syncthreads();
+
+  while (true) {
+    // All threads observe the same shared frontier_count, so all
+    // threads take the same return branch.
+    if (frontier_count == 0u) {
+      if (threadIdx.x == 0u) {
+        persistent_state->queue_begin =
+          frontier_begin;
+
+        persistent_state->queue_count =
+          0u;
+
+        persistent_state->current_level =
+          current_level;
+
+        persistent_state->exit_reason =
+          g_ext_detail::GpuDagPersistentExitReason::Completed;
+
+        *max_level = current_level;
+      }
+
+      return;
+    }
+
+    // Leave this frontier unprocessed. The host resumes from
+    // exactly this queue range with the multi-block kernel.
+    if (frontier_count >
+        emergency_exit_threshold) {
+      if (threadIdx.x == 0u) {
+        persistent_state->queue_begin =
+          frontier_begin;
+
+        persistent_state->queue_count =
+          frontier_count;
+
+        persistent_state->current_level =
+          current_level;
+
+        persistent_state->exit_reason =
+          g_ext_detail::GpuDagPersistentExitReason::
+            FrontierTooWide;
+      }
+
+      return;
+    }
+
+    // One block may process more nodes than it has threads.
+    //
+    // With 512 threads:
+    //   1...512 nodes   -> one node round
+    //   513...1024      -> two node rounds
+    for (uint32_t index = threadIdx.x;
+         index < frontier_count;
+         index += blockDim.x) {
+      const uint32_t u =
+        queue[frontier_begin + index];
+
+      level[u] = current_level;
+
+      const uint32_t start =
+        traversal_adj_ptr[u];
+
+      const uint32_t end =
+        traversal_adj_ptr[u + 1u];
+
+      for (uint32_t k = start; k < end; ++k) {
+        const uint32_t v =
+          traversal_adj[k];
+
+        if (selected_state[v] == 0u) {
+          continue;
+        }
+
+        const uint32_t old_degree =
+          atomicSub(&degree[v], 1u);
+
+        if (old_degree == 1u) {
+          const uint32_t position =
+            atomicAdd(queue_size, 1u);
+
+          queue[position] = v;
+        }
+      }
+    }
+
+    // Every node and edge in the current frontier must finish
+    // before thread 0 snapshots the newly appended queue tail.
+    __syncthreads();
+
+    if (threadIdx.x == 0u) {
+      const uint32_t new_queue_size =
+        *queue_size;
+
+      const uint32_t next_queue_begin =
+        frontier_begin + frontier_count;
+
+      // The queue is append-only and every selected node can
+      // enter it at most once.
+      if (new_queue_size < next_queue_begin ||
+          new_queue_size > num_endes) {
+        invalid_queue_state = 1u;
+
+        persistent_state->queue_begin =
+          frontier_begin;
+
+        persistent_state->queue_count =
+          frontier_count;
+
+        persistent_state->current_level =
+          current_level;
+
+        persistent_state->exit_reason =
+          g_ext_detail::GpuDagPersistentExitReason::
+            InvalidQueueState;
+      }
+      else {
+        frontier_begin =
+          next_queue_begin;
+
+        frontier_count =
+          new_queue_size - next_queue_begin;
+
+        ++current_level;
+      }
+    }
+
+    // Publish the next frontier snapshot to every thread.
+    __syncthreads();
+
+    if (invalid_queue_state != 0u) {
+      return;
+    }
+  }
+}
+
 __global__ void _gpu_dag_reverse_level_kl(
   const uint32_t num_endes,
   const uint32_t* selected_state,
@@ -2245,6 +2485,17 @@ __global__ void _gpu_build_in_subgraph_kl(
 void G_EXT::_gpu_dag_levelize(
   const bool is_top_down)
 {
+  if constexpr (kEnableGpuDagHybridLevelization) {
+    _gpu_dag_levelize_hybrid(is_top_down);
+  }
+  else {
+    _gpu_dag_levelize_host_driven(is_top_down);
+  }
+}
+
+void G_EXT::_gpu_dag_levelize_host_driven(
+  const bool is_top_down)
+{
   // Top-down:
   //   incoming dependencies = selected parents
   //   traversal = parent -> child
@@ -2359,6 +2610,328 @@ void G_EXT::_gpu_dag_levelize(
     sizeof(int),
     cudaMemcpyHostToDevice));
 
+  if (!is_top_down && current_level > 0) {
+    _gpu_dag_reverse_level_kl
+      <<<node_blocks, kGpuThreads>>>(
+        _num_ende,
+        _dvc_picked_endes,
+        _dvc_level,
+        current_level);
+
+    cudaCheckErrors(
+      "_gpu_dag_reverse_level_kl failed");
+  }
+}
+
+void G_EXT::_gpu_dag_levelize_hybrid(
+  const bool is_top_down)
+{
+  if (_dvc_dag_persistent_state == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_levelize_hybrid requires "
+      "an allocated persistent-state buffer");
+  }
+
+  // Top-down:
+  //   incoming dependencies = selected parents
+  //   traversal = parent -> child
+  //
+  // Bottom-up:
+  //   incoming dependencies = selected children
+  //   traversal = child -> parent
+
+  const uint32_t* incoming_adj =
+    is_top_down
+      ? _dvc_global_inv_adj_1D
+      : _dvc_global_adj_1D;
+
+  const uint32_t* incoming_adj_ptr =
+    is_top_down
+      ? _dvc_global_inv_adj_1D_ptr
+      : _dvc_global_adj_1D_ptr;
+
+  const uint32_t* traversal_adj =
+    is_top_down
+      ? _dvc_global_adj_1D
+      : _dvc_global_inv_adj_1D;
+
+  const uint32_t* traversal_adj_ptr =
+    is_top_down
+      ? _dvc_global_adj_1D_ptr
+      : _dvc_global_inv_adj_1D_ptr;
+
+  uint32_t* degree =
+    is_top_down
+      ? _dvc_indegree
+      : _dvc_inv_indegree;
+
+  // Reuse the append-only queue allocated by tree construction.
+  // Queue contents do not need to be cleared.
+  CUDA_CHECK(cudaMemset(
+    _dvc_q_sz,
+    0,
+    sizeof(uint32_t)));
+
+  const uint32_t node_blocks =
+    (_num_ende + kGpuThreads - 1u) /
+    kGpuThreads;
+
+  // Degree construction and initial zero-degree queue remain
+  // multi-block. This is unchanged from the original version.
+  _gpu_dag_init_levelization_queue_kl
+    <<<node_blocks, kGpuThreads>>>(
+      _num_ende,
+      _dvc_picked_endes,
+      incoming_adj,
+      incoming_adj_ptr,
+      degree,
+      _dvc_level,
+      _dvc_q,
+      _dvc_q_sz);
+
+  cudaCheckErrors(
+    "_gpu_dag_init_levelization_queue_kl failed");
+
+  uint32_t initial_queue_size = 0u;
+
+  CUDA_CHECK(cudaMemcpy(
+    &initial_queue_size,
+    _dvc_q_sz,
+    sizeof(uint32_t),
+    cudaMemcpyDeviceToHost));
+
+  if (initial_queue_size > _num_ende) {
+    throw std::logic_error(
+      "GPU DAG initial levelization queue exceeded "
+      "the number of e-nodes");
+  }
+
+  uint32_t queue_begin = 0u;
+  uint32_t queue_count = initial_queue_size;
+
+  int current_level = 0;
+
+  uint32_t consecutive_small_levels = 0u;
+
+  // The persistent kernel writes _dvc_max_level only when it
+  // completes all remaining frontiers. If the host finishes the
+  // traversal, the host writes _dvc_max_level as before.
+  bool device_max_level_is_final = false;
+
+  while (queue_count > 0u) {
+    if (queue_count <=
+        kGpuDagPersistentEnterFrontierThreshold) {
+      ++consecutive_small_levels;
+    }
+    else {
+      consecutive_small_levels = 0u;
+    }
+
+    // Enter persistent mode on the Nth consecutive small
+    // frontier. The current frontier has not yet been processed.
+    if (consecutive_small_levels >=
+        kGpuDagPersistentRequiredSmallLevels) {
+      if constexpr (kEnableGpuDagIterationLog) {
+        printf(
+          "[GPU DAG Levelize] dir=%s, "
+          "enter persistent, "
+          "level=%d, frontier=%u, streak=%u\n",
+          is_top_down ? "TD" : "BU",
+          current_level,
+          queue_count,
+          consecutive_small_levels);
+      }
+
+      // Initial state is passed through kernel arguments, not
+      // copied into the state buffer. This avoids one H2D copy.
+      _gpu_dag_process_persistent_tail_kl
+        <<<1u, kGpuDagPersistentThreads>>>(
+          _num_ende,
+          queue_begin,
+          queue_count,
+          static_cast<int32_t>(current_level),
+          kGpuDagPersistentEmergencyExitThreshold,
+          _dvc_q,
+          _dvc_q_sz,
+          _dvc_picked_endes,
+          traversal_adj,
+          traversal_adj_ptr,
+          degree,
+          _dvc_level,
+          _dvc_max_level,
+          _dvc_dag_persistent_state);
+
+      cudaCheckErrors(
+        "_gpu_dag_process_persistent_tail_kl failed");
+
+      // One compact synchronization after the entire persistent
+      // segment, rather than one synchronization per level.
+      g_ext_detail::GpuDagPersistentState
+        host_state{};
+
+      CUDA_CHECK(cudaMemcpy(
+        &host_state,
+        _dvc_dag_persistent_state,
+        sizeof(host_state),
+        cudaMemcpyDeviceToHost));
+
+      if (host_state.current_level < 0) {
+        throw std::logic_error(
+          "GPU DAG persistent levelization returned "
+          "a negative current level");
+      }
+
+      if (static_cast<uint32_t>(
+            host_state.current_level) >
+          _num_ende) {
+        throw std::logic_error(
+          "GPU DAG persistent levelization returned "
+          "too many levels");
+      }
+
+      if (host_state.queue_begin > _num_ende ||
+          host_state.queue_count >
+            _num_ende - host_state.queue_begin) {
+        throw std::logic_error(
+          "GPU DAG persistent levelization returned "
+          "an invalid queue range");
+      }
+
+      queue_begin =
+        host_state.queue_begin;
+
+      queue_count =
+        host_state.queue_count;
+
+      current_level =
+        static_cast<int>(
+          host_state.current_level);
+
+      if (host_state.exit_reason ==
+          g_ext_detail::GpuDagPersistentExitReason::
+            Completed) {
+        if (queue_count != 0u) {
+          throw std::logic_error(
+            "Completed persistent levelization "
+            "returned a non-empty frontier");
+        }
+
+        device_max_level_is_final = true;
+
+        if constexpr (kEnableGpuDagIterationLog) {
+          printf(
+            "[GPU DAG Levelize] dir=%s, "
+            "persistent completed, "
+            "num_levels=%d\n",
+            is_top_down ? "TD" : "BU",
+            current_level);
+        }
+
+        break;
+      }
+
+      if (host_state.exit_reason ==
+          g_ext_detail::GpuDagPersistentExitReason::
+            FrontierTooWide) {
+        if (queue_count <=
+            kGpuDagPersistentEmergencyExitThreshold) {
+          throw std::logic_error(
+            "Persistent levelization reported a wide "
+            "frontier below the emergency threshold");
+        }
+
+        if constexpr (kEnableGpuDagIterationLog) {
+          printf(
+            "[GPU DAG Levelize] dir=%s, "
+            "persistent exit=frontier_too_wide, "
+            "level=%d, frontier=%u\n",
+            is_top_down ? "TD" : "BU",
+            current_level,
+            queue_count);
+        }
+
+        // The returned frontier has not been processed.
+        // Process it using the original multi-block path.
+        consecutive_small_levels = 0u;
+        continue;
+      }
+
+      throw std::logic_error(
+        "GPU DAG persistent levelization detected "
+        "an invalid append-only queue state");
+    }
+
+    // ==========================================================
+    // Original host-driven multi-block processing
+    //
+    // This block intentionally matches the original
+    // _gpu_dag_levelize() implementation.
+    // ==========================================================
+    const uint32_t queue_blocks =
+      (queue_count + kGpuThreads - 1u) /
+      kGpuThreads;
+
+    _gpu_dag_process_queue_slice_kl
+      <<<queue_blocks, kGpuThreads>>>(
+        queue_count,
+        queue_begin,
+        _dvc_q,
+        _dvc_q_sz,
+        _dvc_picked_endes,
+        traversal_adj,
+        traversal_adj_ptr,
+        degree,
+        _dvc_level,
+        current_level);
+
+    cudaCheckErrors(
+      "_gpu_dag_process_queue_slice_kl failed");
+
+    uint32_t new_queue_size = 0u;
+
+    CUDA_CHECK(cudaMemcpy(
+      &new_queue_size,
+      _dvc_q_sz,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    const uint32_t processed_queue_end =
+      queue_begin + queue_count;
+
+    if (new_queue_size < processed_queue_end) {
+      throw std::logic_error(
+        "GPU DAG levelization append-only queue shrank");
+    }
+
+    if (new_queue_size > _num_ende) {
+      throw std::logic_error(
+        "GPU DAG levelization queue exceeded "
+        "the number of e-nodes");
+    }
+
+    queue_begin =
+      processed_queue_end;
+
+    queue_count =
+      new_queue_size - queue_begin;
+
+    ++current_level;
+  }
+
+  // When traversal ended in the host-driven path, preserve the
+  // original H2D max-level update.
+  //
+  // When the persistent kernel completed the traversal, it
+  // already wrote the final value and this copy is skipped.
+  if (!device_max_level_is_final) {
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_max_level,
+      &current_level,
+      sizeof(int),
+      cudaMemcpyHostToDevice));
+  }
+
+  // Bottom-up reverse remains the existing multi-block kernel.
   if (!is_top_down && current_level > 0) {
     _gpu_dag_reverse_level_kl
       <<<node_blocks, kGpuThreads>>>(
@@ -2678,6 +3251,10 @@ void G_EXT::_gpu_allocate_dag_buffers()
   cuda_malloc_array(_dvc_dag_insert_decision, _num_ende);
   cuda_malloc_array(_dvc_dag_candidate_level, _num_ende);
   cuda_malloc_array(_dvc_dag_u0, 1);
+
+  cuda_malloc_array(
+    _dvc_dag_persistent_state,
+    1u);
 }
 
 void G_EXT::_gpu_initialize_dag_buffers()
@@ -2685,7 +3262,8 @@ void G_EXT::_gpu_initialize_dag_buffers()
   if (_dvc_dag_new_inserted == nullptr ||
       _dvc_dag_insert_decision == nullptr ||
       _dvc_dag_candidate_level == nullptr ||
-      _dvc_dag_u0 == nullptr) 
+      _dvc_dag_u0 == nullptr ||
+      _dvc_dag_persistent_state == nullptr)
   {
     throw std::logic_error(
       "_gpu_initialize_dag_buffers called before DAG allocation");
@@ -2719,6 +3297,11 @@ void G_EXT::_gpu_initialize_dag_buffers()
 
   CUDA_CHECK(cudaMemset(_dvc_dag_u0, 0,
     sizeof(uint32_t)));
+  
+  CUDA_CHECK(cudaMemset(
+    _dvc_dag_persistent_state,
+    0,
+    sizeof(g_ext_detail::GpuDagPersistentState)));    
 
   // Reuse the filtering buffers already allocated by tree construction.
   CUDA_CHECK(cudaMemset(_dvc_from_roots, 0,
@@ -2733,6 +3316,7 @@ void G_EXT::_gpu_initialize_dag_buffers()
 
 void G_EXT::_gpu_free_dag_buffers() noexcept
 {
+  cuda_free_and_null(_dvc_dag_persistent_state);
   cuda_free_and_null(_dvc_dag_u0);
   cuda_free_and_null(_dvc_dag_candidate_level);
   cuda_free_and_null(_dvc_dag_insert_decision);

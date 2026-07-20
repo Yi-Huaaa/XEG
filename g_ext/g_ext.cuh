@@ -40,6 +40,38 @@ enum class DagKernel : uint32_t {
   Block  = 2,
 };
 
+namespace g_ext_detail {
+
+enum class GpuDagPersistentExitReason : uint32_t
+{
+  Completed = 0u,
+  FrontierTooWide = 1u,
+  InvalidQueueState = 2u
+};
+
+// One compact device-to-host snapshot returned by the
+// single-block persistent levelization kernel.
+//
+// The persistent kernel receives its initial frontier through
+// kernel arguments. This buffer is written only when the kernel
+// completes or exits back to the host.
+//
+// Keeping the input in kernel arguments avoids an additional
+// host-to-device state copy before every persistent launch.
+struct alignas(16) GpuDagPersistentState
+{
+  uint32_t queue_begin;
+  uint32_t queue_count;
+  int32_t current_level;
+  GpuDagPersistentExitReason exit_reason;
+};
+
+static_assert(
+  sizeof(GpuDagPersistentState) == 16u,
+  "GpuDagPersistentState must remain a compact 16-byte POD");
+
+}  // namespace g_ext_detail
+
 class G_EXT {
 
 public:
@@ -498,6 +530,20 @@ private:
   // is_top_down = false:
   //   leaves -> roots, followed by level reversal
   void _gpu_dag_levelize(bool is_top_down);
+  // Original host-controlled implementation.
+  //
+  // Every frontier is processed by one multi-block kernel launch,
+  // followed by one device-to-host queue-size copy.
+  void _gpu_dag_levelize_host_driven(
+    const bool is_top_down);
+
+  // Hybrid implementation.
+  //
+  // Early or wide frontiers remain host-driven and multi-block.
+  // After a stable sequence of small frontiers, the remaining
+  // levels are processed by one single-block persistent kernel.
+  void _gpu_dag_levelize_hybrid(
+    const bool is_top_down);
 
   // GPU DAG memory lifecycle
   void _gpu_allocate_dag_buffers();
@@ -682,11 +728,11 @@ private:
   uint32_t* _dvc_dag_insert_decision = nullptr;
   int* _dvc_dag_candidate_level = nullptr;
   uint32_t* _dvc_dag_u0 = nullptr;
+  g_ext_detail::GpuDagPersistentState*
+    _dvc_dag_persistent_state = nullptr;  
 }; // class G_EXT
 
 
 #endif
-
-
 
 
