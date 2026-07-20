@@ -49,8 +49,7 @@
 namespace {
 
 constexpr uint32_t kGpuReachabilityThreads = 256u;
-// constexpr uint32_t kGpuDagBatchSize = 512u;
-constexpr uint32_t kGpuDagBatchSize = 1u;
+constexpr uint32_t kGpuDagBatchSize = 256u;
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -1668,22 +1667,31 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   return std::make_pair(tree_ret, dag_ret);
 }
 
-// One GPU thread evaluates one e-node slot from the current batch.
+// One GPU thread evaluates one e-node slot assigned to the
+// current transposed batch.
 //
 // selected_state:
 //   0 = unselected
 //   1 = stable selected
 //   2 = tentative selected
 //
-// Each kernel launch handles one contiguous batch of e-node IDs.
+// Candidate IDs are assigned by:
+//
+//   u = threadIdx.x * num_batches + batch_index
+//
+// Therefore, neighboring e-node IDs are spread across different
+// sequential kernel launches instead of being evaluated together
+// in one contiguous speculative batch.
+//
 // Candidate evaluation treats both state 1 and state 2 as selected.
-// Therefore, later kernel batches can observe tentative nodes inserted
-// by earlier batches in the same insertion phase.
+// Later kernel batches can observe tentative nodes inserted by
+// earlier batches in the same insertion phase.
 //
 // All insertion batches finish before one levelization/finalization pass.
 __global__ void _gpu_dag_insert_thread_kl(
   const uint32_t num_endes,
-  const uint32_t batch_begin,
+  const uint32_t batch_index,
+  const uint32_t num_batches,
   const bool is_top_down_insertion,
   uint32_t* selected_state,
   const uint32_t* forward_adj,
@@ -1693,10 +1701,19 @@ __global__ void _gpu_dag_insert_thread_kl(
   int* level,
   uint32_t* u0)
 {
+  // Full-transpose assignment:
+  //
+  //   contiguous mapping:
+  //     u = batch_index * batch_size + lane
+  //
+  //   transposed mapping:
+  //     u = lane * num_batches + batch_index
+  //
+  // Neighboring e-node IDs are therefore placed in different
+  // sequential kernel launches.
   const uint32_t u =
-    batch_begin +
-    blockIdx.x * blockDim.x +
-    threadIdx.x;
+    threadIdx.x * num_batches +
+    batch_index;
 
   if (u >= num_endes) {
     return;
@@ -1892,13 +1909,18 @@ void G_EXT::_gpu_dag_insert_thread(
       "initialized GPU DAG buffers");
   }
 
-  for (uint32_t batch_begin = 0u;
-       batch_begin < _num_ende;
-       batch_begin += kGpuDagBatchSize) {
+  const uint32_t num_batches =
+    (_num_ende + kGpuDagBatchSize - 1u) /
+    kGpuDagBatchSize;
+
+  for (uint32_t batch_index = 0u;
+       batch_index < num_batches;
+       ++batch_index) {
     _gpu_dag_insert_thread_kl
       <<<1u, kGpuDagBatchSize>>>(
         _num_ende,
-        batch_begin,
+        batch_index,
+        num_batches,
         is_top_down_insertion,
         _dvc_picked_endes,
         _dvc_global_adj_1D,
@@ -1911,7 +1933,6 @@ void G_EXT::_gpu_dag_insert_thread(
     cudaCheckErrors(
       "_gpu_dag_insert_thread_kl failed");
   }
-  
 }
 
 // Construct the selected-subgraph degree and append all
