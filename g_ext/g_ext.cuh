@@ -460,17 +460,20 @@ private:
       const std::vector<bool>& picked_endes);
   // GPU version
   void _gpu_DAG_construction();
-  // Thread-level batched live optimistic insertion.
+
+  // Thread-level batched live optimistic insertion using
+  // intra-warp max-dispersion mapping.
   //
-  // One call scans all e-node slots through sequential kernel
-  // launches of kGpuDagBatchSize lanes.
+  // The 32 lanes of one warp evaluate e-node IDs separated by
+  // num_warp_slots:
   //
-  // Candidate IDs are assigned using a deterministic full-transpose
-  // mapping so neighboring IDs are spread across different kernel
-  // launches. Earlier batches publish tentative state-2 nodes that
-  // later batches may observe.
+  //   u = lane * num_warp_slots + warp_slot
   //
-  // Levelization/finalization occurs only after all batches finish.
+  // Consecutive e-node IDs are assigned to different warp slots,
+  // reducing structurally correlated candidates within one warp.
+  // Earlier kernel batches publish tentative state-2 nodes that
+  // later batches may observe. Levelization/finalization occurs
+  // only after all batches in the insertion phase finish.
   //
   // is_top_down_insertion = true:
   //   require at least one selected parent
@@ -480,7 +483,8 @@ private:
   //   require at least one selected child
   //   proposed level = min child level - 1
   void _gpu_dag_insert_thread(
-    bool is_top_down_insertion);
+    bool is_top_down_insertion);  
+        
   // Finalize tentative state-2 nodes after levelization.
   //
   // residual degree == 0:

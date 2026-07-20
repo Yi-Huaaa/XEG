@@ -49,7 +49,20 @@
 namespace {
 
 constexpr uint32_t kGpuReachabilityThreads = 256u;
+constexpr uint32_t kGpuWarpSize = 32u;
 constexpr uint32_t kGpuDagBatchSize = 256u;
+
+static_assert(
+  kGpuDagBatchSize >= kGpuWarpSize,
+  "GPU DAG batch size must contain at least one warp");
+
+static_assert(
+  kGpuDagBatchSize % kGpuWarpSize == 0u,
+  "GPU DAG batch size must be a multiple of 32");
+
+static_assert(
+  kGpuDagBatchSize <= 1024u,
+  "GPU DAG batch size exceeds the CUDA block-size limit");
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -1667,31 +1680,37 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   return std::make_pair(tree_ret, dag_ret);
 }
 
-// One GPU thread evaluates one e-node slot assigned to the
-// current transposed batch.
+// One GPU thread evaluates one e-node under the
+// intra-warp max-dispersion schedule.
 //
 // selected_state:
 //   0 = unselected
 //   1 = stable selected
 //   2 = tentative selected
 //
-// Candidate IDs are assigned by:
+// Let:
+//   lane              = thread position inside its warp
+//   warp_in_batch     = warp position inside this kernel batch
+//   warp_slot         = global sequential warp slot
+//   num_warp_slots    = ceil(num_endes / 32)
 //
-//   u = threadIdx.x * num_batches + batch_index
+// Candidate mapping:
 //
-// Therefore, neighboring e-node IDs are spread across different
-// sequential kernel launches instead of being evaluated together
-// in one contiguous speculative batch.
+//   u = lane * num_warp_slots + warp_slot
 //
-// Candidate evaluation treats both state 1 and state 2 as selected.
-// Later kernel batches can observe tentative nodes inserted by
-// earlier batches in the same insertion phase.
+// Therefore, the 32 lanes of one warp are spread across the
+// complete e-node ID range instead of processing consecutive IDs.
 //
-// All insertion batches finish before one levelization/finalization pass.
+// Kernel batches remain sequential, so later batches observe
+// tentative state-2 nodes published by earlier batches.
+//
+// All insertion batches still finish before one
+// levelization/finalization pass.
 __global__ void _gpu_dag_insert_thread_kl(
   const uint32_t num_endes,
   const uint32_t batch_index,
-  const uint32_t num_batches,
+  const uint32_t num_warp_slots,
+  const uint32_t warps_per_batch,
   const bool is_top_down_insertion,
   uint32_t* selected_state,
   const uint32_t* forward_adj,
@@ -1701,23 +1720,39 @@ __global__ void _gpu_dag_insert_thread_kl(
   int* level,
   uint32_t* u0)
 {
-  // Full-transpose assignment:
-  //
-  //   contiguous mapping:
-  //     u = batch_index * batch_size + lane
-  //
-  //   transposed mapping:
-  //     u = lane * num_batches + batch_index
-  //
-  // Neighboring e-node IDs are therefore placed in different
-  // sequential kernel launches.
-  const uint32_t u =
-    threadIdx.x * num_batches +
-    batch_index;
+  const uint32_t thread_in_batch =
+    threadIdx.x;
 
-  if (u >= num_endes) {
+  const uint32_t lane =
+    thread_in_batch % kGpuWarpSize;
+
+  const uint32_t warp_in_batch =
+    thread_in_batch / kGpuWarpSize;
+
+  if (warp_in_batch >= warps_per_batch) {
     return;
   }
+
+  const uint32_t warp_slot =
+    batch_index * warps_per_batch +
+    warp_in_batch;
+
+  if (warp_slot >= num_warp_slots) {
+    return;
+  }
+
+  const uint64_t candidate =
+    static_cast<uint64_t>(lane) *
+      static_cast<uint64_t>(num_warp_slots) +
+    static_cast<uint64_t>(warp_slot);
+
+  if (candidate >=
+      static_cast<uint64_t>(num_endes)) {
+    return;
+  }
+
+  const uint32_t u =
+    static_cast<uint32_t>(candidate);
 
   // Atomic load because selected_state is updated live by
   // other threads in this same kernel.
@@ -1909,9 +1944,17 @@ void G_EXT::_gpu_dag_insert_thread(
       "initialized GPU DAG buffers");
   }
 
+  const uint32_t warps_per_batch =
+    kGpuDagBatchSize /
+    kGpuWarpSize;
+
+  const uint32_t num_warp_slots =
+    (_num_ende + kGpuWarpSize - 1u) /
+    kGpuWarpSize;
+
   const uint32_t num_batches =
-    (_num_ende + kGpuDagBatchSize - 1u) /
-    kGpuDagBatchSize;
+    (num_warp_slots + warps_per_batch - 1u) /
+    warps_per_batch;
 
   for (uint32_t batch_index = 0u;
        batch_index < num_batches;
@@ -1920,7 +1963,8 @@ void G_EXT::_gpu_dag_insert_thread(
       <<<1u, kGpuDagBatchSize>>>(
         _num_ende,
         batch_index,
-        num_batches,
+        num_warp_slots,
+        warps_per_batch,
         is_top_down_insertion,
         _dvc_picked_endes,
         _dvc_global_adj_1D,
@@ -1933,6 +1977,7 @@ void G_EXT::_gpu_dag_insert_thread(
     cudaCheckErrors(
       "_gpu_dag_insert_thread_kl failed");
   }
+  
 }
 
 // Construct the selected-subgraph degree and append all
@@ -2744,6 +2789,31 @@ void G_EXT::_gpu_DAG_construction()
   CUDA_CHECK(cudaEventCreate(&start_gpu));
   CUDA_CHECK(cudaEventCreate(&after_core_gpu));
   CUDA_CHECK(cudaEventCreate(&stop_gpu));
+
+  const uint32_t mapping_warps_per_batch =
+    kGpuDagBatchSize /
+    kGpuWarpSize;
+
+  const uint32_t mapping_num_warp_slots =
+    (_num_ende + kGpuWarpSize - 1u) /
+    kGpuWarpSize;
+
+  const uint32_t mapping_num_batches =
+    (mapping_num_warp_slots +
+     mapping_warps_per_batch - 1u) /
+    mapping_warps_per_batch;
+
+  printf(
+    "[GPU DAG Mapping] "
+    "method=intra-warp-max-dispersion, "
+    "batch_size=%u, warp_size=%u, "
+    "warps_per_batch=%u, "
+    "warp_slots=%u, batches=%u\n",
+    kGpuDagBatchSize,
+    kGpuWarpSize,
+    mapping_warps_per_batch,
+    mapping_num_warp_slots,
+    mapping_num_batches);
 
   CUDA_CHECK(cudaEventRecord(start_gpu));
 
