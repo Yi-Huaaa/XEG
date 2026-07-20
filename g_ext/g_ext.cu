@@ -51,14 +51,483 @@ constexpr uint32_t kGpuThreads = 512u;
 constexpr uint32_t kGpuReachabilityThreads = 256u;
 constexpr uint32_t kGpuDagBatchSize = 256u;
 
-// Controls all optional GPU DAG diagnostics:
-//   1. per-iteration proposal/survival/rollback logs
-//   2. CUDA event timing
-//   3. GPU DAG runtime summaries
+// Enables the detailed GPU DAG iteration log:
 //
-// The device-to-host copy required for outer-loop termination
-// remains enabled regardless of this flag.
-constexpr bool kEnableGpuDagIterationLog = true;
+//   BU proposed / survived / rollback
+//   TD proposed / survived / rollback
+//   core and filtering runtime breakdown
+//
+// GPU DAG total runtime remains enabled regardless of this flag.
+constexpr bool kEnableGpuDagIterationLog = false;
+
+// Collects frontier-width statistics from every GPU DAG
+// levelization call.
+//
+// This flag does not add CUDA copies or kernel launches.
+// It only processes queue_count values that are already present
+// on the host in the current implementation.
+constexpr bool kEnableGpuDagLevelizationStats = true;
+
+// Collects the ordered frontier width of every level in every
+// GPU DAG levelization call.
+//
+// Widths are buffered on the host and printed only after the
+// timed DAG construction region. Therefore, stdout output does
+// not directly pollute the CUDA-event timing region.
+//
+// The host-side vector bookkeeping can still slightly perturb
+// kernel submission timing, so shape-profiling runs should not
+// be used as final performance measurements.
+constexpr bool kEnableGpuDagLevelizationShape = true;
+
+// Enables the common profiling machinery whenever either the
+// aggregate statistics or the detailed level shape is needed.
+constexpr bool kEnableGpuDagLevelizationProfile =
+  kEnableGpuDagLevelizationStats ||
+  kEnableGpuDagLevelizationShape;
+
+// Temporarily disable both CPU-side and GPU-side CP-SAT solving
+// while collecting levelization statistics.
+constexpr bool kEnableCpsatSolver = false;
+
+struct GpuDagFrontierStats
+{
+  uint64_t num_levelizations = 0u;
+  uint64_t num_levels = 0u;
+
+  uint64_t levels_at_most_one_block = 0u;
+
+  uint64_t total_frontier_nodes = 0u;
+  uint64_t nodes_in_one_block_levels = 0u;
+
+  uint64_t estimated_single_block_rounds = 0u;
+
+  uint32_t max_frontier_width = 0u;
+
+  void begin_levelization() noexcept
+  {
+    ++num_levelizations;
+  }
+
+  void observe_frontier(
+    const uint32_t frontier_width) noexcept
+  {
+    ++num_levels;
+
+    total_frontier_nodes +=
+      static_cast<uint64_t>(frontier_width);
+
+    if (frontier_width <= kGpuThreads) {
+      ++levels_at_most_one_block;
+
+      nodes_in_one_block_levels +=
+        static_cast<uint64_t>(frontier_width);
+    }
+
+    if (frontier_width > max_frontier_width) {
+      max_frontier_width = frontier_width;
+    }
+
+    estimated_single_block_rounds +=
+      (static_cast<uint64_t>(frontier_width) +
+       static_cast<uint64_t>(kGpuThreads) - 1u) /
+      static_cast<uint64_t>(kGpuThreads);
+  }
+};
+
+// Stores the ordered frontier widths of one complete GPU DAG
+// levelization call.
+//
+// global_call_index:
+//   Order among all TD and BU levelization calls.
+//
+// direction_call_index:
+//   Order among calls of the same direction.
+//
+// frontier_widths[i]:
+//   Number of e-nodes processed at processing level i.
+struct GpuDagLevelizationCallShape
+{
+  uint64_t global_call_index = 0u;
+  uint64_t direction_call_index = 0u;
+
+  bool is_top_down = true;
+
+  std::vector<uint32_t> frontier_widths;
+};
+
+struct GpuDagLevelizationProfile
+{
+  static constexpr size_t kNoActiveCall =
+    std::numeric_limits<size_t>::max();
+
+  bool active = false;
+
+  GpuDagFrontierStats top_down;
+  GpuDagFrontierStats bottom_up;
+
+  // Ordered list of every levelization call executed during
+  // the current GPU DAG construction.
+  std::vector<GpuDagLevelizationCallShape> calls;
+
+  uint64_t next_global_call_index = 0u;
+  uint64_t next_top_down_call_index = 0u;
+  uint64_t next_bottom_up_call_index = 0u;
+
+  size_t active_call_index = kNoActiveCall;
+
+  void reset()
+  {
+    top_down = {};
+    bottom_up = {};
+
+    calls.clear();
+
+    next_global_call_index = 0u;
+    next_top_down_call_index = 0u;
+    next_bottom_up_call_index = 0u;
+
+    active_call_index = kNoActiveCall;
+
+    active = true;
+  }
+
+  void stop() noexcept
+  {
+    active = false;
+    active_call_index = kNoActiveCall;
+  }
+
+  GpuDagFrontierStats& select(
+    const bool is_top_down) noexcept
+  {
+    return is_top_down
+      ? top_down
+      : bottom_up;
+  }
+
+  void begin_levelization(
+    const bool is_top_down)
+  {
+    if (!active) {
+      return;
+    }
+
+    // Preserve the original aggregate statistics.
+    if constexpr (kEnableGpuDagLevelizationStats) {
+      select(is_top_down).begin_levelization();
+    }
+
+    // Create one ordered call record for detailed shape data.
+    if constexpr (kEnableGpuDagLevelizationShape) {
+      GpuDagLevelizationCallShape call;
+
+      call.global_call_index =
+        next_global_call_index++;
+
+      call.is_top_down =
+        is_top_down;
+
+      if (is_top_down) {
+        call.direction_call_index =
+          next_top_down_call_index++;
+      }
+      else {
+        call.direction_call_index =
+          next_bottom_up_call_index++;
+      }
+
+      // Most calls will not need this many levels, but this
+      // reduces repeated host allocations for deeper graphs.
+      call.frontier_widths.reserve(1024u);
+
+      calls.push_back(
+        std::move(call));
+
+      active_call_index =
+        calls.size() - 1u;
+    }
+  }
+
+  void observe_frontier(
+    const bool is_top_down,
+    const uint32_t frontier_width)
+  {
+    if (!active) {
+      return;
+    }
+
+    // Preserve the original aggregate statistics.
+    if constexpr (kEnableGpuDagLevelizationStats) {
+      select(is_top_down).observe_frontier(
+        frontier_width);
+    }
+
+    // Store the frontier in processing order.
+    if constexpr (kEnableGpuDagLevelizationShape) {
+      if (active_call_index == kNoActiveCall ||
+          active_call_index >= calls.size()) {
+        throw std::logic_error(
+          "GPU DAG frontier observed without "
+          "an active levelization call");
+      }
+
+      GpuDagLevelizationCallShape& call =
+        calls[active_call_index];
+
+      if (call.is_top_down != is_top_down) {
+        throw std::logic_error(
+          "GPU DAG levelization direction changed "
+          "inside one profiling call");
+      }
+
+      call.frontier_widths.push_back(
+        frontier_width);
+    }
+  }
+
+  void end_levelization() noexcept
+  {
+    active_call_index = kNoActiveCall;
+  }
+};
+
+// The GPU DAG construction and its levelization calls run on
+// the same host thread.
+//
+// thread_local prevents independent host threads from sharing
+// profiling state.
+thread_local GpuDagLevelizationProfile
+  g_gpu_dag_levelization_profile;
+
+
+GpuDagFrontierStats merge_gpu_dag_frontier_stats(
+  const GpuDagFrontierStats& lhs,
+  const GpuDagFrontierStats& rhs) noexcept
+{
+  GpuDagFrontierStats result;
+
+  result.num_levelizations =
+    lhs.num_levelizations +
+    rhs.num_levelizations;
+
+  result.num_levels =
+    lhs.num_levels +
+    rhs.num_levels;
+
+  result.levels_at_most_one_block =
+    lhs.levels_at_most_one_block +
+    rhs.levels_at_most_one_block;
+
+  result.total_frontier_nodes =
+    lhs.total_frontier_nodes +
+    rhs.total_frontier_nodes;
+
+  result.nodes_in_one_block_levels =
+    lhs.nodes_in_one_block_levels +
+    rhs.nodes_in_one_block_levels;
+
+  result.estimated_single_block_rounds =
+    lhs.estimated_single_block_rounds +
+    rhs.estimated_single_block_rounds;
+
+  result.max_frontier_width =
+    lhs.max_frontier_width > rhs.max_frontier_width
+      ? lhs.max_frontier_width
+      : rhs.max_frontier_width;
+
+  return result;
+}
+
+
+void print_gpu_dag_frontier_stats(
+  const char* direction,
+  const GpuDagFrontierStats& stats)
+{
+  const double small_level_percentage =
+    stats.num_levels == 0u
+      ? 0.0
+      : 100.0 *
+        static_cast<double>(
+          stats.levels_at_most_one_block) /
+        static_cast<double>(
+          stats.num_levels);
+
+  const double small_node_percentage =
+    stats.total_frontier_nodes == 0u
+      ? 0.0
+      : 100.0 *
+        static_cast<double>(
+          stats.nodes_in_one_block_levels) /
+        static_cast<double>(
+          stats.total_frontier_nodes);
+
+  const double average_frontier_width =
+    stats.num_levels == 0u
+      ? 0.0
+      : static_cast<double>(
+          stats.total_frontier_nodes) /
+        static_cast<double>(
+          stats.num_levels);
+
+  const double average_rounds_per_level =
+    stats.num_levels == 0u
+      ? 0.0
+      : static_cast<double>(
+          stats.estimated_single_block_rounds) /
+        static_cast<double>(
+          stats.num_levels);
+
+  printf(
+    "[GPU Levelization Stats] "
+    "dir=%s, "
+    "calls=%llu, "
+    "levels=%llu, "
+    "levels<=%u=%llu (%.1f%%), "
+    "nodes-in-levels<=%u=%llu/%llu (%.1f%%), "
+    "max-frontier=%u, "
+    "avg-frontier=%.1f, "
+    "estimated-single-block-rounds=%llu, "
+    "avg-rounds-per-level=%.2f\n",
+    direction,
+    static_cast<unsigned long long>(
+      stats.num_levelizations),
+    static_cast<unsigned long long>(
+      stats.num_levels),
+    kGpuThreads,
+    static_cast<unsigned long long>(
+      stats.levels_at_most_one_block),
+    small_level_percentage,
+    kGpuThreads,
+    static_cast<unsigned long long>(
+      stats.nodes_in_one_block_levels),
+    static_cast<unsigned long long>(
+      stats.total_frontier_nodes),
+    small_node_percentage,
+    stats.max_frontier_width,
+    average_frontier_width,
+    static_cast<unsigned long long>(
+      stats.estimated_single_block_rounds),
+    average_rounds_per_level);
+}
+
+
+void print_gpu_dag_levelization_profile(
+  const GpuDagLevelizationProfile& profile)
+{
+  const GpuDagFrontierStats combined =
+    merge_gpu_dag_frontier_stats(
+      profile.top_down,
+      profile.bottom_up);
+
+  printf(
+    "[GPU Levelization Profile] "
+    "candidate persistent block size=%u\n",
+    kGpuThreads);
+
+  print_gpu_dag_frontier_stats(
+    "TD",
+    profile.top_down);
+
+  print_gpu_dag_frontier_stats(
+    "BU",
+    profile.bottom_up);
+
+  print_gpu_dag_frontier_stats(
+    "ALL",
+    combined);
+}
+
+void print_gpu_dag_levelization_shape(
+  const GpuDagLevelizationProfile& profile)
+{
+  printf(
+    "[GPU Levelization Shape CSV Begin]\n");
+
+  printf(
+    "global_call,"
+    "direction,"
+    "direction_call,"
+    "num_levels,"
+    "processing_level,"
+    "final_level,"
+    "frontier_width,"
+    "fits_one_block,"
+    "estimated_rounds\n");
+
+  for (const GpuDagLevelizationCallShape& call :
+       profile.calls) {
+    const uint64_t num_levels =
+      static_cast<uint64_t>(
+        call.frontier_widths.size());
+
+    for (uint64_t processing_level = 0u;
+         processing_level < num_levels;
+         ++processing_level) {
+      const uint32_t frontier_width =
+        call.frontier_widths[
+          static_cast<size_t>(
+            processing_level)];
+
+      // TD level numbers remain in processing order.
+      //
+      // BU levelization processes leaves toward roots, after
+      // which _gpu_dag_reverse_level_kl reverses the level
+      // numbers. Therefore final_level is reversed for BU.
+      const uint64_t final_level =
+        call.is_top_down
+          ? processing_level
+          : num_levels -
+            processing_level -
+            1u;
+
+      const uint32_t fits_one_block =
+        frontier_width <= kGpuThreads
+          ? 1u
+          : 0u;
+
+      const uint64_t estimated_rounds =
+        (static_cast<uint64_t>(
+           frontier_width) +
+         static_cast<uint64_t>(
+           kGpuThreads) -
+         1u) /
+        static_cast<uint64_t>(
+          kGpuThreads);
+
+      printf(
+        "%llu,"
+        "%s,"
+        "%llu,"
+        "%llu,"
+        "%llu,"
+        "%llu,"
+        "%u,"
+        "%u,"
+        "%llu\n",
+        static_cast<unsigned long long>(
+          call.global_call_index),
+        call.is_top_down
+          ? "TD"
+          : "BU",
+        static_cast<unsigned long long>(
+          call.direction_call_index),
+        static_cast<unsigned long long>(
+          num_levels),
+        static_cast<unsigned long long>(
+          processing_level),
+        static_cast<unsigned long long>(
+          final_level),
+        frontier_width,
+        fits_one_block,
+        static_cast<unsigned long long>(
+          estimated_rounds));
+    }
+  }
+
+  printf(
+    "[GPU Levelization Shape CSV End]\n");
+}
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -2279,6 +2748,11 @@ void G_EXT::_gpu_dag_levelize(
       ? _dvc_indegree
       : _dvc_inv_indegree;
 
+  if constexpr (kEnableGpuDagLevelizationProfile) {
+    g_gpu_dag_levelization_profile.begin_levelization(
+      is_top_down);
+  }
+
   // Reuse the append-only queue allocated by tree construction.
   // Queue contents do not need to be cleared.
   CUDA_CHECK(cudaMemset(
@@ -2316,6 +2790,12 @@ void G_EXT::_gpu_dag_levelize(
   int current_level = 0;
 
   while (queue_count > 0u) {
+    if constexpr (kEnableGpuDagLevelizationProfile) {
+      g_gpu_dag_levelization_profile.observe_frontier(
+        is_top_down,
+        queue_count);
+    }
+
     const uint32_t queue_blocks =
       (queue_count + kGpuThreads - 1) / kGpuThreads;
 
@@ -2352,6 +2832,10 @@ void G_EXT::_gpu_dag_levelize(
     queue_size = new_queue_size;
     queue_count = queue_size - queue_begin;
     ++current_level;
+  }
+
+  if constexpr (kEnableGpuDagLevelizationProfile) {
+    g_gpu_dag_levelization_profile.end_levelization();
   }
 
   CUDA_CHECK(cudaMemcpy(
@@ -2742,6 +3226,9 @@ void G_EXT::_gpu_free_dag_buffers() noexcept
 
 void G_EXT::_gpu_DAG_construction()
 {
+  if constexpr (kEnableGpuDagLevelizationProfile) {
+    g_gpu_dag_levelization_profile.reset();
+  } 
   // ============================================================
   // Total DAG timing
   //
@@ -2964,6 +3451,25 @@ void G_EXT::_gpu_DAG_construction()
 
   CUDA_CHECK(cudaEventDestroy(start_gpu));
   CUDA_CHECK(cudaEventDestroy(stop_gpu));
+
+  // Print aggregate statistics after CUDA timing has stopped.
+  if constexpr (kEnableGpuDagLevelizationStats) {
+    print_gpu_dag_levelization_profile(
+      g_gpu_dag_levelization_profile);
+  }
+
+  // Print one machine-readable CSV row per level.
+  //
+  // This is intentionally outside the CUDA-event timing region
+  // because the resulting output can be very large.
+  if constexpr (kEnableGpuDagLevelizationShape) {
+    print_gpu_dag_levelization_shape(
+      g_gpu_dag_levelization_profile);
+  }
+
+  if constexpr (kEnableGpuDagLevelizationProfile) {
+    g_gpu_dag_levelization_profile.stop();
+  }
 }
 
 G_EXT::CsrGraphSnapshot
@@ -3633,7 +4139,11 @@ void G_EXT::_cpsat_solver(
   const std::vector<float>& ende_cost,
   const std::vector<uint32_t>& best_ende_of_ecls,
   const std::vector<bool>& picked_endes
-) {
+) 
+{
+  if constexpr (!kEnableCpsatSolver) {
+    return;
+  }  
 #ifdef PRINT_LOG
   printf("Inside G_EXT::_cpsat_solver() Time_limit = %.2lf (sec)\n", time_limit);
 
