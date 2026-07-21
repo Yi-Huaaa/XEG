@@ -1987,7 +1987,7 @@ __global__ void _gpu_dag_insert_thread_kl(
       // state 2 becomes visible.
       level[u] = proposed_level;
 
-      // __threadfence();
+      __threadfence();
 
       // Exactly one successful committer increments u0.
       if (atomicCAS(
@@ -2011,7 +2011,7 @@ __global__ void _gpu_dag_insert_thread_kl(
     //
     // After this barrier, tentative states and levels published
     // in batch i are visible to all threads processing batch i+1.
-    // __syncthreads();
+    __syncthreads();
   }
 }
 
