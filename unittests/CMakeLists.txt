@@ -64,3 +64,59 @@ foreach(unittest IN LISTS g_ext_UNITTESTS)
 endforeach()
 
 
+# -----------------------------------------------------------------------------
+# Standalone fixed-mask comparison test for GPU DAG levelization
+#
+# This test has its own main() and directly compares the host-driven and
+# hybrid implementations. It is intentionally kept outside g_ext_UNITTESTS
+# because that list assumes .cpp doctest executables.
+# -----------------------------------------------------------------------------
+
+set(
+  GPU_DAG_HYBRID_FIXED_MASK_TEST
+  test_gpu_dag_hybrid_fixed_mask
+)
+
+add_executable(
+  ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
+  test_gpu_dag_hybrid_fixed_mask.cu
+)
+
+# Keep the executable beside the existing unit-test executables.
+#
+# Explicitly retain separable CUDA compilation because this executable
+# links against the CUDA g_ext library.
+set_target_properties(
+  ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
+  PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY
+      "${PROJECT_SOURCE_DIR}/build/unittests"
+    CUDA_SEPARABLE_COMPILATION
+      ON
+)
+
+# Match the dependencies used by the existing GPU unit tests.
+target_link_libraries(
+  ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
+  PRIVATE
+    Threads::Threads
+    g_ext
+)
+
+# Required for:
+#
+#   #include <g_ext/G_EXT.hpp>
+target_include_directories(
+  ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
+  PRIVATE
+    ${PROJECT_SOURCE_DIR}
+)
+
+# This executable uses a custom main() rather than doctest, so register it
+# directly with CTest instead of calling doctest_discover_tests().
+add_test(
+  NAME
+    ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
+  COMMAND
+    $<TARGET_FILE:${GPU_DAG_HYBRID_FIXED_MASK_TEST}>
+)

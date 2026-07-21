@@ -1,4 +1,4 @@
-#include "g_ext.cuh"
+#include <g_ext/G_EXT.hpp>
 
 #include <algorithm>
 #include <chrono>

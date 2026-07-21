@@ -109,7 +109,7 @@ static_assert(
 //
 // GPU DAG total runtime and the outer-loop termination copy
 // remain enabled regardless of this flag.
-constexpr bool kEnableGpuDagIterationLog = true;
+constexpr bool kEnableGpuDagIterationLog = false;
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
