@@ -4049,9 +4049,37 @@ G_EXT::unittest_gpu_levelize(
   const std::vector<uint32_t>& selected_state,
   const bool is_top_down)
 {
+  // Preserve the existing unit-test API and behavior.
+  //
+  // This follows the same compile-time production dispatcher
+  // selected by kEnableGpuDagHybridLevelization.
+  return _unittest_gpu_levelize_impl(
+    selected_state,
+    is_top_down,
+    GpuLevelizationBackend::Configured);
+}
+
+G_EXT::GpuLevelizationResult
+G_EXT::unittest_gpu_levelize_with_backend(
+  const std::vector<uint32_t>& selected_state,
+  const bool is_top_down,
+  const G_EXT::GpuLevelizationBackend backend)
+{
+  return _unittest_gpu_levelize_impl(
+    selected_state,
+    is_top_down,
+    backend);
+}
+
+G_EXT::GpuLevelizationResult
+G_EXT::_unittest_gpu_levelize_impl(
+  const std::vector<uint32_t>& selected_state,
+  const bool is_top_down,
+  const G_EXT::GpuLevelizationBackend backend)
+{
   if (_ende_name.empty()) {
     throw std::logic_error(
-      "unittest_gpu_levelize requires read() "
+      "_unittest_gpu_levelize_impl requires read() "
       "to be called first");
   }
 
@@ -4062,7 +4090,7 @@ G_EXT::unittest_gpu_levelize(
       "the number of e-nodes");
   }
 
-  for (uint32_t ende = 0;
+  for (uint32_t ende = 0u;
        ende < _num_ende;
        ++ende) {
     if (selected_state[ende] > 2u) {
@@ -4072,11 +4100,12 @@ G_EXT::unittest_gpu_levelize(
     }
   }
 
-  // The current implementation allocates and initializes all
-  // shared GPU graph buffers inside GPU tree construction.
+  // GPU tree construction currently owns allocation of the
+  // immutable CSR and shared GPU working buffers.
   //
-  // Only run it once for this G_EXT object. Subsequent calls
-  // reuse the same immutable CSR and shared buffers.
+  // This is executed only on the first unit-test call for this
+  // G_EXT object. Later backend comparisons reuse the exact same
+  // graph and shared buffers.
   if (_dvc_picked_endes == nullptr) {
     (void)_gpu_tree_construction();
   }
@@ -4085,6 +4114,8 @@ G_EXT::unittest_gpu_levelize(
   _gpu_initialize_dag_buffers();
 
   try {
+    // Every backend receives the exact selected-state mask
+    // supplied by the unit test.
     CUDA_CHECK(cudaMemcpy(
       _dvc_picked_endes,
       selected_state.data(),
@@ -4092,7 +4123,53 @@ G_EXT::unittest_gpu_levelize(
         sizeof(uint32_t),
       cudaMemcpyHostToDevice));
 
-    _gpu_dag_levelize(is_top_down);
+    // ----------------------------------------------------------
+    // Persistent-path sentinel
+    //
+    // _gpu_initialize_dag_buffers() normally initializes this
+    // buffer to zero. That is not sufficient for detecting use
+    // because Completed is enum value zero.
+    //
+    // Therefore, write values that cannot be produced by a valid
+    // persistent-kernel return. If the persistent kernel runs,
+    // it overwrites all four fields before returning.
+    //
+    // This extra copy occurs only inside this unit-test helper.
+    // ----------------------------------------------------------
+    const g_ext_detail::GpuDagPersistentState
+      persistent_sentinel{
+        std::numeric_limits<uint32_t>::max(),
+        std::numeric_limits<uint32_t>::max(),
+        std::numeric_limits<int32_t>::min(),
+        g_ext_detail::GpuDagPersistentExitReason::
+          InvalidQueueState
+      };
+
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_dag_persistent_state,
+      &persistent_sentinel,
+      sizeof(persistent_sentinel),
+      cudaMemcpyHostToDevice));
+
+    // Direct backend selection is restricted to this unit-test
+    // helper. The production dispatcher remains unchanged.
+    switch (backend) {
+      case GpuLevelizationBackend::Configured:
+        _gpu_dag_levelize(is_top_down);
+        break;
+
+      case GpuLevelizationBackend::HostDriven:
+        _gpu_dag_levelize_host_driven(is_top_down);
+        break;
+
+      case GpuLevelizationBackend::Hybrid:
+        _gpu_dag_levelize_hybrid(is_top_down);
+        break;
+
+      default:
+        throw std::invalid_argument(
+          "Invalid GPU levelization backend");
+    }
 
     GpuLevelizationResult result;
 
@@ -4140,6 +4217,47 @@ G_EXT::unittest_gpu_levelize(
       sizeof(int),
       cudaMemcpyDeviceToHost));
 
+    // ----------------------------------------------------------
+    // Detect whether the persistent kernel was actually used.
+    //
+    // Host-driven levelization never touches this buffer.
+    // Hybrid levelization touches it only after entering the
+    // persistent path.
+    // ----------------------------------------------------------
+    g_ext_detail::GpuDagPersistentState
+      observed_persistent_state{};
+
+    CUDA_CHECK(cudaMemcpy(
+      &observed_persistent_state,
+      _dvc_dag_persistent_state,
+      sizeof(observed_persistent_state),
+      cudaMemcpyDeviceToHost));
+
+    const bool persistent_state_is_sentinel =
+      observed_persistent_state.queue_begin ==
+        persistent_sentinel.queue_begin &&
+      observed_persistent_state.queue_count ==
+        persistent_sentinel.queue_count &&
+      observed_persistent_state.current_level ==
+        persistent_sentinel.current_level &&
+      observed_persistent_state.exit_reason ==
+        persistent_sentinel.exit_reason;
+
+    result.persistent_path_used =
+      !persistent_state_is_sentinel;
+
+    if (result.persistent_path_used) {
+      result.persistent_completed =
+        observed_persistent_state.exit_reason ==
+          g_ext_detail::GpuDagPersistentExitReason::
+            Completed;
+
+      result.persistent_exited_to_host =
+        observed_persistent_state.exit_reason ==
+          g_ext_detail::GpuDagPersistentExitReason::
+            FrontierTooWide;
+    }
+
     _gpu_free_dag_buffers();
 
     return result;
@@ -4149,6 +4267,7 @@ G_EXT::unittest_gpu_levelize(
     throw;
   }
 }
+
 
 void G_EXT::_copy_pickedende_back(
   std::vector<bool>& picked_endes_out)

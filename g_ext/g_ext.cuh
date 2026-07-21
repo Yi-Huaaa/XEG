@@ -123,11 +123,43 @@ public:
     std::vector<uint32_t> in_subgraph;
   };
 
+  // Selects the levelization implementation used only by
+  // unit-test wrappers.
+  //
+  // Configured:
+  //   Follow the production compile-time dispatcher in
+  //   _gpu_dag_levelize().
+  //
+  // HostDriven:
+  //   Directly invoke the original host-controlled
+  //   implementation.
+  //
+  // Hybrid:
+  //   Directly invoke the hybrid persistent implementation.
+  //
+  // This enum is never consulted by run().
+  enum class GpuLevelizationBackend : uint32_t {
+    Configured = 0u,
+    HostDriven = 1u,
+    Hybrid = 2u,
+  };
+
   struct GpuLevelizationResult {
     std::vector<uint32_t> selected_state;
     std::vector<uint32_t> residual_degree;
     std::vector<int> level;
+
     int num_levels = 0;
+
+    // Test-only execution metadata.
+    //
+    // These values are derived by inspecting the existing
+    // persistent-state buffer after a unit-test call. No
+    // counters or branches are added to the production
+    // levelization implementation.
+    bool persistent_path_used = false;
+    bool persistent_completed = false;
+    bool persistent_exited_to_host = false;
   };
 
   CsrGraphSnapshot
@@ -151,6 +183,18 @@ public:
   GpuLevelizationResult unittest_gpu_levelize(
     const std::vector<uint32_t>& selected_state,
     bool is_top_down);
+
+  // Run fixed-mask GPU levelization with an explicitly selected
+  // backend.
+  //
+  // This bypasses the production compile-time dispatcher and
+  // exists only so one unit-test binary can compare the original
+  // and hybrid implementations using the exact same input mask.
+  GpuLevelizationResult
+  unittest_gpu_levelize_with_backend(
+    const std::vector<uint32_t>& selected_state,
+    bool is_top_down,
+    GpuLevelizationBackend backend);
 
   GpuRootToLeafFilterResult
   unittest_gpu_filter_root_to_leaf(
@@ -544,6 +588,18 @@ private:
   // levels are processed by one single-block persistent kernel.
   void _gpu_dag_levelize_hybrid(
     const bool is_top_down);
+
+  // Shared implementation used only by the public
+  // levelization unit-test wrappers.
+  //
+  // All additional backend selection, sentinel state, and
+  // result inspection remain outside the production execution
+  // path.
+  GpuLevelizationResult
+  _unittest_gpu_levelize_impl(
+    const std::vector<uint32_t>& selected_state,
+    bool is_top_down,
+    GpuLevelizationBackend backend);
 
   // GPU DAG memory lifecycle
   void _gpu_allocate_dag_buffers();
