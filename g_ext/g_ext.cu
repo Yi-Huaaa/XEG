@@ -65,7 +65,7 @@ constexpr uint32_t kGpuDagPersistentThreads = 512u;
 // Enter persistent mode only after the current frontier and
 // the preceding frontiers have remained at or below this width.
 constexpr uint32_t
-  kGpuDagPersistentEnterFrontierThreshold = 256u; // 256 and 512 get similiar runtime 
+  kGpuDagPersistentEnterFrontierThreshold = 512u; // 256 and 512 get similiar runtime 
 
 // Require this many consecutive small frontiers before entering
 // persistent mode. This prevents switching because of one short,
