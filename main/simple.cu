@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
   std::cout << "Read Time: " << g_ext.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
   // (use ILP, ILP tim limit (sec), DAG_KERNEL, NUM_THREAD_DAG_CONSTR)
-  g_ext.run(false, 30, dag_kernel, num_thread_dag_constr);    
+  g_ext.run(true, 30, dag_kernel, num_thread_dag_constr);    
 
   return 0;
 }

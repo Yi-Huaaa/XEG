@@ -15,7 +15,7 @@
 namespace {
 
 constexpr uint32_t kChainLength = 64u;
-constexpr uint32_t kShortPrefixLength = 8u;
+constexpr uint32_t kShortPrefixLength = 7u;
 
 [[noreturn]] void fail(
   const std::string& message)
@@ -433,7 +433,7 @@ void run_short_prefix_test(
     !hybrid_result.persistent_path_used,
     test_name +
       ": hybrid backend entered persistent mode even "
-      "though the graph has fewer than 16 active levels");
+      "though the graph has fewer than 8 active levels");
 
   expect(
     !hybrid_result.persistent_completed,
@@ -477,11 +477,11 @@ int main()
     // All 64 selected nodes produce 64 one-node frontiers.
     //
     // With:
-    //   enter threshold = 128
-    //   required small levels = 16
+    //   enter threshold = 512
+    //   required small levels = 8
     //
-    // hybrid must enter persistent mode before processing
-    // frontier 15.
+    // The hybrid backend must enter persistent mode after
+    // observing eight consecutive small frontiers.
     run_long_chain_test(
       graph,
       true);
@@ -489,10 +489,10 @@ int main()
     run_long_chain_test(
       graph,
       false);
-
-    // Selecting only the first eight nodes produces eight
-    // active levels, so the 16-level entry streak cannot be
-    // reached.
+    
+    // Selecting only the first seven nodes produces seven
+    // active levels, so the eight-level entry streak cannot
+    // be reached.
     run_short_prefix_test(
       graph,
       true);
