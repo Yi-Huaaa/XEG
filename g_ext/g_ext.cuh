@@ -294,17 +294,17 @@ public:
       cpu_dag_selected,
       cpu_filtered);    
 
-    if (ILP_solver) {
-      _cpsat_solver(
-        ILP_time_limit, 
-        _ecls_its_ende_newG, 
-        _ende_child, 
-        _ende_child_ptr, 
-        _root_eclass_id, 
-        _ende_cost,
-        best_ende_of_ecls, 
-        picked_endes_tmp); 
-    }
+    // if (ILP_solver) {
+    //   _cpsat_solver(
+    //     ILP_time_limit, 
+    //     _ecls_its_ende_newG, 
+    //     _ende_child, 
+    //     _ende_child_ptr, 
+    //     _root_eclass_id, 
+    //     _ende_cost,
+    //     best_ende_of_ecls, 
+    //     picked_endes_tmp); 
+    // }
 
     // GPU version starts
     auto [best_tree_cost_gpu, dag_cost_gpu] =
@@ -538,13 +538,15 @@ private:
   void _gpu_DAG_construction();
   // Thread-level batched live optimistic insertion.
   //
-  // One call scans all e-node slots through sequential kernel
-  // launches of kGpuDagBatchSize lanes.
+  // One call scans all e-node slots inside one single-block kernel.
+  // The kernel processes transposed batches sequentially using
+  // kGpuDagBatchSize lanes and synchronizes the block after every
+  // batch.
   //
   // Candidate IDs are assigned using a deterministic full-transpose
-  // mapping so neighboring IDs are spread across different kernel
-  // launches. Earlier batches publish tentative state-2 nodes that
-  // later batches may observe.
+  // mapping so neighboring IDs are spread across different batches.
+  // Earlier batches publish tentative state-2 nodes that later
+  // batches may observe.
   //
   // Levelization/finalization occurs only after all batches finish.
   //

@@ -49,7 +49,7 @@ namespace {
 
 constexpr uint32_t kGpuThreads = 512u;
 constexpr uint32_t kGpuReachabilityThreads = 256u;
-constexpr uint32_t kGpuDagBatchSize = 256u;
+constexpr uint32_t kGpuDagBatchSize = 256u; // Note: this must be 256 to ensure the solution quality
 
 // Compile-time controller for GPU DAG levelization.
 //
@@ -1727,8 +1727,8 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
   return std::make_pair(tree_ret, dag_ret);
 }
 
-// One GPU thread evaluates one e-node slot assigned to the
-// current transposed batch.
+// One GPU thread evaluates one e-node slot in each sequential
+// transposed batch.
 //
 // selected_state:
 //   0 = unselected
@@ -1739,18 +1739,25 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
 //
 //   u = threadIdx.x * num_batches + batch_index
 //
-// Therefore, neighboring e-node IDs are spread across different
-// sequential kernel launches instead of being evaluated together
-// in one contiguous speculative batch.
+// The host launches this kernel only once. The block executes:
+//
+//   batch 0
+//   __syncthreads()
+//   batch 1
+//   __syncthreads()
+//   ...
+//
+// This preserves the original cross-batch ordering boundary:
+// every thread finishes batch i before any thread starts
+// batch i + 1.
 //
 // Candidate evaluation treats both state 1 and state 2 as selected.
-// Later kernel batches can observe tentative nodes inserted by
-// earlier batches in the same insertion phase.
+// Later batches can observe tentative nodes inserted by earlier
+// batches in the same insertion phase.
 //
-// All insertion batches finish before one levelization/finalization pass.
+// Levelization/finalization occurs only after all batches finish.
 __global__ void _gpu_dag_insert_thread_kl(
   const uint32_t num_endes,
-  const uint32_t batch_index,
   const uint32_t num_batches,
   const bool is_top_down_insertion,
   uint32_t* selected_state,
@@ -1761,192 +1768,250 @@ __global__ void _gpu_dag_insert_thread_kl(
   int* level,
   uint32_t* u0)
 {
-  // Full-transpose assignment:
-  //
-  //   contiguous mapping:
-  //     u = batch_index * batch_size + lane
-  //
-  //   transposed mapping:
-  //     u = lane * num_batches + batch_index
-  //
-  // Neighboring e-node IDs are therefore placed in different
-  // sequential kernel launches.
-  const uint32_t u =
-    threadIdx.x * num_batches +
-    batch_index;
+  // The original implementation launched one kernel for every
+  // batch_index. This loop performs the same batch sequence
+  // inside one persistent single-block kernel.
+  for (uint32_t batch_index = 0u;
+       batch_index < num_batches;
+       ++batch_index) {
+    // All candidate-level early exits must leave only this
+    // do-while block. They must not return from the kernel,
+    // because every thread must reach the batch barrier below.
+    do {
+      // Full-transpose assignment:
+      //
+      //   contiguous mapping:
+      //     u = batch_index * batch_size + lane
+      //
+      //   transposed mapping:
+      //     u = lane * num_batches + batch_index
+      //
+      // This is identical to the previous host-launched
+      // batch mapping.
+      const uint32_t u =
+        threadIdx.x * num_batches +
+        batch_index;
 
-  if (u >= num_endes) {
-    return;
-  }
+      // Some lanes in the final transposed batch may not map
+      // to a valid e-node. They still have to participate in
+      // the batch-level __syncthreads().
+      if (u >= num_endes) {
+        break;
+      }
 
-  // Atomic load because selected_state is updated live by
-  // other kGpuThreads in this same kernel.
-  if (atomicAdd(&selected_state[u], 0u) != 0u) {
-    return;
-  }
+      // Atomic load because selected_state is updated live by
+      // other threads in this block.
+      if (atomicAdd(
+            &selected_state[u],
+            0u) != 0u) {
+        break;
+      }
 
-  uint32_t parent_position =
-    inverse_adj_ptr[u];
+      uint32_t parent_position =
+        inverse_adj_ptr[u];
 
-  const uint32_t parent_end =
-    inverse_adj_ptr[u + 1];
+      const uint32_t parent_end =
+        inverse_adj_ptr[u + 1u];
 
-  uint32_t child_position =
-    forward_adj_ptr[u];
+      uint32_t child_position =
+        forward_adj_ptr[u];
 
-  const uint32_t child_end =
-    forward_adj_ptr[u + 1];
+      const uint32_t child_end =
+        forward_adj_ptr[u + 1u];
 
-  bool has_selected_parent = false;
-  bool has_selected_child = false;
-  bool has_selected_overlap = false;
+      bool has_selected_parent = false;
+      bool has_selected_child = false;
+      bool has_selected_overlap = false;
 
-  int max_parent_level = -1;
-  int min_child_level = INT_MAX;
+      int max_parent_level = -1;
+      int min_child_level = INT_MAX;
 
-  // Both CSR segments are sorted and unique.
-  //
-  // Merge them with two pointers so that:
-  //   neighbor only in inverse CSR -> process as parent
-  //   neighbor only in forward CSR -> process as child
-  //   neighbor in both             -> exact overlap check
-  //
-  // Complexity:
-  //   O(parent_degree + child_degree)
-  while (parent_position < parent_end ||
-         child_position < child_end) {
-    const bool take_parent_only =
-      child_position >= child_end ||
-      (parent_position < parent_end &&
-       inverse_adj[parent_position]
-         < forward_adj[child_position]);
+      // Both CSR segments are sorted and unique.
+      //
+      // Merge them with two pointers so that:
+      //   neighbor only in inverse CSR -> process as parent
+      //   neighbor only in forward CSR -> process as child
+      //   neighbor in both             -> exact overlap check
+      //
+      // Complexity:
+      //   O(parent_degree + child_degree)
+      while (parent_position < parent_end ||
+             child_position < child_end) {
+        const bool take_parent_only =
+          child_position >= child_end ||
+          (parent_position < parent_end &&
+           inverse_adj[parent_position] <
+             forward_adj[child_position]);
 
-    const bool take_child_only =
-      parent_position >= parent_end ||
-      (child_position < child_end &&
-       forward_adj[child_position]
-         < inverse_adj[parent_position]);
+        const bool take_child_only =
+          parent_position >= parent_end ||
+          (child_position < child_end &&
+           forward_adj[child_position] <
+             inverse_adj[parent_position]);
 
-    if (take_parent_only) {
-      const uint32_t parent =
-        inverse_adj[parent_position];
+        if (take_parent_only) {
+          const uint32_t parent =
+            inverse_adj[parent_position];
 
-      const uint32_t parent_state =
-        atomicAdd(&selected_state[parent], 0u);
+          const uint32_t parent_state =
+            atomicAdd(
+              &selected_state[parent],
+              0u);
 
-      if (parent_state != 0u) {
-        const int parent_level =
-          atomicAdd(&level[parent], 0);
+          if (parent_state != 0u) {
+            const int parent_level =
+              atomicAdd(
+                &level[parent],
+                0);
 
-        if (parent_level >= 0) {
-          has_selected_parent = true;
+            if (parent_level >= 0) {
+              has_selected_parent = true;
 
-          if (parent_level > max_parent_level) {
-            max_parent_level = parent_level;
+              if (parent_level >
+                  max_parent_level) {
+                max_parent_level =
+                  parent_level;
+              }
+            }
+          }
+
+          ++parent_position;
+          continue;
+        }
+
+        if (take_child_only) {
+          const uint32_t child =
+            forward_adj[child_position];
+
+          const uint32_t child_state =
+            atomicAdd(
+              &selected_state[child],
+              0u);
+
+          if (child_state != 0u) {
+            const int child_level =
+              atomicAdd(
+                &level[child],
+                0);
+
+            if (child_level >= 0) {
+              has_selected_child = true;
+
+              if (child_level <
+                  min_child_level) {
+                min_child_level =
+                  child_level;
+              }
+            }
+          }
+
+          ++child_position;
+          continue;
+        }
+
+        // The same e-node appears in both sorted segments.
+        const uint32_t neighbor =
+          inverse_adj[parent_position];
+
+        const uint32_t neighbor_state =
+          atomicAdd(
+            &selected_state[neighbor],
+            0u);
+
+        if (neighbor_state != 0u) {
+          const int neighbor_level =
+            atomicAdd(
+              &level[neighbor],
+              0);
+
+          if (neighbor_level >= 0) {
+            has_selected_parent = true;
+            has_selected_child = true;
+            has_selected_overlap = true;
+
+            if (neighbor_level >
+                max_parent_level) {
+              max_parent_level =
+                neighbor_level;
+            }
+
+            if (neighbor_level <
+                min_child_level) {
+              min_child_level =
+                neighbor_level;
+            }
           }
         }
+
+        ++parent_position;
+        ++child_position;
       }
 
-      ++parent_position;
-      continue;
-    }
-
-    if (take_child_only) {
-      const uint32_t child =
-        forward_adj[child_position];
-
-      const uint32_t child_state =
-        atomicAdd(&selected_state[child], 0u);
-
-      if (child_state != 0u) {
-        const int child_level =
-          atomicAdd(&level[child], 0);
-
-        if (child_level >= 0) {
-          has_selected_child = true;
-
-          if (child_level < min_child_level) {
-            min_child_level = child_level;
-          }
-        }
+      if (has_selected_overlap) {
+        break;
       }
 
-      ++child_position;
-      continue;
-    }
-
-    // The same enode appears in both sorted segments.
-    const uint32_t neighbor =
-      inverse_adj[parent_position];
-
-    const uint32_t neighbor_state =
-      atomicAdd(&selected_state[neighbor], 0u);
-
-    if (neighbor_state != 0u) {
-      const int neighbor_level =
-        atomicAdd(&level[neighbor], 0);
-
-      if (neighbor_level >= 0) {
-        has_selected_parent = true;
-        has_selected_child = true;
-        has_selected_overlap = true;
-
-        if (neighbor_level > max_parent_level) {
-          max_parent_level = neighbor_level;
-        }
-
-        if (neighbor_level < min_child_level) {
-          min_child_level = neighbor_level;
-        }
+      if (max_parent_level >=
+          min_child_level) {
+        break;
       }
-    }
 
-    ++parent_position;
-    ++child_position;
-  }
+      int proposed_level = -1;
 
-  if (has_selected_overlap) {
-    return;
-  }
+      if (is_top_down_insertion) {
+        if (!has_selected_parent) {
+          break;
+        }
 
-  if (max_parent_level >= min_child_level) {
-    return;
-  }
+        proposed_level =
+          max_parent_level + 1;
+      }
+      else {
+        if (!has_selected_child) {
+          break;
+        }
 
-  int proposed_level = -1;
+        proposed_level =
+          min_child_level - 1;
+      }
 
-  if (is_top_down_insertion) {
-    if (!has_selected_parent) {
-      return;
-    }
+      if (proposed_level < 0) {
+        break;
+      }
 
-    proposed_level =
-      max_parent_level + 1;
-  }
-  else {
-    if (!has_selected_child) {
-      return;
-    }
+      // Publish the proposed level before publishing state 2.
+      //
+      // Keep __threadfence() because another thread in the same
+      // batch may observe state 2 before the end-of-batch
+      // __syncthreads(). The level must already be visible when
+      // state 2 becomes visible.
+      level[u] = proposed_level;
 
-    proposed_level =
-      min_child_level - 1;
-  }
+      // __threadfence();
 
-  if (proposed_level < 0) {
-    return;
-  }
+      // Exactly one successful committer increments u0.
+      if (atomicCAS(
+            &selected_state[u],
+            0u,
+            2u) == 0u) {
+        atomicAdd(
+          u0,
+          1u);
+      }
+    } while (false);
 
-  // Publish the proposed level before publishing state 2.
-  level[u] = proposed_level;
-
-  __threadfence();
-
-  // Exactly one successful committer increments u0.
-  if (atomicCAS(
-        &selected_state[u],
-        0u,
-        2u) == 0u) {
-    atomicAdd(u0, 1u);
+    // This replaces the synchronization boundary previously
+    // provided by the end of one kernel launch and the start of
+    // the next kernel launch.
+    //
+    // Every thread must reach this barrier, including:
+    //   - lanes whose u >= num_endes
+    //   - lanes whose candidate was already selected
+    //   - lanes whose candidate failed a validity condition
+    //
+    // After this barrier, tentative states and levels published
+    // in batch i are visible to all threads processing batch i+1.
+    // __syncthreads();
   }
 }
 
@@ -1969,30 +2034,34 @@ void G_EXT::_gpu_dag_insert_thread(
       "initialized GPU DAG buffers");
   }
 
+  // Keep the original batch-count calculation.
+  //
+  // kGpuDagBatchSize is both:
+  //   1. the number of threads in the single block
+  //   2. the number of candidate lanes per transposed batch
   const uint32_t num_batches =
-    (_num_ende + kGpuDagBatchSize - 1u) /
+    (_num_ende +
+     kGpuDagBatchSize - 1u) /
     kGpuDagBatchSize;
 
-  for (uint32_t batch_index = 0u;
-       batch_index < num_batches;
-       ++batch_index) {
-    _gpu_dag_insert_thread_kl
-      <<<1u, kGpuDagBatchSize>>>(
-        _num_ende,
-        batch_index,
-        num_batches,
-        is_top_down_insertion,
-        _dvc_picked_endes,
-        _dvc_global_adj_1D,
-        _dvc_global_adj_1D_ptr,
-        _dvc_global_inv_adj_1D,
-        _dvc_global_inv_adj_1D_ptr,
-        _dvc_level,
-        _dvc_dag_u0);
+  // Launch one single-block kernel for the entire insertion
+  // phase. The kernel processes all batch_index values
+  // sequentially and synchronizes after every batch.
+  _gpu_dag_insert_thread_kl
+    <<<1u, kGpuDagBatchSize>>>(
+      _num_ende,
+      num_batches,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0);
 
-    cudaCheckErrors(
-      "_gpu_dag_insert_thread_kl failed");
-  }
+  cudaCheckErrors(
+    "_gpu_dag_insert_thread_kl failed");
 }
 
 // Construct the selected-subgraph degree and append all
