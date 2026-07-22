@@ -3514,6 +3514,7 @@ void G_EXT::_gpu_DAG_construction()
       cudaMemcpyDeviceToHost));
 
     host_u0 = after_both_phases;
+    ++outer_iteration; // used to control the 
 
     // ==========================================================
     // Optional per-iteration diagnostics
@@ -3534,8 +3535,6 @@ void G_EXT::_gpu_DAG_construction()
       const uint32_t top_down_rollback =
         top_down_proposed -
         top_down_survived;
-
-      ++outer_iteration;
 
       printf(
         "[GPU DAG] iteration=%u, "
