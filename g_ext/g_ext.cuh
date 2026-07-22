@@ -344,9 +344,21 @@ public:
     _gpu_allocate_dag_buffers();
     _gpu_initialize_dag_buffers();
 
+    // Stage A controller.
+    //
+    // true:
+    //   enable adaptive early stopping in production runs.
+    //
+    // false:
+    //   preserve the original full-convergence behavior for
+    //   baseline measurements.
+    constexpr bool enable_gpu_dag_adaptive_stop =
+      true; // Full-convergence baseline set this to false
+
     // _dvc_picked_endes still contains the GPU tree produced by
     // _gpu_tree_construction().
-    _gpu_DAG_construction();
+    _gpu_DAG_construction(
+      enable_gpu_dag_adaptive_stop);
 
     if (ILP_solver) {
       // Copy the final GPU root-to-leaf filtering mask.
@@ -534,8 +546,16 @@ private:
       const std::vector<uint32_t>& roots,
       const std::vector<uint32_t>& leaves,
       const std::vector<bool>& picked_endes);
-  // GPU version
-  void _gpu_DAG_construction();
+  // GPU version  // GPU version
+  //
+  // enable_adaptive_stop = true:
+  //   stop the batch-insertion outer loop after the survived
+  //   insertion count remains low for several iterations.
+  //
+  // enable_adaptive_stop = false:
+  //   preserve the original behavior and run until u0 == 0.
+  void _gpu_DAG_construction(
+    const bool enable_adaptive_stop);
   // Thread-level batched live optimistic insertion.
   //
   // One call scans all e-node slots inside one single-block kernel.

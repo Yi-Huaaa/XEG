@@ -111,6 +111,50 @@ static_assert(
 // remain enabled regardless of this flag.
 constexpr bool kEnableGpuDagIterationLog = false;
 
+// ============================================================
+// Stage A: adaptive GPU DAG outer-loop stopping
+//
+// A completed outer iteration is considered "low insertion"
+// when:
+//
+//   survived * 100 <= historical_peak * low_percent
+//
+// The loop may stop only after:
+//   1. at least minimum_iterations have completed
+//   2. low insertion has been observed for patience
+//      consecutive iterations
+//
+// These constants affect only the host-side outer-loop
+// controller. They do not modify insertion, levelization,
+// finalization, or filtering kernels.
+// ============================================================
+constexpr uint32_t
+  kGpuDagAdaptiveStopMinimumIterations = 4u;
+
+constexpr uint32_t
+  kGpuDagAdaptiveStopLowPercent = 3u;
+
+constexpr uint32_t
+  kGpuDagAdaptiveStopPatience = 2u;
+
+static_assert(
+  kGpuDagAdaptiveStopMinimumIterations > 0u,
+  "Adaptive-stop minimum iterations must be positive");
+
+static_assert(
+  kGpuDagAdaptiveStopLowPercent > 0u &&
+  kGpuDagAdaptiveStopLowPercent <= 100u,
+  "Adaptive-stop percentage must be in [1, 100]");
+
+static_assert(
+  kGpuDagAdaptiveStopPatience > 0u,
+  "Adaptive-stop patience must be positive");
+
+static_assert(
+  kGpuDagAdaptiveStopMinimumIterations >=
+    kGpuDagAdaptiveStopPatience,
+  "Minimum iterations should cover the low-count streak");
+
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
 {
@@ -3392,7 +3436,8 @@ void G_EXT::_gpu_free_dag_buffers() noexcept
   cuda_free_and_null(_dvc_dag_new_inserted);
 }
 
-void G_EXT::_gpu_DAG_construction()
+void G_EXT::_gpu_DAG_construction(
+  const bool enable_adaptive_stop)
 {
   // ============================================================
   // Total DAG timing
@@ -3439,8 +3484,20 @@ void G_EXT::_gpu_DAG_construction()
 
   uint32_t host_u0 = 1u;
 
-  // Used only by the optional per-iteration log.
-  [[maybe_unused]] uint32_t outer_iteration = 0u;
+  // Number of completed bottom-up + top-down outer iterations.
+  uint32_t outer_iteration = 0u;
+
+  // Largest survived insertion count observed in any completed
+  // outer iteration.
+  uint32_t peak_survived = 0u;
+
+  // Number of consecutive iterations whose survived insertion
+  // count is at most kGpuDagAdaptiveStopLowPercent of the
+  // historical peak.
+  uint32_t low_iteration_streak = 0u;
+
+  // Distinguishes adaptive stopping from ordinary convergence.
+  bool adaptive_stop_triggered = false;
 
   while (host_u0 > 0u) {
     // u0 counts the insertions that survive during the current
@@ -3514,7 +3571,7 @@ void G_EXT::_gpu_DAG_construction()
       cudaMemcpyDeviceToHost));
 
     host_u0 = after_both_phases;
-    ++outer_iteration; // used to control the 
+    ++outer_iteration;
 
     // ==========================================================
     // Optional per-iteration diagnostics
@@ -3550,8 +3607,62 @@ void G_EXT::_gpu_DAG_construction()
         top_down_rollback,
         after_both_phases);
     }
+
+    // ==========================================================
+    // Stage A adaptive stopping controller
+    //
+    // after_both_phases is already copied from _dvc_dag_u0 for
+    // the original outer-loop termination condition. Therefore
+    // this controller requires no additional D2H copy.
+    // ==========================================================
+
+    // Maintain the historical peak even when adaptive stopping
+    // is disabled. This allows baseline runs to print comparable
+    // summary information.
+    if (after_both_phases > peak_survived) {
+      peak_survived = after_both_phases;
+    }
+
+    if (enable_adaptive_stop) {
+      // Avoid floating-point arithmetic:
+      //
+      //   current <= peak * 5%
+      //
+      // becomes:
+      //
+      //   current * 100 <= peak * 5
+      //
+      // uint64_t is used so multiplication cannot overflow a
+      // 32-bit insertion counter.
+      const bool is_low_iteration =
+        after_both_phases > 0u &&
+        static_cast<uint64_t>(
+          after_both_phases) * 100u <=
+        static_cast<uint64_t>(
+          peak_survived) *
+          kGpuDagAdaptiveStopLowPercent;
+
+      if (is_low_iteration) {
+        ++low_iteration_streak;
+      }
+      else {
+        low_iteration_streak = 0u;
+      }
+
+      // Do not stop before the minimum number of complete outer
+      // iterations. The low-count streak may begin earlier, but
+      // stopping is permitted only after iteration 4.
+      if (outer_iteration >=
+            kGpuDagAdaptiveStopMinimumIterations &&
+          low_iteration_streak >=
+            kGpuDagAdaptiveStopPatience) {
+        adaptive_stop_triggered = true;
+        break;
+      }
+    }    
   }
 
+  
   // ============================================================
   // End of DAG construction core
   //
@@ -3600,6 +3711,30 @@ void G_EXT::_gpu_DAG_construction()
       "GPU root-to-leaf filtering runtime: %.2f (ms)\n",
       gpu_filter_time_ms);
   }
+
+  const uint32_t adaptive_low_threshold =
+    static_cast<uint32_t>(
+      (static_cast<uint64_t>(
+         peak_survived) *
+       kGpuDagAdaptiveStopLowPercent) /
+      100u);
+
+  printf(
+    "[GPU DAG Outer Loop] "
+    "iterations=%u, "
+    "reason=%s, "
+    "peak=%u, "
+    "last=%u, "
+    "low_threshold=%u, "
+    "low_streak=%u\n",
+    outer_iteration,
+    adaptive_stop_triggered
+      ? "adaptive-stop"
+      : "converged",
+    peak_survived,
+    host_u0,
+    adaptive_low_threshold,
+    low_iteration_streak);
 
   // Total runtime is always printed.
   printf(
@@ -3941,7 +4076,11 @@ G_EXT::unittest_gpu_construct_dag(
         sizeof(uint32_t),
       cudaMemcpyHostToDevice));
 
-    _gpu_DAG_construction();
+    // Preserve the original full-convergence behavior for unit
+    // tests. Stage A is evaluated through production benchmark
+    // runs, not through the existing DAG correctness wrapper.
+    _gpu_DAG_construction(
+      false);
 
     GpuDagConstructionResult result;
 
