@@ -112,48 +112,59 @@ static_assert(
 constexpr bool kEnableGpuDagIterationLog = false;
 
 // ============================================================
-// Stage A: adaptive GPU DAG outer-loop stopping
+// Batch low-activity controller
 //
-// A completed outer iteration is considered "low insertion"
-// when:
+// A completed batch iteration is considered low activity when:
 //
-//   survived * 100 <= historical_peak * low_percent
+//   survived * 100 <= historical_peak * low_activity_percent
 //
-// The loop may stop only after:
+// The low-activity condition is reached only after:
 //   1. at least minimum_iterations have completed
-//   2. low insertion has been observed for patience
+//   2. low activity has been observed for patience
 //      consecutive iterations
+//
+// The insertion policy decides what happens after the
+// condition is reached:
+//
+//   FullBatch:
+//     ignore the condition
+//
+//   BatchEarlyStop:
+//     stop DAG construction
+//
+//   BatchThenDirect:
+//     switch subsequent iterations to direct insertion
 //
 // These constants affect only the host-side outer-loop
 // controller. They do not modify insertion, levelization,
 // finalization, or filtering kernels.
 // ============================================================
 constexpr uint32_t
-  kGpuDagAdaptiveStopMinimumIterations = 4u;
+  kGpuDagLowActivityMinimumIterations = 4u;
 
 constexpr uint32_t
-  kGpuDagAdaptiveStopLowPercent = 3u;
+  kGpuDagLowActivityPercent = 3u;
 
 constexpr uint32_t
-  kGpuDagAdaptiveStopPatience = 2u;
+  kGpuDagLowActivityPatience = 2u;
 
 static_assert(
-  kGpuDagAdaptiveStopMinimumIterations > 0u,
-  "Adaptive-stop minimum iterations must be positive");
+  kGpuDagLowActivityMinimumIterations > 0u,
+  "Low-activity minimum iterations must be positive");
 
 static_assert(
-  kGpuDagAdaptiveStopLowPercent > 0u &&
-  kGpuDagAdaptiveStopLowPercent <= 100u,
-  "Adaptive-stop percentage must be in [1, 100]");
+  kGpuDagLowActivityPercent > 0u &&
+  kGpuDagLowActivityPercent <= 100u,
+  "Low-activity percentage must be in [1, 100]");
 
 static_assert(
-  kGpuDagAdaptiveStopPatience > 0u,
-  "Adaptive-stop patience must be positive");
+  kGpuDagLowActivityPatience > 0u,
+  "Low-activity patience must be positive");
 
 static_assert(
-  kGpuDagAdaptiveStopMinimumIterations >=
-    kGpuDagAdaptiveStopPatience,
-  "Minimum iterations should cover the low-count streak");
+  kGpuDagLowActivityMinimumIterations >=
+    kGpuDagLowActivityPatience,
+  "Minimum iterations should cover the low-activity streak");
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -1783,24 +1794,22 @@ std::pair<double, double> G_EXT::_gpu_tree_construction()
 //
 //   u = threadIdx.x * num_batches + batch_index
 //
-// The host launches this kernel only once. The block executes:
+// The host launches this kernel only once. Each lane walks
+// through its transposed candidate sequence:
 //
-//   batch 0
-//   __syncthreads()
-//   batch 1
-//   __syncthreads()
-//   ...
+//   u = lane * num_batches + batch_index
 //
-// This preserves the original cross-batch ordering boundary:
-// every thread finishes batch i before any thread starts
-// batch i + 1.
+// There is currently no explicit synchronization boundary
+// between consecutive batch_index values. Tentative state and
+// level updates are published live and may be observed by other
+// threads during the same insertion phase.
 //
 // Candidate evaluation treats both state 1 and state 2 as selected.
 // Later batches can observe tentative nodes inserted by earlier
 // batches in the same insertion phase.
 //
 // Levelization/finalization occurs only after all batches finish.
-__global__ void _gpu_dag_insert_thread_kl(
+__global__ void _gpu_dag_insert_batch_kl(
   const uint32_t num_endes,
   const uint32_t num_batches,
   const bool is_top_down_insertion,
@@ -2044,22 +2053,17 @@ __global__ void _gpu_dag_insert_thread_kl(
       }
     } while (false);
 
-    // This replaces the synchronization boundary previously
-    // provided by the end of one kernel launch and the start of
-    // the next kernel launch.
+    // No explicit block barrier is used here. This preserves
+    // the currently evaluated live optimistic behavior.
     //
-    // Every thread must reach this barrier, including:
-    //   - lanes whose u >= num_endes
-    //   - lanes whose candidate was already selected
-    //   - lanes whose candidate failed a validity condition
-    //
-    // After this barrier, tentative states and levels published
-    // in batch i are visible to all threads processing batch i+1.
+    // Enabling this barrier changes the order in which
+    // tentative candidates become observable and has been
+    // observed to change solution quality.
     // __syncthreads(); // Note: open this will have worse soln Q than close it. So we close it
   }
 }
 
-void G_EXT::_gpu_dag_insert_thread(
+void G_EXT::_gpu_dag_insert_batch(
   const bool is_top_down_insertion)
 {
   if (_num_ende == 0u) {
@@ -2074,7 +2078,7 @@ void G_EXT::_gpu_dag_insert_thread(
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
     throw std::logic_error(
-      "_gpu_dag_insert_thread requires "
+      "_gpu_dag_insert_batch requires "
       "initialized GPU DAG buffers");
   }
 
@@ -2091,7 +2095,7 @@ void G_EXT::_gpu_dag_insert_thread(
   // Launch one single-block kernel for the entire insertion
   // phase. The kernel processes all batch_index values
   // sequentially and synchronizes after every batch.
-  _gpu_dag_insert_thread_kl
+  _gpu_dag_insert_batch_kl
     <<<1u, kGpuDagBatchSize>>>(
       _num_ende,
       num_batches,
@@ -2105,18 +2109,18 @@ void G_EXT::_gpu_dag_insert_thread(
       _dvc_dag_u0);
 
   cudaCheckErrors(
-    "_gpu_dag_insert_thread_kl failed");
+    "_gpu_dag_insert_batch_kl failed");
 }
 
 // ============================================================
-// Stage B: one-thread-per-e-node live optimistic insertion
+// Direct one-thread-per-e-node live optimistic insertion
 //
 // One CUDA thread evaluates exactly one e-node:
 //
 //   u = blockIdx.x * blockDim.x + threadIdx.x
 //
-// Unlike the Stage A batch kernel, this kernel has no internal
-// batch loop. The full e-node range is evaluated in one
+// Unlike the batch insertion kernel, this kernel has no
+// internal batch loop. The full e-node range is evaluated in one
 // multi-block launch.
 //
 // selected_state:
@@ -2326,7 +2330,8 @@ __global__ void _gpu_dag_insert_direct_kl(
     return;
   }
 
-  // Match the current Stage A live publication behavior.
+  // Match the current batch insertion live publication
+  // behavior.
   //
   // No global synchronization or thread fence is introduced.
   // Existing levelization/finalization validates the resulting
@@ -3764,30 +3769,30 @@ void G_EXT::_gpu_DAG_construction(
   uint32_t outer_iteration = 0u;
 
   // Number of completed iterations using each insertion mode.
-  uint32_t stage_a_iterations = 0u;
-  uint32_t stage_b_iterations = 0u;
+  uint32_t batch_iterations = 0u;
+  uint32_t direct_iterations = 0u;
 
-  // Largest survived insertion count observed during Stage A.
+  // Largest survived insertion count observed during batch
+  // insertion.
   uint32_t peak_survived = 0u;
 
-  // Number of consecutive Stage A iterations whose survived
-  // insertion count is at most
-  // kGpuDagAdaptiveStopLowPercent of the historical Stage A
-  // peak.
-  uint32_t low_iteration_streak = 0u;
+  // Number of consecutive batch iterations whose survived
+  // insertion count is at most kGpuDagLowActivityPercent of
+  // the historical batch peak.
+  uint32_t low_activity_streak = 0u;
 
   // false:
-  //   use the existing Stage A batch insertion kernel.
+  //   use the transposed-batch insertion kernel.
   //
   // true:
-  //   use the Stage B one-thread-per-e-node insertion kernel.
+  //   use the one-thread-per-e-node direct insertion kernel.
   bool use_direct_mode = false;
 
-  // StageAOnly terminates immediately when the adaptive
-  // condition is reached.
-  bool adaptive_stop_triggered = false;
+  // BatchEarlyStop terminates immediately when the
+  // low-activity condition is reached.
+  bool batch_early_stop_triggered = false;
 
-  // StageAThenDirect records the Stage A -> Stage B transition.
+  // BatchThenDirect records the Batch -> Direct transition.
   bool switched_to_direct = false;
   uint32_t switch_iteration = 0u;
   uint32_t switch_survived = 0u;
@@ -3812,7 +3817,7 @@ void G_EXT::_gpu_DAG_construction(
       _gpu_dag_insert_direct(false);
     }
     else {
-      _gpu_dag_insert_thread(false);
+      _gpu_dag_insert_batch(false);
     }
 
     // This value is required only for detailed logging.
@@ -3847,7 +3852,7 @@ void G_EXT::_gpu_DAG_construction(
       _gpu_dag_insert_direct(true);
     }
     else {
-      _gpu_dag_insert_thread(true);
+      _gpu_dag_insert_batch(true);
     }
 
     // This value is required only for detailed logging.
@@ -3882,10 +3887,10 @@ void G_EXT::_gpu_DAG_construction(
     ++outer_iteration;
 
     if (iteration_uses_direct) {
-      ++stage_b_iterations;
+      ++direct_iterations;
     }
     else {
-      ++stage_a_iterations;
+      ++batch_iterations;
     }
 
     // ==========================================================
@@ -3927,25 +3932,25 @@ void G_EXT::_gpu_DAG_construction(
     }
 
     // ==========================================================
-    // Stage A adaptive controller
+    // Batch low-activity controller
     //
     // This controller is evaluated only while the current
-    // iteration uses the Stage A batch kernel.
+    // iteration uses the batch insertion kernel.
     //
     // FullBatch:
-    //   Ignore the adaptive condition.
+    //   Ignore the low-activity condition.
     //
-    // StageAOnly:
-    //   Stop DAG construction when the condition is triggered.
+    // BatchEarlyStop:
+    //   Stop DAG construction when the condition is reached.
     //
-    // StageAThenDirect:
-    //   Switch the next outer iteration to Stage B direct
-    //   insertion. The current iteration has already completed
-    //   both levelization/finalization phases.
+    // BatchThenDirect:
+    //   Switch the next outer iteration to direct insertion.
+    //   The current iteration has already completed both
+    //   levelization and finalization phases.
     //
     // after_both_phases is already copied for the original
-    // u0 == 0 convergence condition, so no additional D2H copy
-    // is introduced.
+    // u0 == 0 convergence condition, so no additional D2H
+    // copy is introduced.
     // ==========================================================
     if (!iteration_uses_direct) {
       if (after_both_phases > peak_survived) {
@@ -3954,38 +3959,38 @@ void G_EXT::_gpu_DAG_construction(
 
       if (insertion_policy !=
           GpuDagInsertionPolicy::FullBatch) {
-        const bool is_low_iteration =
+        const bool is_low_activity =
           after_both_phases > 0u &&
           static_cast<uint64_t>(
             after_both_phases) * 100u <=
           static_cast<uint64_t>(
             peak_survived) *
-            kGpuDagAdaptiveStopLowPercent;
+            kGpuDagLowActivityPercent;
 
-        if (is_low_iteration) {
-          ++low_iteration_streak;
+        if (is_low_activity) {
+          ++low_activity_streak;
         }
         else {
-          low_iteration_streak = 0u;
+          low_activity_streak = 0u;
         }
 
-        const bool adaptive_condition_reached =
+        const bool low_activity_condition_reached =
           outer_iteration >=
-            kGpuDagAdaptiveStopMinimumIterations &&
-          low_iteration_streak >=
-            kGpuDagAdaptiveStopPatience;
+            kGpuDagLowActivityMinimumIterations &&
+          low_activity_streak >=
+            kGpuDagLowActivityPatience;
 
-        if (adaptive_condition_reached) {
+        if (low_activity_condition_reached) {
           if (insertion_policy ==
-              GpuDagInsertionPolicy::StageAOnly) {
-            adaptive_stop_triggered = true;
+              GpuDagInsertionPolicy::BatchEarlyStop) {
+            batch_early_stop_triggered = true;
             break;
           }
 
-          // StageAThenDirect:
+          // BatchThenDirect:
           //
-          // Switch only after one complete Stage A iteration.
-          // The next outer iteration begins in Stage B.
+          // Switch only after one complete batch iteration.
+          // The next outer iteration begins in direct mode.
           use_direct_mode = true;
           switched_to_direct = true;
           switch_iteration = outer_iteration;
@@ -3995,11 +4000,12 @@ void G_EXT::_gpu_DAG_construction(
             printf(
               "[GPU DAG Controller] "
               "switch batch->direct after iteration=%u, "
-              "survived=%u, peak=%u, low_streak=%u\n",
+              "survived=%u, peak=%u, "
+              "low_activity_streak=%u\n",
               switch_iteration,
               switch_survived,
               peak_survived,
-              low_iteration_streak);
+              low_activity_streak);
           }
         }
       }
@@ -4056,11 +4062,11 @@ void G_EXT::_gpu_DAG_construction(
       gpu_filter_time_ms);
   }
 
-  const uint32_t adaptive_low_threshold =
+  const uint32_t low_activity_threshold =
     static_cast<uint32_t>(
       (static_cast<uint64_t>(
          peak_survived) *
-       kGpuDagAdaptiveStopLowPercent) /
+       kGpuDagLowActivityPercent) /
       100u);
 
   const char* insertion_policy_name = "unknown";
@@ -4070,12 +4076,12 @@ void G_EXT::_gpu_DAG_construction(
       insertion_policy_name = "full-batch";
       break;
 
-    case GpuDagInsertionPolicy::StageAOnly:
-      insertion_policy_name = "stage-a-only";
+    case GpuDagInsertionPolicy::BatchEarlyStop:
+      insertion_policy_name = "batch-early-stop";
       break;
 
-    case GpuDagInsertionPolicy::StageAThenDirect:
-      insertion_policy_name = "stage-a-then-direct";
+    case GpuDagInsertionPolicy::BatchThenDirect:
+      insertion_policy_name = "batch-then-direct";
       break;
   }
 
@@ -4083,27 +4089,27 @@ void G_EXT::_gpu_DAG_construction(
     "[GPU DAG Outer Loop] "
     "policy=%s, "
     "iterations=%u, "
-    "stage_a_iterations=%u, "
-    "stage_b_iterations=%u, "
+    "batch_iterations=%u, "
+    "direct_iterations=%u, "
     "reason=%s, "
     "peak=%u, "
     "last=%u, "
-    "low_threshold=%u, "
-    "low_streak=%u, "
+    "low_activity_threshold=%u, "
+    "low_activity_streak=%u, "
     "switched=%s, "
     "switch_iteration=%u, "
     "switch_survived=%u\n",
     insertion_policy_name,
     outer_iteration,
-    stage_a_iterations,
-    stage_b_iterations,
-    adaptive_stop_triggered
-      ? "adaptive-stop"
+    batch_iterations,
+    direct_iterations,
+    batch_early_stop_triggered
+      ? "low-activity-stop"
       : "converged",
     peak_survived,
     host_u0,
-    adaptive_low_threshold,
-    low_iteration_streak,
+    low_activity_threshold,
+    low_activity_streak,
     switched_to_direct
       ? "yes"
       : "no",
@@ -4161,14 +4167,14 @@ G_EXT::unittest_get_csr_snapshot() const
 }
 
 G_EXT::GpuInsertionResult
-G_EXT::unittest_gpu_insert_once(
+G_EXT::unittest_gpu_insert_batch_once(
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& input_level,
   const bool is_top_down_insertion)
 {
   if (_ende_name.empty()) {
     throw std::logic_error(
-      "unittest_gpu_insert_once requires "
+      "unittest_gpu_insert_batch_once requires "
       "read() to be called first");
   }
 
@@ -4225,7 +4231,7 @@ G_EXT::unittest_gpu_insert_once(
       0,
       sizeof(uint32_t)));
 
-    _gpu_dag_insert_thread(
+    _gpu_dag_insert_batch(
       is_top_down_insertion);
 
     GpuInsertionResult result;

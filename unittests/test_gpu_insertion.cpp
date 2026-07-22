@@ -53,7 +53,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_once(
+    g_ext.unittest_gpu_insert_batch_once(
       initial_state,
       initial_level,
       true);
@@ -87,7 +87,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_once(
+    g_ext.unittest_gpu_insert_batch_once(
       initial_state,
       initial_level,
       false);
@@ -124,7 +124,7 @@ TEST_CASE(
     };
 
     const auto result =
-      g_ext.unittest_gpu_insert_once(
+      g_ext.unittest_gpu_insert_batch_once(
         initial_state,
         initial_level,
         is_top_down);
@@ -162,7 +162,7 @@ TEST_CASE(
       test_data_path("chain.json"));
 
     const auto result =
-      g_ext.unittest_gpu_insert_once(
+      g_ext.unittest_gpu_insert_batch_once(
         initial_state,
         initial_level,
         is_top_down);
@@ -200,7 +200,7 @@ TEST_CASE(
       test_data_path("overlap_cycle.json"));
 
     const auto result =
-      g_ext.unittest_gpu_insert_once(
+      g_ext.unittest_gpu_insert_batch_once(
         initial_state,
         initial_level,
         is_top_down);
@@ -235,7 +235,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_once(
+    g_ext.unittest_gpu_insert_batch_once(
       initial_state,
       initial_level,
       true);
@@ -269,7 +269,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_once(
+    g_ext.unittest_gpu_insert_batch_once(
       initial_state,
       initial_level,
       true);
@@ -303,7 +303,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_once(
+    g_ext.unittest_gpu_insert_batch_once(
       initial_state,
       initial_level,
       false);
@@ -342,7 +342,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_once(
+    g_ext.unittest_gpu_insert_batch_once(
       initial_state,
       initial_level,
       false);

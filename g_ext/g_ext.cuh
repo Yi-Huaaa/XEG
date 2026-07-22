@@ -144,24 +144,25 @@ public:
     Hybrid = 2u,
   };
 
-  // Selects the GPU DAG insertion strategy.
+  // Selects the GPU DAG insertion policy.
   //
   // FullBatch:
-  //   Use the existing Stage A batch insertion kernel until
-  //   the original u0 == 0 convergence condition is reached.
+  //   Use the batch insertion kernel until the original
+  //   u0 == 0 convergence condition is reached.
   //
-  // StageAOnly:
-  //   Use the existing Stage A adaptive-stop behavior.
+  // BatchEarlyStop:
+  //   Use batch insertion and stop when the low-activity
+  //   condition is triggered.
   //
-  // StageAThenDirect:
-  //   Start with Stage A batch insertion. When the adaptive
+  // BatchThenDirect:
+  //   Start with batch insertion. When the low-activity
   //   condition is triggered, switch permanently to the
-  //   Stage B one-thread-per-e-node insertion kernel and run
-  //   until u0 == 0.
+  //   one-thread-per-e-node direct insertion kernel and
+  //   continue until u0 == 0.
   enum class GpuDagInsertionPolicy : uint32_t {
     FullBatch = 0u,
-    StageAOnly = 1u,
-    StageAThenDirect = 2u,
+    BatchEarlyStop = 1u,
+    BatchThenDirect = 2u,
   };
 
   struct GpuLevelizationResult {
@@ -185,12 +186,14 @@ public:
   CsrGraphSnapshot
   unittest_get_csr_snapshot() const;
   
-  GpuInsertionResult unittest_gpu_insert_once(
+  // Run exactly one batch insertion phase.
+  // This wrapper is used only by unit tests.
+  GpuInsertionResult unittest_gpu_insert_batch_once(
     const std::vector<uint32_t>& selected_state,
     const std::vector<int>& level,
     bool is_top_down_insertion);
 
-  // Run exactly one Stage B one-thread-per-e-node insertion
+  // Run exactly one one-thread-per-e-node direct insertion
   // phase. This wrapper is used only by unit tests.
   GpuInsertionResult unittest_gpu_insert_direct_once(
     const std::vector<uint32_t>& selected_state,
@@ -374,17 +377,19 @@ public:
     // GPU DAG insertion policy.
     //
     // FullBatch:
-    //   Existing batch insertion until full convergence.
+    //   Use batch insertion until full convergence.
     //
-    // StageAOnly:
-    //   Existing adaptive early-stop experiment.
+    // BatchEarlyStop:
+    //   Use batch insertion and stop when the low-activity
+    //   condition is triggered.
     //
-    // StageAThenDirect:
-    //   Stage A batch insertion followed by Stage B
-    //   one-thread-per-e-node insertion until convergence.
+    // BatchThenDirect:
+    //   Start with batch insertion, then switch permanently
+    //   to direct insertion when the low-activity condition
+    //   is triggered.
     constexpr GpuDagInsertionPolicy
       gpu_dag_insertion_policy =
-        GpuDagInsertionPolicy::StageAThenDirect;
+        GpuDagInsertionPolicy::BatchThenDirect;
 
     // _dvc_picked_endes still contains the GPU tree produced by
     // _gpu_tree_construction().
@@ -580,30 +585,32 @@ private:
   // GPU DAG construction controller.
   //
   // FullBatch:
-  //   Use Stage A batch insertion until u0 == 0.
+  //   Use batch insertion until u0 == 0.
   //
-  // StageAOnly:
-  //   Stop when the Stage A adaptive condition is triggered.
+  // BatchEarlyStop:
+  //   Stop when the batch low-activity condition is triggered.
   //
-  // StageAThenDirect:
-  //   Switch from Stage A batch insertion to Stage B direct
-  //   insertion when the adaptive condition is triggered, then
-  //   continue until u0 == 0.
+  // BatchThenDirect:
+  //   Switch from batch insertion to direct insertion when the
+  //   low-activity condition is triggered, then continue until
+  //   u0 == 0.
   void _gpu_DAG_construction(
     GpuDagInsertionPolicy insertion_policy);
-  // Thread-level batched live optimistic insertion.
+  // Single-block transposed-batch live optimistic insertion.
   //
-  // One call scans all e-node slots inside one single-block kernel.
-  // The kernel processes transposed batches sequentially using
-  // kGpuDagBatchSize lanes and synchronizes the block after every
-  // batch.
+  // One call scans all e-node slots inside one single-block
+  // kernel. The kernel processes transposed batches
+  // sequentially using kGpuDagBatchSize lanes.
   //
-  // Candidate IDs are assigned using a deterministic full-transpose
-  // mapping so neighboring IDs are spread across different batches.
-  // Earlier batches publish tentative state-2 nodes that later
-  // batches may observe.
+  // Candidate IDs are assigned using a deterministic
+  // full-transpose mapping so neighboring IDs are spread
+  // across different batches.
   //
-  // Levelization/finalization occurs only after all batches finish.
+  // Tentative state-2 nodes published by earlier work may be
+  // observed by later work in the same insertion phase.
+  //
+  // Levelization and finalization occur only after the entire
+  // insertion kernel completes.
   //
   // is_top_down_insertion = true:
   //   require at least one selected parent
@@ -612,10 +619,10 @@ private:
   // is_top_down_insertion = false:
   //   require at least one selected child
   //   proposed level = min child level - 1
-  void _gpu_dag_insert_thread(
+  void _gpu_dag_insert_batch(
     bool is_top_down_insertion);
 
-  // Stage B one-thread-per-e-node live optimistic insertion.
+  // One-thread-per-e-node direct live optimistic insertion.
   //
   // One CUDA thread evaluates exactly one e-node:
   //
