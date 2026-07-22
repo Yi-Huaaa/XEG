@@ -144,6 +144,26 @@ public:
     Hybrid = 2u,
   };
 
+  // Selects the GPU DAG insertion strategy.
+  //
+  // FullBatch:
+  //   Use the existing Stage A batch insertion kernel until
+  //   the original u0 == 0 convergence condition is reached.
+  //
+  // StageAOnly:
+  //   Use the existing Stage A adaptive-stop behavior.
+  //
+  // StageAThenDirect:
+  //   Start with Stage A batch insertion. When the adaptive
+  //   condition is triggered, switch permanently to the
+  //   Stage B one-thread-per-e-node insertion kernel and run
+  //   until u0 == 0.
+  enum class GpuDagInsertionPolicy : uint32_t {
+    FullBatch = 0u,
+    StageAOnly = 1u,
+    StageAThenDirect = 2u,
+  };
+
   struct GpuLevelizationResult {
     std::vector<uint32_t> selected_state;
     std::vector<uint32_t> residual_degree;
@@ -166,6 +186,13 @@ public:
   unittest_get_csr_snapshot() const;
   
   GpuInsertionResult unittest_gpu_insert_once(
+    const std::vector<uint32_t>& selected_state,
+    const std::vector<int>& level,
+    bool is_top_down_insertion);
+
+  // Run exactly one Stage B one-thread-per-e-node insertion
+  // phase. This wrapper is used only by unit tests.
+  GpuInsertionResult unittest_gpu_insert_direct_once(
     const std::vector<uint32_t>& selected_state,
     const std::vector<int>& level,
     bool is_top_down_insertion);
@@ -344,21 +371,25 @@ public:
     _gpu_allocate_dag_buffers();
     _gpu_initialize_dag_buffers();
 
-    // Stage A controller.
+    // GPU DAG insertion policy.
     //
-    // true:
-    //   enable adaptive early stopping in production runs.
+    // FullBatch:
+    //   Existing batch insertion until full convergence.
     //
-    // false:
-    //   preserve the original full-convergence behavior for
-    //   baseline measurements.
-    constexpr bool enable_gpu_dag_adaptive_stop =
-      true; // Full-convergence baseline set this to false
+    // StageAOnly:
+    //   Existing adaptive early-stop experiment.
+    //
+    // StageAThenDirect:
+    //   Stage A batch insertion followed by Stage B
+    //   one-thread-per-e-node insertion until convergence.
+    constexpr GpuDagInsertionPolicy
+      gpu_dag_insertion_policy =
+        GpuDagInsertionPolicy::StageAThenDirect;
 
     // _dvc_picked_endes still contains the GPU tree produced by
     // _gpu_tree_construction().
     _gpu_DAG_construction(
-      enable_gpu_dag_adaptive_stop);
+      gpu_dag_insertion_policy);
 
     if (ILP_solver) {
       // Copy the final GPU root-to-leaf filtering mask.
@@ -546,16 +577,20 @@ private:
       const std::vector<uint32_t>& roots,
       const std::vector<uint32_t>& leaves,
       const std::vector<bool>& picked_endes);
-  // GPU version  // GPU version
+  // GPU DAG construction controller.
   //
-  // enable_adaptive_stop = true:
-  //   stop the batch-insertion outer loop after the survived
-  //   insertion count remains low for several iterations.
+  // FullBatch:
+  //   Use Stage A batch insertion until u0 == 0.
   //
-  // enable_adaptive_stop = false:
-  //   preserve the original behavior and run until u0 == 0.
+  // StageAOnly:
+  //   Stop when the Stage A adaptive condition is triggered.
+  //
+  // StageAThenDirect:
+  //   Switch from Stage A batch insertion to Stage B direct
+  //   insertion when the adaptive condition is triggered, then
+  //   continue until u0 == 0.
   void _gpu_DAG_construction(
-    const bool enable_adaptive_stop);
+    GpuDagInsertionPolicy insertion_policy);
   // Thread-level batched live optimistic insertion.
   //
   // One call scans all e-node slots inside one single-block kernel.
@@ -579,6 +614,20 @@ private:
   //   proposed level = min child level - 1
   void _gpu_dag_insert_thread(
     bool is_top_down_insertion);
+
+  // Stage B one-thread-per-e-node live optimistic insertion.
+  //
+  // One CUDA thread evaluates exactly one e-node:
+  //
+  //   u = blockIdx.x * blockDim.x + threadIdx.x
+  //
+  // The candidate is published directly as tentative state 2.
+  // Existing levelization and finalization validate or roll back
+  // the insertion.
+  void _gpu_dag_insert_direct(
+    bool is_top_down_insertion);
+
+  // Finalize tentative state-2 nodes after levelization.
   // Finalize tentative state-2 nodes after levelization.
   //
   // residual degree == 0:
