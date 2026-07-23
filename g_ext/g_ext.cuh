@@ -210,6 +210,20 @@ public:
   unittest_gpu_construct_dag(
     const std::vector<uint32_t>& selected_state);
 
+  // Run the production GPU DAG controller starting from the
+  // GPU tree produced by _gpu_tree_construction().
+  //
+  // This wrapper exists only for unit tests. It does not add
+  // branches, counters, or callbacks to the production
+  // controller.
+  //
+  // A fresh G_EXT object must be used so _dvc_picked_endes
+  // still contains the unmodified GPU tree when DAG
+  // construction begins.
+  GpuDagConstructionResult
+  unittest_gpu_construct_dag_from_tree_with_policy(
+    GpuDagInsertionPolicy insertion_policy);
+
   GpuLevelizationResult unittest_gpu_levelize(
     const std::vector<uint32_t>& selected_state,
     bool is_top_down);

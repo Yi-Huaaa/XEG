@@ -4640,6 +4640,128 @@ G_EXT::unittest_gpu_construct_dag(
   }
 }
 
+G_EXT::GpuDagConstructionResult
+G_EXT::unittest_gpu_construct_dag_from_tree_with_policy(
+  const GpuDagInsertionPolicy insertion_policy)
+{
+  if (_ende_name.empty()) {
+    throw std::logic_error(
+      "unittest_gpu_construct_dag_from_tree_with_policy "
+      "requires read() to be called first");
+  }
+
+  // Reject invalid enum values before entering the production
+  // controller. This validation exists only in the unit-test
+  // wrapper and does not change the production path.
+  switch (insertion_policy) {
+    case GpuDagInsertionPolicy::FullBatch:
+    case GpuDagInsertionPolicy::BatchEarlyStop:
+    case GpuDagInsertionPolicy::BatchThenDirect:
+      break;
+
+    default:
+      throw std::invalid_argument(
+        "Invalid GPU DAG insertion policy");
+  }
+
+  // This wrapper must start from an unmodified GPU tree.
+  //
+  // Reusing an object after another GPU unit-test operation
+  // could leave _dvc_picked_endes containing a modified DAG
+  // rather than the original tree.
+  if (_dvc_picked_endes != nullptr) {
+    throw std::logic_error(
+      "unittest_gpu_construct_dag_from_tree_with_policy "
+      "requires a fresh G_EXT object");
+  }
+
+  // Build the same GPU tree used by the production run().
+  //
+  // _gpu_initialize_dag_buffers() intentionally does not
+  // modify _dvc_picked_endes, so the tree selection remains
+  // the initial state of DAG construction.
+  (void)_gpu_tree_construction();
+
+  _gpu_allocate_dag_buffers();
+  _gpu_initialize_dag_buffers();
+
+  try {
+    // Execute the real production controller with the policy
+    // explicitly selected by the unit test.
+    _gpu_DAG_construction(
+      insertion_policy);
+
+    GpuDagConstructionResult result;
+
+    result.selected_state.resize(
+      _num_ende,
+      0u);
+
+    result.residual_degree.resize(
+      _num_ende,
+      0u);
+
+    result.level.resize(
+      _num_ende,
+      -1);
+
+    result.in_subgraph.resize(
+      _num_ende,
+      0u);
+
+    CUDA_CHECK(cudaMemcpy(
+      result.selected_state.data(),
+      _dvc_picked_endes,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    // _gpu_DAG_construction() finishes with top-down
+    // levelization, so _dvc_indegree contains the final
+    // top-down residual degree.
+    CUDA_CHECK(cudaMemcpy(
+      result.residual_degree.data(),
+      _dvc_indegree,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.level.data(),
+      _dvc_level,
+      static_cast<size_t>(_num_ende) *
+        sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.in_subgraph.data(),
+      _dvc_in_subgraph,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.num_levels,
+      _dvc_max_level,
+      sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.final_u0,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    _gpu_free_dag_buffers();
+
+    return result;
+  }
+  catch (...) {
+    _gpu_free_dag_buffers();
+    throw;
+  }
+}
+
 G_EXT::GpuRootToLeafFilterResult
 G_EXT::unittest_gpu_filter_root_to_leaf(
   const std::vector<uint32_t>& selected_state)

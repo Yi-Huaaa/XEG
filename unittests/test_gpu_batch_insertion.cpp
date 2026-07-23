@@ -5,6 +5,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -33,11 +38,141 @@ void check_vector_equal(
   }
 }
 
+std::string indexed_name(
+  const char prefix,
+  const uint32_t index)
+{
+  std::ostringstream stream;
+
+  stream
+    << prefix
+    << std::setfill('0')
+    << std::setw(6)
+    << index;
+
+  return stream.str();
+}
+
+
+class TemporaryFanoutGraph
+{
+public:
+  explicit TemporaryFanoutGraph(
+    const uint32_t total_nodes)
+    : path_(
+        "/tmp/g_ext_batch_boundary_"
+        + std::to_string(total_nodes)
+        + ".json")
+  {
+    if (total_nodes < 2u) {
+      throw std::invalid_argument(
+        "TemporaryFanoutGraph requires "
+        "at least two e-nodes");
+    }
+
+    std::ofstream output(path_);
+
+    if (!output.is_open()) {
+      throw std::runtime_error(
+        "Failed to create temporary batch test graph");
+    }
+
+    const std::string root_node =
+      indexed_name('n', 0u);
+
+    const std::string root_eclass =
+      indexed_name('c', 0u);
+
+    output
+      << "{\n"
+      << "  \"nodes\": {\n"
+      << "    \"" << root_node << "\": {\n"
+      << "      \"op\": \"root\",\n"
+      << "      \"cost\": 1,\n"
+      << "      \"eclass\": \""
+      << root_eclass
+      << "\",\n"
+      << "      \"children\": [";
+
+    for (uint32_t node = 1u;
+         node < total_nodes;
+         ++node) {
+      if (node > 1u) {
+        output << ", ";
+      }
+
+      output
+        << "\""
+        << indexed_name('n', node)
+        << "\"";
+    }
+
+    output
+      << "]\n"
+      << "    }";
+
+    for (uint32_t node = 1u;
+         node < total_nodes;
+         ++node) {
+      output
+        << ",\n"
+        << "    \""
+        << indexed_name('n', node)
+        << "\": {\n"
+        << "      \"op\": \"candidate\",\n"
+        << "      \"cost\": 1,\n"
+        << "      \"eclass\": \""
+        << indexed_name('c', node)
+        << "\",\n"
+        << "      \"children\": []\n"
+        << "    }";
+    }
+
+    output
+      << "\n"
+      << "  },\n"
+      << "  \"root_eclasses\": [\""
+      << root_eclass
+      << "\"]\n"
+      << "}\n";
+
+    output.close();
+
+    if (!output) {
+      std::remove(path_.c_str());
+
+      throw std::runtime_error(
+        "Failed while writing temporary "
+        "batch test graph");
+    }
+  }
+
+  ~TemporaryFanoutGraph()
+  {
+    std::remove(path_.c_str());
+  }
+
+  TemporaryFanoutGraph(
+    const TemporaryFanoutGraph&) = delete;
+
+  TemporaryFanoutGraph&
+  operator=(
+    const TemporaryFanoutGraph&) = delete;
+
+  const std::string& path() const
+  {
+    return path_;
+  }
+
+private:
+  std::string path_;
+};
+
 }  // namespace
 
 
 TEST_CASE(
-  "GPU top-down insertion uses a selected parent")
+  "GPU batch top-down insertion uses a selected parent")
 {
   G_EXT g_ext;
 
@@ -71,7 +206,7 @@ TEST_CASE(
 
 
 TEST_CASE(
-  "GPU bottom-up insertion uses a selected child")
+  "GPU batch bottom-up insertion uses a selected child")
 {
   G_EXT g_ext;
 
@@ -105,7 +240,7 @@ TEST_CASE(
 
 
 TEST_CASE(
-  "GPU insertion rejects nodes without selected neighbors")
+  "GPU batch insertion rejects nodes without selected neighbors")
 {
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
@@ -143,7 +278,7 @@ TEST_CASE(
 
 
 TEST_CASE(
-  "GPU insertion rejects a parent-child level conflict")
+  "GPU batch insertion rejects a parent-child level conflict")
 {
   const std::vector<uint32_t> initial_state = {
     1u, 0u, 1u
@@ -181,7 +316,7 @@ TEST_CASE(
 
 
 TEST_CASE(
-  "GPU insertion rejects selected parent-child overlap")
+  "GPU batch insertion rejects selected parent-child overlap")
 {
   const std::vector<uint32_t> initial_state = {
     1u, 0u
@@ -219,7 +354,7 @@ TEST_CASE(
 
 
 TEST_CASE(
-  "GPU insertion treats state 2 as a selected neighbor")
+  "GPU batch insertion treats state 2 as a selected neighbor")
 {
   G_EXT g_ext;
 
@@ -253,7 +388,7 @@ TEST_CASE(
 
 
 TEST_CASE(
-  "GPU insertion ignores selected neighbors with invalid levels")
+  "GPU batch insertion ignores selected neighbors with invalid levels")
 {
   G_EXT g_ext;
 
@@ -286,7 +421,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-  "GPU insertion handles multiple independent candidates")
+  "GPU batch insertion handles multiple independent candidates")
 {
   G_EXT g_ext;
 
@@ -325,7 +460,7 @@ TEST_CASE(
 
 
 TEST_CASE(
-  "GPU live optimistic insertion permits valid concurrent outcomes")
+  "GPU batch live optimistic insertion permits valid concurrent outcomes")
 {
   G_EXT g_ext;
 
@@ -414,3 +549,78 @@ TEST_CASE(
   }
 }
 
+TEST_CASE(
+  "GPU batch insertion covers transposed batch boundaries")
+{
+  // total_nodes includes:
+  //   1 selected root
+  //   total_nodes - 1 unselected candidates
+  //
+  // These sizes cover:
+  //   255: below one complete 256-thread batch
+  //   256: exactly one complete batch
+  //   257: one complete batch plus one node
+  //   513: more than two complete batch ranges
+  for (const uint32_t total_nodes :
+       {255u, 256u, 257u, 513u}) {
+    DOCTEST_CAPTURE(total_nodes);
+
+    TemporaryFanoutGraph graph(
+      total_nodes);
+
+    G_EXT g_ext;
+
+    g_ext.read(
+      graph.path());
+
+    std::vector<uint32_t> initial_state(
+      total_nodes,
+      0u);
+
+    std::vector<int> initial_level(
+      total_nodes,
+      -1);
+
+    initial_state[0] = 1u;
+    initial_level[0] = 0;
+
+    const auto result =
+      g_ext.unittest_gpu_insert_batch_once(
+        initial_state,
+        initial_level,
+        true);
+
+    DOCTEST_REQUIRE(
+      result.selected_state.size()
+        == total_nodes);
+
+    DOCTEST_REQUIRE(
+      result.level.size()
+        == total_nodes);
+
+    // The selected root must remain stable.
+    DOCTEST_CHECK(
+      result.selected_state[0] == 1u);
+
+    DOCTEST_CHECK(
+      result.level[0] == 0);
+
+    // Every candidate has the root as a selected parent.
+    // Top-down insertion should therefore publish every
+    // candidate as tentative state 2 at level 1.
+    for (uint32_t node = 1u;
+         node < total_nodes;
+         ++node) {
+      DOCTEST_CAPTURE(node);
+
+      DOCTEST_CHECK(
+        result.selected_state[node] == 2u);
+
+      DOCTEST_CHECK(
+        result.level[node] == 1);
+    }
+
+    DOCTEST_CHECK(
+      result.u0 == total_nodes - 1u);
+  }
+}
