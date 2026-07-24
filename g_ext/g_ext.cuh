@@ -200,6 +200,34 @@ public:
     const std::vector<int>& level,
     bool is_top_down_insertion);
 
+  // Run exactly one Block-Batch insertion phase.
+  //
+  // One CUDA block acts as one transposed candidate lane.
+  // Threads inside the block cooperatively evaluate one
+  // candidate at a time.
+  //
+  // This wrapper is used only by unit tests.
+  GpuInsertionResult
+  unittest_gpu_insert_block_batch_once(
+    const std::vector<uint32_t>& selected_state,
+    const std::vector<int>& level,
+    bool is_top_down_insertion,
+    uint32_t threads_per_candidate);
+
+  // Run exactly one Block-Direct insertion phase.
+  //
+  // One CUDA block evaluates one candidate e-node.
+  // Threads inside the block cooperatively traverse the
+  // candidate's parent and child adjacency.
+  //
+  // This wrapper is used only by unit tests.
+  GpuInsertionResult
+  unittest_gpu_insert_block_direct_once(
+    const std::vector<uint32_t>& selected_state,
+    const std::vector<int>& level,
+    bool is_top_down_insertion,
+    uint32_t threads_per_candidate);
+
   GpuFinalizeResult
   unittest_gpu_levelize_and_finalize(
     const std::vector<uint32_t>& selected_state,
@@ -267,11 +295,13 @@ public:
           "Warp-level GPU DAG construction is not implemented yet");
 
       case DagKernel::Block:
-        throw std::logic_error(
-          "Block-level GPU DAG construction is not implemented yet");
+        _validate_block_threads_per_candidate(
+          num_thread_dag_constrution);
+        break;
 
       default:
-        throw std::invalid_argument("Invalid DagKernel value");
+        throw std::invalid_argument(
+          "Invalid DagKernel value");
     }
 
     _dag_kernel = dag_kernel;
@@ -596,6 +626,16 @@ private:
       const std::vector<uint32_t>& roots,
       const std::vector<uint32_t>& leaves,
       const std::vector<bool>& picked_endes);
+
+  // Validate the runtime Block configuration.
+  //
+  // The initial shared-memory reduction supports:
+  //
+  //   64, 128, 256, 512, 1024
+  //
+  // subject to the current CUDA device limit.
+  void _validate_block_threads_per_candidate(
+    uint32_t threads_per_candidate) const;
   // GPU DAG construction controller.
   //
   // FullBatch:
@@ -648,6 +688,27 @@ private:
   void _gpu_dag_insert_direct(
     bool is_top_down_insertion);
 
+  // Block-cooperative transposed-batch insertion.
+  //
+  // One CUDA block acts as one candidate lane. Each block
+  // sequentially processes its transposed candidate sequence.
+  void _gpu_dag_insert_block_batch(
+    bool is_top_down_insertion,
+    uint32_t threads_per_candidate);
+
+  // Block-cooperative direct insertion.
+  //
+  // One CUDA block evaluates exactly one candidate e-node.
+  void _gpu_dag_insert_block_direct(
+    bool is_top_down_insertion,
+    uint32_t threads_per_candidate);
+
+  // Select Thread or Block insertion while preserving the
+  // controller's independent Batch/Direct schedule.
+  void _gpu_dag_insert_configured(
+    bool use_direct_mode,
+    bool is_top_down_insertion);
+
   // Finalize tentative state-2 nodes after levelization.
   // Finalize tentative state-2 nodes after levelization.
   //
@@ -680,6 +741,16 @@ private:
   // levels are processed by one single-block persistent kernel.
   void _gpu_dag_levelize_hybrid(
     const bool is_top_down);
+
+  // Shared implementation for the two public Block insertion
+  // unit-test wrappers.
+  GpuInsertionResult
+  _unittest_gpu_insert_block_once(
+    const std::vector<uint32_t>& selected_state,
+    const std::vector<int>& level,
+    bool is_top_down_insertion,
+    bool use_direct_mode,
+    uint32_t threads_per_candidate);
 
   // Shared implementation used only by the public
   // levelization unit-test wrappers.
@@ -882,5 +953,4 @@ private:
 
 
 #endif
-
 

@@ -200,6 +200,62 @@ void cuda_free_and_null(T*& ptr) noexcept
 }
 }  // namespace
 
+void G_EXT::_validate_block_threads_per_candidate(
+  const uint32_t threads_per_candidate) const
+{
+  if (threads_per_candidate < 64u) {
+    throw std::invalid_argument(
+      "Block DAG kernel requires at least "
+      "64 threads per candidate");
+  }
+
+  if ((threads_per_candidate &
+       (threads_per_candidate - 1u)) != 0u) {
+    throw std::invalid_argument(
+      "Block DAG kernel requires a power-of-two "
+      "thread count");
+  }
+
+  if (threads_per_candidate > 1024u) {
+    throw std::invalid_argument(
+      "Block DAG kernel supports at most "
+      "1024 threads per candidate");
+  }
+
+  int device = 0;
+
+  cudaError_t status =
+    cudaGetDevice(&device);
+
+  if (status != cudaSuccess) {
+    throw std::runtime_error(
+      std::string(
+        "Failed to query current CUDA device: ")
+      + cudaGetErrorString(status));
+  }
+
+  cudaDeviceProp properties{};
+
+  status =
+    cudaGetDeviceProperties(
+      &properties,
+      device);
+
+  if (status != cudaSuccess) {
+    throw std::runtime_error(
+      std::string(
+        "Failed to query CUDA device properties: ")
+      + cudaGetErrorString(status));
+  }
+
+  if (threads_per_candidate >
+      static_cast<uint32_t>(
+        properties.maxThreadsPerBlock)) {
+    throw std::invalid_argument(
+      "Block DAG threads per candidate exceed "
+      "the CUDA device maximum");
+  }
+}
 
 // G_EXT fucntions
 void G_EXT::_read_input(
@@ -2388,6 +2444,654 @@ void G_EXT::_gpu_dag_insert_direct(
     "_gpu_dag_insert_direct_kl failed");
 }
 
+// ============================================================
+// Block-cooperative GPU DAG insertion
+//
+// Block-Batch:
+//   one CUDA block acts as one transposed candidate lane
+//
+// Block-Direct:
+//   one CUDA block evaluates one candidate
+//
+// Both kernels reuse the same candidate evaluator.
+//
+// Parent and child adjacency are scanned cooperatively.
+// Exact overlap detection is folded into those scans:
+//
+//   shorter segment:
+//     cooperative scan
+//
+//   longer segment:
+//     binary search
+//
+// There is no separate third overlap pass.
+// ============================================================
+
+constexpr uint32_t
+  kGpuDagBlockHasSelectedParent =
+    1u << 0u;
+
+constexpr uint32_t
+  kGpuDagBlockHasSelectedChild =
+    1u << 1u;
+
+constexpr uint32_t
+  kGpuDagBlockHasSelectedOverlap =
+    1u << 2u;
+
+
+struct GpuDagBlockThreadScratch
+{
+  int max_parent_level;
+  int min_child_level;
+  uint32_t flags;
+};
+
+
+static_assert(
+  sizeof(GpuDagBlockThreadScratch) == 12u,
+  "Unexpected Block insertion scratch size");
+
+
+__device__ __forceinline__
+bool gpu_dag_sorted_segment_contains(
+  const uint32_t* adjacency,
+  const uint32_t segment_begin,
+  const uint32_t segment_end,
+  const uint32_t target)
+{
+  uint32_t begin =
+    segment_begin;
+
+  uint32_t end =
+    segment_end;
+
+  while (begin < end) {
+    const uint32_t middle =
+      begin + (end - begin) / 2u;
+
+    const uint32_t value =
+      adjacency[middle];
+
+    if (value < target) {
+      begin =
+        middle + 1u;
+    }
+    else {
+      end =
+        middle;
+    }
+  }
+
+  return
+    begin < segment_end &&
+    adjacency[begin] == target;
+}
+
+
+__device__ __forceinline__
+void gpu_dag_process_block_candidate(
+  const uint32_t u,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0,
+  GpuDagBlockThreadScratch* scratch,
+  uint32_t* candidate_active)
+{
+  const uint32_t lane =
+    threadIdx.x;
+
+  // Every thread in this CUDA block evaluates the same
+  // candidate.
+  //
+  // Thread 0 snapshots whether this candidate is currently
+  // unselected. The final atomicCAS still resolves races with
+  // other candidate blocks.
+  if (lane == 0u) {
+    *candidate_active =
+      atomicAdd(
+        &selected_state[u],
+        0u) == 0u
+        ? 1u
+        : 0u;
+  }
+
+  __syncthreads();
+
+  // This return is uniform because every thread reads the same
+  // shared candidate_active value.
+  if (*candidate_active == 0u) {
+    return;
+  }
+
+  const uint32_t parent_begin =
+    inverse_adj_ptr[u];
+
+  const uint32_t parent_end =
+    inverse_adj_ptr[u + 1u];
+
+  const uint32_t child_begin =
+    forward_adj_ptr[u];
+
+  const uint32_t child_end =
+    forward_adj_ptr[u + 1u];
+
+  const uint32_t parent_count =
+    parent_end - parent_begin;
+
+  const uint32_t child_count =
+    child_end - child_begin;
+
+  // Scan only the shorter side for overlap checks.
+  //
+  // Equal-size segments use the parent side.
+  const bool check_overlap_from_parents =
+    parent_count <= child_count;
+
+  GpuDagBlockThreadScratch local{
+    -1,
+    INT_MAX,
+    0u
+  };
+
+  // ----------------------------------------------------------
+  // Cooperative selected-parent scan
+  //
+  // Every thread processes:
+  //
+  //   parent_begin + lane
+  //   parent_begin + lane + blockDim.x
+  //   ...
+  //
+  // When the parent segment is shorter, overlap detection is
+  // folded directly into this scan.
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         parent_begin + lane;
+       position < parent_end;
+       position += blockDim.x) {
+    const uint32_t parent =
+      inverse_adj[position];
+
+    const uint32_t parent_state =
+      atomicAdd(
+        &selected_state[parent],
+        0u);
+
+    if (parent_state == 0u) {
+      continue;
+    }
+
+    const int parent_level =
+      atomicAdd(
+        &level[parent],
+        0);
+
+    if (parent_level < 0) {
+      continue;
+    }
+
+    local.flags |=
+      kGpuDagBlockHasSelectedParent;
+
+    if (parent_level >
+        local.max_parent_level) {
+      local.max_parent_level =
+        parent_level;
+    }
+
+    // Only selected parents with valid levels require an
+    // overlap lookup.
+    //
+    // Because the same e-node ID has one shared state and one
+    // shared level, finding this ID in the child CSR proves an
+    // exact selected parent-child overlap.
+    if (check_overlap_from_parents &&
+        gpu_dag_sorted_segment_contains(
+          forward_adj,
+          child_begin,
+          child_end,
+          parent)) {
+      local.flags |=
+        kGpuDagBlockHasSelectedParent |
+        kGpuDagBlockHasSelectedChild |
+        kGpuDagBlockHasSelectedOverlap;
+
+      // This parent is also the same selected child.
+      if (parent_level <
+          local.min_child_level) {
+        local.min_child_level =
+          parent_level;
+      }
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Cooperative selected-child scan
+  //
+  // When the child segment is shorter, overlap detection is
+  // folded directly into this scan.
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         child_begin + lane;
+       position < child_end;
+       position += blockDim.x) {
+    const uint32_t child =
+      forward_adj[position];
+
+    const uint32_t child_state =
+      atomicAdd(
+        &selected_state[child],
+        0u);
+
+    if (child_state == 0u) {
+      continue;
+    }
+
+    const int child_level =
+      atomicAdd(
+        &level[child],
+        0);
+
+    if (child_level < 0) {
+      continue;
+    }
+
+    local.flags |=
+      kGpuDagBlockHasSelectedChild;
+
+    if (child_level <
+        local.min_child_level) {
+      local.min_child_level =
+        child_level;
+    }
+
+    // Only selected children with valid levels require an
+    // overlap lookup.
+    if (!check_overlap_from_parents &&
+        gpu_dag_sorted_segment_contains(
+          inverse_adj,
+          parent_begin,
+          parent_end,
+          child)) {
+      local.flags |=
+        kGpuDagBlockHasSelectedParent |
+        kGpuDagBlockHasSelectedChild |
+        kGpuDagBlockHasSelectedOverlap;
+
+      // This child is also the same selected parent.
+      if (child_level >
+          local.max_parent_level) {
+        local.max_parent_level =
+          child_level;
+      }
+    }
+  }
+
+  // Publish this thread's local summary into dynamic shared
+  // memory.
+  scratch[lane] =
+    local;
+
+  __syncthreads();
+
+  // ----------------------------------------------------------
+  // Power-of-two shared-memory reduction
+  //
+  // The validator guarantees blockDim.x is one of:
+  //
+  //   64, 128, 256, 512, 1024
+  //
+  // Reduction combines:
+  //
+  //   maximum selected-parent level
+  //   minimum selected-child level
+  //   parent/child/overlap flags
+  // ----------------------------------------------------------
+  for (uint32_t stride =
+         blockDim.x / 2u;
+       stride > 0u;
+       stride >>= 1u) {
+    if (lane < stride) {
+      const GpuDagBlockThreadScratch other =
+        scratch[lane + stride];
+
+      if (other.max_parent_level >
+          scratch[lane].max_parent_level) {
+        scratch[lane].max_parent_level =
+          other.max_parent_level;
+      }
+
+      if (other.min_child_level <
+          scratch[lane].min_child_level) {
+        scratch[lane].min_child_level =
+          other.min_child_level;
+      }
+
+      scratch[lane].flags |=
+        other.flags;
+    }
+
+    __syncthreads();
+  }
+
+  // Thread 0 evaluates the same candidate legality conditions
+  // used by the existing Thread insertion kernels.
+  if (lane == 0u) {
+    const GpuDagBlockThreadScratch summary =
+      scratch[0];
+
+    const bool has_selected_parent =
+      (summary.flags &
+       kGpuDagBlockHasSelectedParent) != 0u;
+
+    const bool has_selected_child =
+      (summary.flags &
+       kGpuDagBlockHasSelectedChild) != 0u;
+
+    const bool has_selected_overlap =
+      (summary.flags &
+       kGpuDagBlockHasSelectedOverlap) != 0u;
+
+    bool valid =
+      !has_selected_overlap &&
+      summary.max_parent_level <
+        summary.min_child_level;
+
+    int proposed_level = -1;
+
+    if (valid &&
+        is_top_down_insertion) {
+      valid =
+        has_selected_parent;
+
+      if (valid) {
+        proposed_level =
+          summary.max_parent_level + 1;
+      }
+    }
+    else if (valid) {
+      valid =
+        has_selected_child;
+
+      if (valid) {
+        proposed_level =
+          summary.min_child_level - 1;
+      }
+    }
+
+    valid =
+      valid &&
+      proposed_level >= 0;
+
+    if (valid) {
+      // Preserve the existing live optimistic publication
+      // order:
+      //
+      //   1. publish proposed level
+      //   2. publish tentative state 2
+      //
+      // Do not add __threadfence().
+      level[u] =
+        proposed_level;
+
+      if (atomicCAS(
+            &selected_state[u],
+            0u,
+            2u) == 0u) {
+        atomicAdd(
+          u0,
+          1u);
+      }
+    }
+  }
+
+  // Block-Batch reuses this dynamic shared-memory array for the
+  // next candidate owned by the same block.
+  //
+  // This is only block-local synchronization. It does not
+  // synchronize different candidate blocks.
+  __syncthreads();
+}
+
+__global__ void _gpu_dag_insert_block_batch_kl(
+  const uint32_t num_endes,
+  const uint32_t num_batches,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  extern __shared__
+    GpuDagBlockThreadScratch scratch[];
+
+  __shared__ uint32_t candidate_active;
+
+  // One CUDA block corresponds to one transposed candidate
+  // lane.
+  //
+  // Candidate mapping:
+  //
+  //   u = blockIdx.x * num_batches + batch_index
+  for (uint32_t batch_index = 0u;
+       batch_index < num_batches;
+       ++batch_index) {
+    const uint32_t u =
+      blockIdx.x * num_batches +
+      batch_index;
+
+    // u is identical for all threads in this CUDA block.
+    // Therefore this branch is uniform and safe around the
+    // candidate evaluator's __syncthreads().
+    if (u >= num_endes) {
+      continue;
+    }
+
+    gpu_dag_process_block_candidate(
+      u,
+      is_top_down_insertion,
+      selected_state,
+      forward_adj,
+      forward_adj_ptr,
+      inverse_adj,
+      inverse_adj_ptr,
+      level,
+      u0,
+      scratch,
+      &candidate_active);
+  }
+}
+
+__global__ void _gpu_dag_insert_block_direct_kl(
+  const uint32_t num_endes,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t u =
+    blockIdx.x;
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  extern __shared__
+    GpuDagBlockThreadScratch scratch[];
+
+  __shared__ uint32_t candidate_active;
+
+  gpu_dag_process_block_candidate(
+    u,
+    is_top_down_insertion,
+    selected_state,
+    forward_adj,
+    forward_adj_ptr,
+    inverse_adj,
+    inverse_adj_ptr,
+    level,
+    u0,
+    scratch,
+    &candidate_active);
+}
+
+void G_EXT::_gpu_dag_insert_block_batch(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_candidate)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_block_batch requires "
+      "initialized GPU DAG buffers");
+  }
+
+  // Preserve the existing 256-lane transposed Batch mapping.
+  const uint32_t num_batches =
+    (_num_ende +
+     kGpuDagBatchSize - 1u) /
+    kGpuDagBatchSize;
+
+  // Launch only candidate-lane blocks that own at least one
+  // valid candidate.
+  //
+  // candidate_lanes is at most kGpuDagBatchSize.
+  const uint32_t candidate_lanes =
+    (_num_ende +
+     num_batches - 1u) /
+    num_batches;
+
+  const size_t shared_bytes =
+    static_cast<size_t>(
+      threads_per_candidate) *
+    sizeof(GpuDagBlockThreadScratch);
+
+  _gpu_dag_insert_block_batch_kl
+    <<<candidate_lanes,
+       threads_per_candidate,
+       shared_bytes>>>(
+      _num_ende,
+      num_batches,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_block_batch_kl failed");
+}
+
+void G_EXT::_gpu_dag_insert_block_direct(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_candidate)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_block_direct requires "
+      "initialized GPU DAG buffers");
+  }
+
+  const size_t shared_bytes =
+    static_cast<size_t>(
+      threads_per_candidate) *
+    sizeof(GpuDagBlockThreadScratch);
+
+  // One CUDA block per candidate e-node.
+  _gpu_dag_insert_block_direct_kl
+    <<<_num_ende,
+       threads_per_candidate,
+       shared_bytes>>>(
+      _num_ende,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_block_direct_kl failed");
+}
+
+void G_EXT::_gpu_dag_insert_configured(
+  const bool use_direct_mode,
+  const bool is_top_down_insertion)
+{
+  switch (_dag_kernel) {
+    case DagKernel::Thread:
+      if (use_direct_mode) {
+        _gpu_dag_insert_direct(
+          is_top_down_insertion);
+      }
+      else {
+        _gpu_dag_insert_batch(
+          is_top_down_insertion);
+      }
+
+      return;
+
+    case DagKernel::Block:
+      if (use_direct_mode) {
+        _gpu_dag_insert_block_direct(
+          is_top_down_insertion,
+          _dag_threads_per_candidate);
+      }
+      else {
+        _gpu_dag_insert_block_batch(
+          is_top_down_insertion,
+          _dag_threads_per_candidate);
+      }
+
+      return;
+
+    case DagKernel::Warp:
+      throw std::logic_error(
+        "Warp-level GPU DAG construction "
+        "is not implemented yet");
+  }
+
+  throw std::logic_error(
+    "Invalid DAG kernel configuration");
+}
+
 // Construct the selected-subgraph degree and append all
 // zero-degree selected e-nodes to the initial queue.
 //
@@ -3813,12 +4517,9 @@ void G_EXT::_gpu_DAG_construction(
     // ==========================================================
     // Bottom-up insertion
     // ==========================================================
-    if (iteration_uses_direct) {
-      _gpu_dag_insert_direct(false);
-    }
-    else {
-      _gpu_dag_insert_batch(false);
-    }
+    _gpu_dag_insert_configured(
+      iteration_uses_direct,
+      false);
 
     // This value is required only for detailed logging.
     [[maybe_unused]] uint32_t bottom_up_proposed = 0u;
@@ -3848,12 +4549,9 @@ void G_EXT::_gpu_DAG_construction(
     // ==========================================================
     // Top-down insertion
     // ==========================================================
-    if (iteration_uses_direct) {
-      _gpu_dag_insert_direct(true);
-    }
-    else {
-      _gpu_dag_insert_batch(true);
-    }
+    _gpu_dag_insert_configured(
+      iteration_uses_direct,
+      true);
 
     // This value is required only for detailed logging.
     [[maybe_unused]] uint32_t after_top_down_insert = 0u;
@@ -4380,6 +5078,159 @@ G_EXT::unittest_gpu_insert_direct_once(
     _gpu_free_dag_buffers();
     throw;
   }
+}
+
+G_EXT::GpuInsertionResult
+G_EXT::_unittest_gpu_insert_block_once(
+  const std::vector<uint32_t>& selected_state,
+  const std::vector<int>& input_level,
+  const bool is_top_down_insertion,
+  const bool use_direct_mode,
+  const uint32_t threads_per_candidate)
+{
+  if (_ende_name.empty()) {
+    throw std::logic_error(
+      "_unittest_gpu_insert_block_once requires "
+      "read() to be called first");
+  }
+
+  if (selected_state.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "selected_state size does not match "
+      "the number of e-nodes");
+  }
+
+  if (input_level.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "level size does not match "
+      "the number of e-nodes");
+  }
+
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    if (selected_state[ende] > 2u) {
+      throw std::invalid_argument(
+        "selected_state must contain only "
+        "0, 1, or 2");
+    }
+  }
+
+  // Validate before allocating or launching GPU work.
+  _validate_block_threads_per_candidate(
+    threads_per_candidate);
+
+  // GPU tree construction owns the shared immutable CSR and
+  // working buffers.
+  if (_dvc_picked_endes == nullptr) {
+    (void)_gpu_tree_construction();
+  }
+
+  _gpu_allocate_dag_buffers();
+  _gpu_initialize_dag_buffers();
+
+  try {
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_picked_endes,
+      selected_state.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyHostToDevice));
+
+    CUDA_CHECK(cudaMemcpy(
+      _dvc_level,
+      input_level.data(),
+      static_cast<size_t>(_num_ende) *
+        sizeof(int),
+      cudaMemcpyHostToDevice));
+
+    CUDA_CHECK(cudaMemset(
+      _dvc_dag_u0,
+      0,
+      sizeof(uint32_t)));
+
+    // Exercise the same dispatcher used by the production
+    // controller.
+    _dag_kernel =
+      DagKernel::Block;
+
+    _dag_threads_per_candidate =
+      threads_per_candidate;
+
+    _gpu_dag_insert_configured(
+      use_direct_mode,
+      is_top_down_insertion);
+
+    GpuInsertionResult result;
+
+    result.selected_state.resize(
+      _num_ende,
+      0u);
+
+    result.level.resize(
+      _num_ende,
+      -1);
+
+    CUDA_CHECK(cudaMemcpy(
+      result.selected_state.data(),
+      _dvc_picked_endes,
+      static_cast<size_t>(_num_ende) *
+        sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      result.level.data(),
+      _dvc_level,
+      static_cast<size_t>(_num_ende) *
+        sizeof(int),
+      cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaMemcpy(
+      &result.u0,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    _gpu_free_dag_buffers();
+
+    return result;
+  }
+  catch (...) {
+    _gpu_free_dag_buffers();
+    throw;
+  }
+}
+
+G_EXT::GpuInsertionResult
+G_EXT::unittest_gpu_insert_block_batch_once(
+  const std::vector<uint32_t>& selected_state,
+  const std::vector<int>& input_level,
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_candidate)
+{
+  return _unittest_gpu_insert_block_once(
+    selected_state,
+    input_level,
+    is_top_down_insertion,
+    false,
+    threads_per_candidate);
+}
+
+G_EXT::GpuInsertionResult
+G_EXT::unittest_gpu_insert_block_direct_once(
+  const std::vector<uint32_t>& selected_state,
+  const std::vector<int>& input_level,
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_candidate)
+{
+  return _unittest_gpu_insert_block_once(
+    selected_state,
+    input_level,
+    is_top_down_insertion,
+    true,
+    threads_per_candidate);
 }
 
 G_EXT::GpuFinalizeResult
@@ -5589,4 +6440,3 @@ void G_EXT::_print_levelization(
   }
   printf("\n"); 
 }
-
