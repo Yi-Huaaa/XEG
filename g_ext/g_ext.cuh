@@ -200,6 +200,34 @@ public:
     const std::vector<int>& level,
     bool is_top_down_insertion);
 
+  // Run exactly one Warp-Batch insertion phase.
+  //
+  // One 32-lane warp acts as one transposed candidate lane.
+  // Multiple independent candidate warps may share one CUDA
+  // block according to threads_per_block.
+  //
+  // This wrapper is used only by unit tests.
+  GpuInsertionResult
+  unittest_gpu_insert_warp_batch_once(
+    const std::vector<uint32_t>& selected_state,
+    const std::vector<int>& level,
+    bool is_top_down_insertion,
+    uint32_t threads_per_block);
+
+  // Run exactly one Warp-Direct insertion phase.
+  //
+  // One 32-lane warp evaluates exactly one candidate e-node.
+  // Multiple independent candidate warps may share one CUDA
+  // block according to threads_per_block.
+  //
+  // This wrapper is used only by unit tests.
+  GpuInsertionResult
+  unittest_gpu_insert_warp_direct_once(
+    const std::vector<uint32_t>& selected_state,
+    const std::vector<int>& level,
+    bool is_top_down_insertion,
+    uint32_t threads_per_block);
+
   // Run exactly one Block-Batch insertion phase.
   //
   // One CUDA block acts as one transposed candidate lane.
@@ -291,8 +319,9 @@ public:
         break;
 
       case DagKernel::Warp:
-        throw std::logic_error(
-          "Warp-level GPU DAG construction is not implemented yet");
+        _validate_warp_threads_per_block(
+          num_thread_dag_constrution);
+        break;
 
       case DagKernel::Block:
         _validate_block_threads_per_candidate(
@@ -627,6 +656,18 @@ private:
       const std::vector<uint32_t>& leaves,
       const std::vector<bool>& picked_endes);
 
+  // Validate the runtime Warp configuration.
+  //
+  // One candidate always uses exactly one 32-lane warp.
+  // This parameter controls the total number of CUDA threads
+  // per block, and therefore the number of independent
+  // candidate warps placed in one block.
+  //
+  // Valid values are positive multiples of 32, subject to the
+  // current CUDA device's maxThreadsPerBlock limit.
+  void _validate_warp_threads_per_block(
+    uint32_t threads_per_block) const;
+
   // Validate the runtime Block configuration.
   //
   // The initial shared-memory reduction supports:
@@ -688,6 +729,24 @@ private:
   void _gpu_dag_insert_direct(
     bool is_top_down_insertion);
 
+  // Warp-cooperative transposed-batch insertion.
+  //
+  // One 32-lane warp acts as one transposed candidate lane.
+  // Multiple independent candidate warps may share one CUDA
+  // block.
+  void _gpu_dag_insert_warp_batch(
+    bool is_top_down_insertion,
+    uint32_t threads_per_block);
+
+  // Warp-cooperative direct insertion.
+  //
+  // One 32-lane warp evaluates exactly one candidate e-node.
+  // Multiple independent candidate warps may share one CUDA
+  // block.
+  void _gpu_dag_insert_warp_direct(
+    bool is_top_down_insertion,
+    uint32_t threads_per_block);
+
   // Block-cooperative transposed-batch insertion.
   //
   // One CUDA block acts as one candidate lane. Each block
@@ -703,8 +762,8 @@ private:
     bool is_top_down_insertion,
     uint32_t threads_per_candidate);
 
-  // Select Thread or Block insertion while preserving the
-  // controller's independent Batch/Direct schedule.
+  // Select Thread, Warp, or Block insertion while preserving
+  // the controller's independent Batch/Direct schedule.
   void _gpu_dag_insert_configured(
     bool use_direct_mode,
     bool is_top_down_insertion);
@@ -741,6 +800,16 @@ private:
   // levels are processed by one single-block persistent kernel.
   void _gpu_dag_levelize_hybrid(
     const bool is_top_down);
+
+  // Shared implementation for the two public Warp insertion
+  // unit-test wrappers.
+  GpuInsertionResult
+  _unittest_gpu_insert_warp_once(
+    const std::vector<uint32_t>& selected_state,
+    const std::vector<int>& level,
+    bool is_top_down_insertion,
+    bool use_direct_mode,
+    uint32_t threads_per_block);
 
   // Shared implementation for the two public Block insertion
   // unit-test wrappers.
@@ -850,6 +919,22 @@ private:
   
   // READ IN argv/argc
   DagKernel _dag_kernel = DagKernel::Thread;
+
+  // Runtime GPU DAG execution width.
+  //
+  // Thread:
+  //   must be 1; one thread evaluates one candidate.
+  //
+  // Warp:
+  //   total CUDA threads per block; each candidate still uses
+  //   exactly one 32-lane warp.
+  //
+  // Block:
+  //   number of CUDA threads cooperatively evaluating one
+  //   candidate.
+  //
+  // The existing member name is preserved to avoid an unrelated
+  // interface refactor.
   uint32_t _dag_threads_per_candidate = 1;
 
   // Print function

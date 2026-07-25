@@ -13,6 +13,7 @@ list(APPEND g_ext_UNITTESTS
   test_gpu_finalize
   test_gpu_batch_insertion
   test_gpu_direct_insertion
+  test_gpu_warp_insertion
   test_gpu_block_insertion
   test_gpu_batch_then_direct
   test_gpu_levelization
