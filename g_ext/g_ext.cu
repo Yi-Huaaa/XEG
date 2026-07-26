@@ -319,6 +319,26 @@ void G_EXT::_validate_block_threads_per_candidate(
   }
 }
 
+void G_EXT::_validate_block_bitmap_bits(
+  const uint32_t bitmap_bits) const
+{
+  if (bitmap_bits == 0u) {
+    return;
+  }
+
+  const bool is_power_of_two =
+    (bitmap_bits &
+     (bitmap_bits - 1u)) == 0u;
+
+  if (bitmap_bits < 32u ||
+      bitmap_bits > 2048u ||
+      !is_power_of_two) {
+    throw std::invalid_argument(
+      "Block DAG bitmap size must be one of: "
+      "0, 32, 64, 128, 256, 512, 1024, 2048");
+  }
+}
+
 // G_EXT fucntions
 void G_EXT::_read_input(
   const std::string input_path) 
@@ -3114,6 +3134,647 @@ void G_EXT::_gpu_dag_insert_block_direct(
 }
 
 // ============================================================
+// Block-cooperative Bitmap GPU DAG insertion
+//
+// This implementation is intentionally separate from the
+// existing exact Block implementation.
+//
+// BITMAP_BITS == 0:
+//   Existing exact Block kernels.
+//
+// BITMAP_BITS > 0:
+//   These Bitmap Block kernels.
+//
+// One runtime-sized parent bitmap is stored in dynamic shared
+// memory for each CUDA block.
+//
+// Shared-memory layout:
+//
+//   GpuDagBlockThreadScratch scratch[blockDim.x]
+//   uint32_t parent_bitmap[bitmap_words]
+//
+// Every static parent ID is inserted into the bitmap.
+//
+// Only selected children with valid levels probe the bitmap.
+//
+// A bitmap hit is conservatively treated as overlap. No exact
+// verification is performed.
+// ============================================================
+
+__device__ __forceinline__
+void gpu_dag_block_bitmap_insert(
+  uint32_t* bitmap,
+  const uint32_t node,
+  const uint32_t bitmap_mask)
+{
+  const uint32_t bit =
+    node & bitmap_mask;
+
+  const uint32_t word =
+    bit >> 5u;
+
+  const uint32_t word_mask =
+    1u << (bit & 31u);
+
+  // Multiple threads may hash into the same shared-memory word.
+  atomicOr(
+    &bitmap[word],
+    word_mask);
+}
+
+
+__device__ __forceinline__
+bool gpu_dag_block_bitmap_contains(
+  const uint32_t* bitmap,
+  const uint32_t node,
+  const uint32_t bitmap_mask)
+{
+  const uint32_t bit =
+    node & bitmap_mask;
+
+  const uint32_t word =
+    bit >> 5u;
+
+  const uint32_t word_mask =
+    1u << (bit & 31u);
+
+  return
+    (bitmap[word] &
+     word_mask) != 0u;
+}
+
+
+__device__ __forceinline__
+void gpu_dag_process_block_bitmap_candidate(
+  const uint32_t u,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0,
+  GpuDagBlockThreadScratch* scratch,
+  uint32_t* candidate_active,
+  uint32_t* parent_bitmap,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  const uint32_t lane =
+    threadIdx.x;
+
+  // ----------------------------------------------------------
+  // Candidate activity and bitmap initialization
+  //
+  // Thread 0 snapshots candidate activity.
+  //
+  // At the same time, all threads cooperatively clear the
+  // runtime-sized bitmap.
+  //
+  // The following __syncthreads() publishes both:
+  //
+  //   candidate_active
+  //   cleared parent_bitmap
+  //
+  // Therefore bitmap initialization does not require its own
+  // additional barrier.
+  // ----------------------------------------------------------
+  if (lane == 0u) {
+    *candidate_active =
+      atomicAdd(
+        &selected_state[u],
+        0u) == 0u
+        ? 1u
+        : 0u;
+  }
+
+  for (uint32_t word = lane;
+       word < bitmap_words;
+       word += blockDim.x) {
+    parent_bitmap[word] =
+      0u;
+  }
+
+  __syncthreads();
+
+  // Uniform return because all threads read the same shared
+  // candidate_active value.
+  if (*candidate_active == 0u) {
+    return;
+  }
+
+  const uint32_t parent_begin =
+    inverse_adj_ptr[u];
+
+  const uint32_t parent_end =
+    inverse_adj_ptr[u + 1u];
+
+  const uint32_t child_begin =
+    forward_adj_ptr[u];
+
+  const uint32_t child_end =
+    forward_adj_ptr[u + 1u];
+
+  GpuDagBlockThreadScratch local{
+    -1,
+    INT_MAX,
+    0u
+  };
+
+  // ----------------------------------------------------------
+  // Cooperative parent scan
+  //
+  // Important:
+  //
+  // Every static parent ID is inserted into the bitmap,
+  // regardless of its current selected state.
+  //
+  // This prevents a selected-state timing race from causing a
+  // true parent-child overlap to miss the bitmap.
+  //
+  // Selected-state and level checks are still used separately
+  // for:
+  //
+  //   has_selected_parent
+  //   max_parent_level
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         parent_begin + lane;
+       position < parent_end;
+       position += blockDim.x) {
+    const uint32_t parent =
+      inverse_adj[position];
+
+    gpu_dag_block_bitmap_insert(
+      parent_bitmap,
+      parent,
+      bitmap_mask);
+
+    const uint32_t parent_state =
+      atomicAdd(
+        &selected_state[parent],
+        0u);
+
+    if (parent_state == 0u) {
+      continue;
+    }
+
+    const int parent_level =
+      atomicAdd(
+        &level[parent],
+        0);
+
+    if (parent_level < 0) {
+      continue;
+    }
+
+    local.flags |=
+      kGpuDagBlockHasSelectedParent;
+
+    if (parent_level >
+        local.max_parent_level) {
+      local.max_parent_level =
+        parent_level;
+    }
+  }
+
+  // Every parent bitmap update must complete before any child
+  // thread probes the bitmap.
+  //
+  // This is the one additional block-wide barrier required by
+  // the Bitmap evaluator.
+  __syncthreads();
+
+  // ----------------------------------------------------------
+  // Cooperative child scan
+  //
+  // Preserve the existing selected-child semantics:
+  //
+  //   selected_state[child] != 0
+  //   level[child] >= 0
+  //
+  // Only such children contribute to:
+  //
+  //   has_selected_child
+  //   min_child_level
+  //   overlap detection
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         child_begin + lane;
+       position < child_end;
+       position += blockDim.x) {
+    const uint32_t child =
+      forward_adj[position];
+
+    const uint32_t child_state =
+      atomicAdd(
+        &selected_state[child],
+        0u);
+
+    if (child_state == 0u) {
+      continue;
+    }
+
+    const int child_level =
+      atomicAdd(
+        &level[child],
+        0);
+
+    if (child_level < 0) {
+      continue;
+    }
+
+    local.flags |=
+      kGpuDagBlockHasSelectedChild;
+
+    if (child_level <
+        local.min_child_level) {
+      local.min_child_level =
+        child_level;
+    }
+
+    // Approximate overlap detection.
+    //
+    // A hit may be:
+    //
+    //   true overlap
+    //   hash collision
+    //
+    // No exact verification is performed.
+    if (gpu_dag_block_bitmap_contains(
+          parent_bitmap,
+          child,
+          bitmap_mask)) {
+      local.flags |=
+        kGpuDagBlockHasSelectedOverlap;
+    }
+  }
+
+  // ----------------------------------------------------------
+  // The remainder is intentionally copied from the existing
+  // exact Block evaluator.
+  //
+  // Do not factor this into a shared helper during the first
+  // implementation, because that would modify the Exact path.
+  // ----------------------------------------------------------
+  scratch[lane] =
+    local;
+
+  __syncthreads();
+
+  for (uint32_t stride =
+         blockDim.x / 2u;
+       stride > 0u;
+       stride >>= 1u) {
+    if (lane < stride) {
+      const GpuDagBlockThreadScratch other =
+        scratch[lane + stride];
+
+      if (other.max_parent_level >
+          scratch[lane].max_parent_level) {
+        scratch[lane].max_parent_level =
+          other.max_parent_level;
+      }
+
+      if (other.min_child_level <
+          scratch[lane].min_child_level) {
+        scratch[lane].min_child_level =
+          other.min_child_level;
+      }
+
+      scratch[lane].flags |=
+        other.flags;
+    }
+
+    __syncthreads();
+  }
+
+  if (lane == 0u) {
+    const GpuDagBlockThreadScratch summary =
+      scratch[0];
+
+    const bool has_selected_parent =
+      (summary.flags &
+       kGpuDagBlockHasSelectedParent) != 0u;
+
+    const bool has_selected_child =
+      (summary.flags &
+       kGpuDagBlockHasSelectedChild) != 0u;
+
+    const bool has_selected_overlap =
+      (summary.flags &
+       kGpuDagBlockHasSelectedOverlap) != 0u;
+
+    bool valid =
+      !has_selected_overlap &&
+      summary.max_parent_level <
+        summary.min_child_level;
+
+    int proposed_level =
+      -1;
+
+    if (valid &&
+        is_top_down_insertion) {
+      valid =
+        has_selected_parent;
+
+      if (valid) {
+        proposed_level =
+          summary.max_parent_level + 1;
+      }
+    }
+    else if (valid) {
+      valid =
+        has_selected_child;
+
+      if (valid) {
+        proposed_level =
+          summary.min_child_level - 1;
+      }
+    }
+
+    valid =
+      valid &&
+      proposed_level >= 0;
+
+    if (valid) {
+      // Preserve the existing live optimistic publication
+      // order.
+      //
+      // Do not add __threadfence().
+      level[u] =
+        proposed_level;
+
+      if (atomicCAS(
+            &selected_state[u],
+            0u,
+            2u) == 0u) {
+        atomicAdd(
+          u0,
+          1u);
+      }
+    }
+  }
+
+  // Required by Block-Batch before the same CUDA block reuses
+  // its scratch and bitmap storage for the next candidate.
+  __syncthreads();
+}
+
+
+__global__ void _gpu_dag_insert_block_bitmap_batch_kl(
+  const uint32_t num_endes,
+  const uint32_t num_batches,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  extern __shared__
+    unsigned char dynamic_shared_memory[];
+
+  auto* scratch =
+    reinterpret_cast<
+      GpuDagBlockThreadScratch*>(
+        dynamic_shared_memory);
+
+  auto* parent_bitmap =
+    reinterpret_cast<uint32_t*>(
+      scratch + blockDim.x);
+
+  __shared__ uint32_t candidate_active;
+
+  // Preserve the existing Block-Batch transposed mapping:
+  //
+  //   u = blockIdx.x * num_batches + batch_index
+  for (uint32_t batch_index = 0u;
+       batch_index < num_batches;
+       ++batch_index) {
+    const uint32_t u =
+      blockIdx.x * num_batches +
+      batch_index;
+
+    if (u >= num_endes) {
+      continue;
+    }
+
+    gpu_dag_process_block_bitmap_candidate(
+      u,
+      is_top_down_insertion,
+      selected_state,
+      forward_adj,
+      forward_adj_ptr,
+      inverse_adj,
+      inverse_adj_ptr,
+      level,
+      u0,
+      scratch,
+      &candidate_active,
+      parent_bitmap,
+      bitmap_mask,
+      bitmap_words);
+  }
+}
+
+
+__global__ void _gpu_dag_insert_block_bitmap_direct_kl(
+  const uint32_t num_endes,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  const uint32_t u =
+    blockIdx.x;
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  extern __shared__
+    unsigned char dynamic_shared_memory[];
+
+  auto* scratch =
+    reinterpret_cast<
+      GpuDagBlockThreadScratch*>(
+        dynamic_shared_memory);
+
+  auto* parent_bitmap =
+    reinterpret_cast<uint32_t*>(
+      scratch + blockDim.x);
+
+  __shared__ uint32_t candidate_active;
+
+  gpu_dag_process_block_bitmap_candidate(
+    u,
+    is_top_down_insertion,
+    selected_state,
+    forward_adj,
+    forward_adj_ptr,
+    inverse_adj,
+    inverse_adj_ptr,
+    level,
+    u0,
+    scratch,
+    &candidate_active,
+    parent_bitmap,
+    bitmap_mask,
+    bitmap_words);
+}
+
+
+void G_EXT::_gpu_dag_insert_block_bitmap_batch(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_candidate,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_block_bitmap_batch requires "
+      "initialized GPU DAG buffers");
+  }
+
+  if (bitmap_words == 0u ||
+      bitmap_words > 64u) {
+    throw std::logic_error(
+      "_gpu_dag_insert_block_bitmap_batch received "
+      "an invalid bitmap word count");
+  }
+
+  const uint32_t num_batches =
+    (_num_ende +
+     kGpuDagBatchSize - 1u) /
+    kGpuDagBatchSize;
+
+  const uint32_t candidate_lanes =
+    (_num_ende +
+     num_batches - 1u) /
+    num_batches;
+
+  const size_t scratch_bytes =
+    static_cast<size_t>(
+      threads_per_candidate) *
+    sizeof(GpuDagBlockThreadScratch);
+
+  const size_t bitmap_bytes =
+    static_cast<size_t>(
+      bitmap_words) *
+    sizeof(uint32_t);
+
+  const size_t shared_bytes =
+    scratch_bytes +
+    bitmap_bytes;
+
+  _gpu_dag_insert_block_bitmap_batch_kl
+    <<<candidate_lanes,
+       threads_per_candidate,
+       shared_bytes>>>(
+      _num_ende,
+      num_batches,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0,
+      bitmap_mask,
+      bitmap_words);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_block_bitmap_batch_kl failed");
+}
+
+
+void G_EXT::_gpu_dag_insert_block_bitmap_direct(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_candidate,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_block_bitmap_direct requires "
+      "initialized GPU DAG buffers");
+  }
+
+  if (bitmap_words == 0u ||
+      bitmap_words > 64u) {
+    throw std::logic_error(
+      "_gpu_dag_insert_block_bitmap_direct received "
+      "an invalid bitmap word count");
+  }
+
+  const size_t scratch_bytes =
+    static_cast<size_t>(
+      threads_per_candidate) *
+    sizeof(GpuDagBlockThreadScratch);
+
+  const size_t bitmap_bytes =
+    static_cast<size_t>(
+      bitmap_words) *
+    sizeof(uint32_t);
+
+  const size_t shared_bytes =
+    scratch_bytes +
+    bitmap_bytes;
+
+  _gpu_dag_insert_block_bitmap_direct_kl
+    <<<_num_ende,
+       threads_per_candidate,
+       shared_bytes>>>(
+      _num_ende,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0,
+      bitmap_mask,
+      bitmap_words);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_block_bitmap_direct_kl failed");
+}
+
+// ============================================================
 // Warp-cooperative GPU DAG insertion
 //
 // Warp-Batch:
@@ -3727,18 +4388,38 @@ void G_EXT::_gpu_dag_insert_configured(
       return;
 
     case DagKernel::Block:
-      if (use_direct_mode) {
-        _gpu_dag_insert_block_direct(
-          is_top_down_insertion,
-          _dag_threads_per_candidate);
+      if (_dag_bitmap_bits == 0u) {
+        // Existing exact Block implementation.
+        if (use_direct_mode) {
+          _gpu_dag_insert_block_direct(
+            is_top_down_insertion,
+            _dag_threads_per_candidate);
+        }
+        else {
+          _gpu_dag_insert_block_batch(
+            is_top_down_insertion,
+            _dag_threads_per_candidate);
+        }
       }
       else {
-        _gpu_dag_insert_block_batch(
-          is_top_down_insertion,
-          _dag_threads_per_candidate);
+        // New isolated Bitmap Block implementation.
+        if (use_direct_mode) {
+          _gpu_dag_insert_block_bitmap_direct(
+            is_top_down_insertion,
+            _dag_threads_per_candidate,
+            _dag_bitmap_mask,
+            _dag_bitmap_words);
+        }
+        else {
+          _gpu_dag_insert_block_bitmap_batch(
+            is_top_down_insertion,
+            _dag_threads_per_candidate,
+            _dag_bitmap_mask,
+            _dag_bitmap_words);
+        }
       }
 
-      return;
+      return;    
   }
 
   throw std::logic_error(
@@ -5892,7 +6573,8 @@ G_EXT::_unittest_gpu_insert_block_once(
   const std::vector<int>& input_level,
   const bool is_top_down_insertion,
   const bool use_direct_mode,
-  const uint32_t threads_per_candidate)
+  const uint32_t threads_per_candidate,
+  const uint32_t bitmap_bits)
 {
   if (_ende_name.empty()) {
     throw std::logic_error(
@@ -5927,6 +6609,9 @@ G_EXT::_unittest_gpu_insert_block_once(
   // Validate before allocating or launching GPU work.
   _validate_block_threads_per_candidate(
     threads_per_candidate);
+
+  _validate_block_bitmap_bits(
+    bitmap_bits);
 
   // GPU tree construction owns the shared immutable CSR and
   // working buffers.
@@ -5964,6 +6649,17 @@ G_EXT::_unittest_gpu_insert_block_once(
 
     _dag_threads_per_candidate =
       threads_per_candidate;
+
+    _dag_bitmap_bits =
+      bitmap_bits;
+
+    _dag_bitmap_mask =
+      bitmap_bits == 0u
+        ? 0u
+        : bitmap_bits - 1u;
+
+    _dag_bitmap_words =
+      bitmap_bits / 32u;
 
     _gpu_dag_insert_configured(
       use_direct_mode,
@@ -6014,14 +6710,16 @@ G_EXT::unittest_gpu_insert_block_batch_once(
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& input_level,
   const bool is_top_down_insertion,
-  const uint32_t threads_per_candidate)
+  const uint32_t threads_per_candidate,
+  const uint32_t bitmap_bits)
 {
   return _unittest_gpu_insert_block_once(
     selected_state,
     input_level,
     is_top_down_insertion,
     false,
-    threads_per_candidate);
+    threads_per_candidate,
+    bitmap_bits);
 }
 
 G_EXT::GpuInsertionResult
@@ -6029,14 +6727,16 @@ G_EXT::unittest_gpu_insert_block_direct_once(
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& input_level,
   const bool is_top_down_insertion,
-  const uint32_t threads_per_candidate)
+  const uint32_t threads_per_candidate,
+  const uint32_t bitmap_bits)
 {
   return _unittest_gpu_insert_block_once(
     selected_state,
     input_level,
     is_top_down_insertion,
     true,
-    threads_per_candidate);
+    threads_per_candidate,
+    bitmap_bits);
 }
 
 G_EXT::GpuFinalizeResult

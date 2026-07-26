@@ -240,7 +240,8 @@ public:
     const std::vector<uint32_t>& selected_state,
     const std::vector<int>& level,
     bool is_top_down_insertion,
-    uint32_t threads_per_candidate);
+    uint32_t threads_per_candidate,
+    uint32_t bitmap_bits = 0u);
 
   // Run exactly one Block-Direct insertion phase.
   //
@@ -254,7 +255,8 @@ public:
     const std::vector<uint32_t>& selected_state,
     const std::vector<int>& level,
     bool is_top_down_insertion,
-    uint32_t threads_per_candidate);
+    uint32_t threads_per_candidate,
+    uint32_t bitmap_bits = 0u);
 
   GpuFinalizeResult
   unittest_gpu_levelize_and_finalize(
@@ -305,27 +307,49 @@ public:
     return std::round(value / precision) * precision;
   }
   
-  void run(const bool ILP_solver = false, 
-          const double ILP_time_limit = 360,
-          DagKernel dag_kernel = DagKernel::Thread,
-          uint32_t num_thread_dag_constrution = 1) 
+
+  void run(
+    const bool ILP_solver = false,
+    const double ILP_time_limit = 360,
+    DagKernel dag_kernel = DagKernel::Thread,
+    uint32_t num_thread_dag_constrution = 1u,
+    uint32_t dag_bitmap_bits = 0u)  
   {
     switch (dag_kernel) {
       case DagKernel::Thread:
-        if (num_thread_dag_constrution != 1) {
+        if (num_thread_dag_constrution != 1u) {
           throw std::invalid_argument(
-            "Thread DAG kernel requires exactly one thread per candidate");
+            "Thread DAG kernel requires exactly "
+            "one thread per candidate");
         }
+
+        if (dag_bitmap_bits != 0u) {
+          throw std::invalid_argument(
+            "Thread DAG kernel requires "
+            "BITMAP_BITS=0");
+        }
+
         break;
 
       case DagKernel::Warp:
         _validate_warp_threads_per_block(
           num_thread_dag_constrution);
+
+        if (dag_bitmap_bits != 0u) {
+          throw std::invalid_argument(
+            "Warp DAG kernel requires "
+            "BITMAP_BITS=0");
+        }
+
         break;
 
       case DagKernel::Block:
         _validate_block_threads_per_candidate(
           num_thread_dag_constrution);
+
+        _validate_block_bitmap_bits(
+          dag_bitmap_bits);
+
         break;
 
       default:
@@ -333,8 +357,22 @@ public:
           "Invalid DagKernel value");
     }
 
-    _dag_kernel = dag_kernel;
-    _dag_threads_per_candidate = num_thread_dag_constrution;
+    _dag_kernel =
+      dag_kernel;
+
+    _dag_threads_per_candidate =
+      num_thread_dag_constrution;
+
+    _dag_bitmap_bits =
+      dag_bitmap_bits;
+
+    _dag_bitmap_mask =
+      dag_bitmap_bits == 0u
+        ? 0u
+        : dag_bitmap_bits - 1u;
+
+    _dag_bitmap_words =
+      dag_bitmap_bits / 32u;
 
     // CPU version
     std::vector<double> cost_of_ecls; // Final cost of each eclass
@@ -677,6 +715,19 @@ private:
   // subject to the current CUDA device limit.
   void _validate_block_threads_per_candidate(
     uint32_t threads_per_candidate) const;
+  // Validate the runtime Block bitmap size.
+  //
+  // 0:
+  //   Disable bitmap and use the existing exact Block kernels.
+  //
+  // Nonzero:
+  //   Must be a power of two in [32, 2048].
+  //
+  // Valid values:
+  //
+  //   0, 32, 64, 128, 256, 512, 1024, 2048
+  void _validate_block_bitmap_bits(
+    uint32_t bitmap_bits) const;    
   // GPU DAG construction controller.
   //
   // FullBatch:
@@ -761,6 +812,27 @@ private:
   void _gpu_dag_insert_block_direct(
     bool is_top_down_insertion,
     uint32_t threads_per_candidate);
+  // Block-cooperative transposed-batch insertion using a
+  // runtime-sized shared-memory bitmap for approximate overlap
+  // detection.
+  //
+  // The existing exact Block-Batch implementation remains
+  // unchanged and is selected when BITMAP_BITS == 0.
+  void _gpu_dag_insert_block_bitmap_batch(
+    bool is_top_down_insertion,
+    uint32_t threads_per_candidate,
+    uint32_t bitmap_mask,
+    uint32_t bitmap_words);
+
+  // Block-cooperative direct insertion using a runtime-sized
+  // shared-memory bitmap for approximate overlap detection.
+  //
+  // One CUDA block evaluates one candidate.
+  void _gpu_dag_insert_block_bitmap_direct(
+    bool is_top_down_insertion,
+    uint32_t threads_per_candidate,
+    uint32_t bitmap_mask,
+    uint32_t bitmap_words);
 
   // Select Thread, Warp, or Block insertion while preserving
   // the controller's independent Batch/Direct schedule.
@@ -819,7 +891,8 @@ private:
     const std::vector<int>& level,
     bool is_top_down_insertion,
     bool use_direct_mode,
-    uint32_t threads_per_candidate);
+    uint32_t threads_per_candidate,
+    uint32_t bitmap_bits);
 
   // Shared implementation used only by the public
   // levelization unit-test wrappers.
@@ -936,6 +1009,29 @@ private:
   // The existing member name is preserved to avoid an unrelated
   // interface refactor.
   uint32_t _dag_threads_per_candidate = 1;
+
+  // Runtime Block bitmap configuration.
+  //
+  // _dag_bitmap_bits == 0:
+  //   use the existing exact Block insertion implementation.
+  //
+  // _dag_bitmap_bits > 0:
+  //   use the isolated Block-Bitmap insertion implementation.
+  uint32_t _dag_bitmap_bits = 0u;
+
+  // Valid only when _dag_bitmap_bits > 0.
+  //
+  // Examples:
+  //
+  //   32 bits   -> mask 31
+  //   64 bits   -> mask 63
+  //   2048 bits -> mask 2047
+  uint32_t _dag_bitmap_mask = 0u;
+
+  // Number of uint32_t words:
+  //
+  //   words = bits / 32
+  uint32_t _dag_bitmap_words = 0u;
 
   // Print function
   void _print_input() const;

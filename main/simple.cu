@@ -14,9 +14,27 @@ int main(int argc, char *argv[]) {
   cudaEvent_t startGPU, stopGPU;
   cudaEventCreate(&startGPU);
   cudaEventCreate(&stopGPU);
-  if (argc < 2) {
-    std::cerr << "Usage: ./main/simple <input_file> [DAG_KERNEL] [NUM_THREAD_DAG_CONSTR]\n";
-    std::cerr << "Example: ./main/simple ~/data/math_diff.json 1 1024\n";
+  if (argc < 2 || argc > 5) {
+    std::cerr
+      << "Usage:\n"
+      << "  ./main/simple "
+      << "<input_file> "
+      << "[DAG_KERNEL] "
+      << "[NUM_THREAD_DAG_CONSTR] "
+      << "[BITMAP_BITS]\n\n"
+      << "DAG_KERNEL:\n"
+      << "  0: Thread\n"
+      << "  1: Warp\n"
+      << "  2: Block\n\n"
+      << "BITMAP_BITS:\n"
+      << "  0: Disable bitmap and use exact overlap detection\n"
+      << "  Block only: 32, 64, 128, 256, 512, 1024, 2048\n\n"
+      << "Examples:\n"
+      << "  ./main/simple input.json 0 1 0\n"
+      << "  ./main/simple input.json 1 128 0\n"
+      << "  ./main/simple input.json 2 128 0\n"
+      << "  ./main/simple input.json 2 128 64\n";
+
     return 1;
   }
   
@@ -39,11 +57,54 @@ int main(int argc, char *argv[]) {
   uint32_t num_thread_dag_constr = (argc > 3)
       ? static_cast<uint32_t>(std::stoul(argv[3]))
       : 1u;
+  uint32_t bitmap_bits = (argc > 4)
+      ? static_cast<uint32_t>(std::stoul(argv[4]))
+      : 0u;  
+      
+  const bool valid_bitmap_bits =
+    bitmap_bits == 0u ||
+    (
+      bitmap_bits >= 32u &&
+      bitmap_bits <= 2048u &&
+      (bitmap_bits &
+      (bitmap_bits - 1u)) == 0u
+    );
+
+  if (!valid_bitmap_bits) {
+    std::cerr
+      << "Invalid BITMAP_BITS: "
+      << bitmap_bits << "\n"
+      << "Valid values are:\n"
+      << "  0, 32, 64, 128, 256, 512, 1024, 2048\n";
+
+    return 1;
+  }
+
+  if (dag_kernel != DagKernel::Block &&
+      bitmap_bits != 0u) {
+    std::cerr
+      << "BITMAP_BITS must be 0 for "
+      << (dag_kernel == DagKernel::Thread
+            ? "Thread"
+            : "Warp")
+      << " DAG kernels.\n";
+
+    return 1;
+  }      
   
   std::cout << "-------------------------------------\n";
   std::cout << "Input file: " << input_path << "\n";
   std::cout << "DAG_KERNEL: " << dag_kernel_value << "\n";
   std::cout << "NUM_THREAD_DAG_CONSTR: " << num_thread_dag_constr << "\n";  
+  std::cout
+    << "BITMAP_BITS: "
+    << bitmap_bits
+    << (
+        bitmap_bits == 0u
+          ? " (Exact overlap detection)"
+          : " (Bitmap overlap detection)"
+      )
+    << "\n";
   std::cout << "-------------------------------------\n";
 
 
@@ -55,8 +116,12 @@ int main(int argc, char *argv[]) {
   duration_read = end - start;
   std::cout << "Read Time: " << g_ext.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
-  // (use ILP, ILP tim limit (sec), DAG_KERNEL, NUM_THREAD_DAG_CONSTR)
-  g_ext.run(true, 60, dag_kernel, num_thread_dag_constr);    
+  g_ext.run(
+    true,
+    60,
+    dag_kernel,
+    num_thread_dag_constr,
+    bitmap_bits);  
 
   return 0;
 }
