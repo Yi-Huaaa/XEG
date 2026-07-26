@@ -27,11 +27,17 @@ int main(int argc, char *argv[]) {
       << "  1: Warp\n"
       << "  2: Block\n\n"
       << "BITMAP_BITS:\n"
-      << "  0: Disable bitmap and use exact overlap detection\n"
-      << "  Block only: 32, 64, 128, 256, 512, 1024, 2048\n\n"
+      << "  Thread: 0\n"
+      << "  Warp:   0, 32, 64\n"
+      << "  Block:  0, 32, 64, 128, 256, 512, 1024, 2048\n"
+      << "\n"
+      << "  0 uses exact overlap detection.\n"
+      << "  A nonzero value uses approximate bitmap overlap detection.\n\n"
       << "Examples:\n"
       << "  ./main/simple input.json 0 1 0\n"
       << "  ./main/simple input.json 1 128 0\n"
+      << "  ./main/simple input.json 1 128 32\n"
+      << "  ./main/simple input.json 1 128 64\n"
       << "  ./main/simple input.json 2 128 0\n"
       << "  ./main/simple input.json 2 128 64\n";
 
@@ -61,36 +67,73 @@ int main(int argc, char *argv[]) {
       ? static_cast<uint32_t>(std::stoul(argv[4]))
       : 0u;  
       
-  const bool valid_bitmap_bits =
-    bitmap_bits == 0u ||
-    (
-      bitmap_bits >= 32u &&
-      bitmap_bits <= 2048u &&
-      (bitmap_bits &
-      (bitmap_bits - 1u)) == 0u
-    );
+  bool valid_bitmap_bits =
+    false;
 
-  if (!valid_bitmap_bits) {
-    std::cerr
-      << "Invalid BITMAP_BITS: "
-      << bitmap_bits << "\n"
-      << "Valid values are:\n"
-      << "  0, 32, 64, 128, 256, 512, 1024, 2048\n";
+  switch (dag_kernel) {
+    case DagKernel::Thread:
+      // Thread insertion supports only exact overlap detection.
+      valid_bitmap_bits =
+        bitmap_bits == 0u;
 
-    return 1;
+      if (!valid_bitmap_bits) {
+        std::cerr
+          << "Invalid BITMAP_BITS for Thread DAG kernel: "
+          << bitmap_bits << "\n"
+          << "Valid value is:\n"
+          << "  0\n";
+
+        return 1;
+      }
+
+      break;
+
+    case DagKernel::Warp:
+      // Warp insertion supports the existing exact path and the
+      // two fixed-size register bitmap implementations.
+      valid_bitmap_bits =
+        bitmap_bits == 0u ||
+        bitmap_bits == 32u ||
+        bitmap_bits == 64u;
+
+      if (!valid_bitmap_bits) {
+        std::cerr
+          << "Invalid BITMAP_BITS for Warp DAG kernel: "
+          << bitmap_bits << "\n"
+          << "Valid values are:\n"
+          << "  0, 32, 64\n";
+
+        return 1;
+      }
+
+      break;
+
+    case DagKernel::Block:
+      // Block insertion supports a runtime-sized power-of-two
+      // shared-memory bitmap from 32 through 2048 bits.
+      valid_bitmap_bits =
+        bitmap_bits == 0u ||
+        (
+          bitmap_bits >= 32u &&
+          bitmap_bits <= 2048u &&
+          (
+            bitmap_bits &
+            (bitmap_bits - 1u)
+          ) == 0u
+        );
+
+      if (!valid_bitmap_bits) {
+        std::cerr
+          << "Invalid BITMAP_BITS for Block DAG kernel: "
+          << bitmap_bits << "\n"
+          << "Valid values are:\n"
+          << "  0, 32, 64, 128, 256, 512, 1024, 2048\n";
+
+        return 1;
+      }
+
+      break;
   }
-
-  if (dag_kernel != DagKernel::Block &&
-      bitmap_bits != 0u) {
-    std::cerr
-      << "BITMAP_BITS must be 0 for "
-      << (dag_kernel == DagKernel::Thread
-            ? "Thread"
-            : "Warp")
-      << " DAG kernels.\n";
-
-    return 1;
-  }      
   
   std::cout << "-------------------------------------\n";
   std::cout << "Input file: " << input_path << "\n";
@@ -98,13 +141,26 @@ int main(int argc, char *argv[]) {
   std::cout << "NUM_THREAD_DAG_CONSTR: " << num_thread_dag_constr << "\n";  
   std::cout
     << "BITMAP_BITS: "
-    << bitmap_bits
-    << (
-        bitmap_bits == 0u
-          ? " (Exact overlap detection)"
-          : " (Bitmap overlap detection)"
-      )
-    << "\n";
+    << bitmap_bits;
+
+  if (bitmap_bits == 0u) {
+    std::cout
+      << " (Exact overlap detection)";
+  }
+  else if (dag_kernel == DagKernel::Warp) {
+    std::cout
+      << " (Register-based Warp Bitmap-"
+      << bitmap_bits
+      << ")";
+  }
+  else {
+    std::cout
+      << " (Shared-memory Block Bitmap-"
+      << bitmap_bits
+      << ")";
+  }
+
+  std::cout << "\n";
   std::cout << "-------------------------------------\n";
 
 

@@ -262,6 +262,18 @@ void G_EXT::_validate_warp_threads_per_block(
   }
 }
 
+void G_EXT::_validate_warp_bitmap_bits(
+  const uint32_t bitmap_bits) const
+{
+  if (bitmap_bits != 0u &&
+      bitmap_bits != 32u &&
+      bitmap_bits != 64u) {
+    throw std::invalid_argument(
+      "Warp DAG bitmap size must be one of: "
+      "0, 32, 64");
+  }
+}
+
 void G_EXT::_validate_block_threads_per_candidate(
   const uint32_t threads_per_candidate) const
 {
@@ -4378,6 +4390,1093 @@ void G_EXT::_gpu_dag_insert_warp_direct(
     "_gpu_dag_insert_warp_direct_kl failed");
 }
 
+// ============================================================
+// Warp-cooperative Bitmap GPU DAG insertion
+//
+// This implementation is intentionally separate from the
+// existing Exact Warp implementation.
+//
+// BITMAP_BITS == 0:
+//   Existing Exact Warp evaluator, kernels, and launchers.
+//
+// BITMAP_BITS == 32:
+//   Register-based Warp Bitmap-32 implementation.
+//
+// BITMAP_BITS == 64:
+//   Register-based Warp Bitmap-64 implementation.
+//
+// Each warp owns its bitmap entirely in registers. Different
+// warps in the same CUDA block do not share bitmap state.
+//
+// No shared memory, atomicOr(), dynamic shared memory, or
+// __syncthreads() is used.
+//
+// Only parents satisfying:
+//
+//   selected_state[parent] != 0
+//   level[parent] >= 0
+//
+// populate a bitmap.
+//
+// Only children satisfying:
+//
+//   selected_state[child] != 0
+//   level[child] >= 0
+//
+// probe the bitmap.
+//
+// A bitmap hit is conservatively treated as overlap without
+// exact verification.
+// ============================================================
+
+__device__ __forceinline__
+uint32_t gpu_dag_warp_or_reduce_and_broadcast(
+  uint32_t value)
+{
+  // Reduce every lane's register fragment into lane 0.
+  for (uint32_t offset =
+         kGpuDagWarpSize / 2u;
+       offset > 0u;
+       offset >>= 1u) {
+    value |=
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        value,
+        offset);
+  }
+
+  // Every lane needs the complete parent bitmap during the
+  // following selected-child scan.
+  return __shfl_sync(
+    kGpuDagWarpFullMask,
+    value,
+    0);
+}
+
+
+// ============================================================
+// Warp Bitmap-32 candidate evaluator
+// ============================================================
+
+__device__ __forceinline__
+void gpu_dag_process_warp_bitmap32_candidate(
+  const uint32_t u,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t lane =
+    threadIdx.x &
+    (kGpuDagWarpSize - 1u);
+
+  // ----------------------------------------------------------
+  // Warp-uniform candidate activity check
+  // ----------------------------------------------------------
+  uint32_t candidate_active =
+    0u;
+
+  if (lane == 0u) {
+    candidate_active =
+      atomicAdd(
+        &selected_state[u],
+        0u) == 0u
+        ? 1u
+        : 0u;
+  }
+
+  candidate_active =
+    __shfl_sync(
+      kGpuDagWarpFullMask,
+      candidate_active,
+      0);
+
+  if (candidate_active == 0u) {
+    return;
+  }
+
+  const uint32_t parent_begin =
+    inverse_adj_ptr[u];
+
+  const uint32_t parent_end =
+    inverse_adj_ptr[u + 1u];
+
+  const uint32_t child_begin =
+    forward_adj_ptr[u];
+
+  const uint32_t child_end =
+    forward_adj_ptr[u + 1u];
+
+  int local_max_parent_level =
+    -1;
+
+  int local_min_child_level =
+    INT_MAX;
+
+  uint32_t local_flags =
+    0u;
+
+  // Each lane initially owns one fragment of the candidate's
+  // 32-bit parent bitmap.
+  uint32_t local_parent_bitmap =
+    0u;
+
+  // ----------------------------------------------------------
+  // Cooperative selected-parent scan
+  //
+  // A parent enters the bitmap only after both checks:
+  //
+  //   selected_state[parent] != 0
+  //   level[parent] >= 0
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         parent_begin + lane;
+       position < parent_end;
+       position += kGpuDagWarpSize) {
+    const uint32_t parent =
+      inverse_adj[position];
+
+    const uint32_t parent_state =
+      atomicAdd(
+        &selected_state[parent],
+        0u);
+
+    if (parent_state == 0u) {
+      continue;
+    }
+
+    const int parent_level =
+      atomicAdd(
+        &level[parent],
+        0);
+
+    if (parent_level < 0) {
+      continue;
+    }
+
+    local_flags |=
+      kGpuDagWarpHasSelectedParent;
+
+    if (parent_level >
+        local_max_parent_level) {
+      local_max_parent_level =
+        parent_level;
+    }
+
+    const uint32_t bit =
+      parent & 31u;
+
+    local_parent_bitmap |=
+      1u << bit;
+  }
+
+  // Combine all 32 lane-local fragments, then broadcast the
+  // complete bitmap back to every lane.
+  const uint32_t parent_bitmap =
+    gpu_dag_warp_or_reduce_and_broadcast(
+      local_parent_bitmap);
+
+  // ----------------------------------------------------------
+  // Cooperative selected-child scan
+  //
+  // Only selected children with valid levels probe the parent
+  // bitmap.
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         child_begin + lane;
+       position < child_end;
+       position += kGpuDagWarpSize) {
+    const uint32_t child =
+      forward_adj[position];
+
+    const uint32_t child_state =
+      atomicAdd(
+        &selected_state[child],
+        0u);
+
+    if (child_state == 0u) {
+      continue;
+    }
+
+    const int child_level =
+      atomicAdd(
+        &level[child],
+        0);
+
+    if (child_level < 0) {
+      continue;
+    }
+
+    local_flags |=
+      kGpuDagWarpHasSelectedChild;
+
+    if (child_level <
+        local_min_child_level) {
+      local_min_child_level =
+        child_level;
+    }
+
+    const uint32_t bit =
+      child & 31u;
+
+    const uint32_t child_mask =
+      1u << bit;
+
+    if ((parent_bitmap &
+         child_mask) != 0u) {
+      local_flags |=
+        kGpuDagWarpHasSelectedOverlap;
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Reduce the candidate summary into lane 0.
+  //
+  // This intentionally duplicates the existing Exact Warp
+  // reduction instead of modifying or factoring that path.
+  // ----------------------------------------------------------
+  for (uint32_t offset =
+         kGpuDagWarpSize / 2u;
+       offset > 0u;
+       offset >>= 1u) {
+    const int other_max_parent_level =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_max_parent_level,
+        offset);
+
+    const int other_min_child_level =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_min_child_level,
+        offset);
+
+    const uint32_t other_flags =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_flags,
+        offset);
+
+    if (other_max_parent_level >
+        local_max_parent_level) {
+      local_max_parent_level =
+        other_max_parent_level;
+    }
+
+    if (other_min_child_level <
+        local_min_child_level) {
+      local_min_child_level =
+        other_min_child_level;
+    }
+
+    local_flags |=
+      other_flags;
+  }
+
+  if (lane == 0u) {
+    const bool has_selected_parent =
+      (local_flags &
+       kGpuDagWarpHasSelectedParent) != 0u;
+
+    const bool has_selected_child =
+      (local_flags &
+       kGpuDagWarpHasSelectedChild) != 0u;
+
+    const bool has_selected_overlap =
+      (local_flags &
+       kGpuDagWarpHasSelectedOverlap) != 0u;
+
+    bool valid =
+      !has_selected_overlap &&
+      local_max_parent_level <
+        local_min_child_level;
+
+    int proposed_level =
+      -1;
+
+    if (valid &&
+        is_top_down_insertion) {
+      valid =
+        has_selected_parent;
+
+      if (valid) {
+        proposed_level =
+          local_max_parent_level + 1;
+      }
+    }
+    else if (valid) {
+      valid =
+        has_selected_child;
+
+      if (valid) {
+        proposed_level =
+          local_min_child_level - 1;
+      }
+    }
+
+    valid =
+      valid &&
+      proposed_level >= 0;
+
+    if (valid) {
+      // Preserve the existing live optimistic publication
+      // order.
+      //
+      // Do not add __threadfence().
+      level[u] =
+        proposed_level;
+
+      if (atomicCAS(
+            &selected_state[u],
+            0u,
+            2u) == 0u) {
+        atomicAdd(
+          u0,
+          1u);
+      }
+    }
+  }
+
+  // Required before Warp-Batch reuses the same warp's register
+  // state for its next candidate.
+  __syncwarp(
+    kGpuDagWarpFullMask);
+}
+
+
+// ============================================================
+// Warp Bitmap-64 candidate evaluator
+// ============================================================
+
+__device__ __forceinline__
+void gpu_dag_process_warp_bitmap64_candidate(
+  const uint32_t u,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t lane =
+    threadIdx.x &
+    (kGpuDagWarpSize - 1u);
+
+  uint32_t candidate_active =
+    0u;
+
+  if (lane == 0u) {
+    candidate_active =
+      atomicAdd(
+        &selected_state[u],
+        0u) == 0u
+        ? 1u
+        : 0u;
+  }
+
+  candidate_active =
+    __shfl_sync(
+      kGpuDagWarpFullMask,
+      candidate_active,
+      0);
+
+  if (candidate_active == 0u) {
+    return;
+  }
+
+  const uint32_t parent_begin =
+    inverse_adj_ptr[u];
+
+  const uint32_t parent_end =
+    inverse_adj_ptr[u + 1u];
+
+  const uint32_t child_begin =
+    forward_adj_ptr[u];
+
+  const uint32_t child_end =
+    forward_adj_ptr[u + 1u];
+
+  int local_max_parent_level =
+    -1;
+
+  int local_min_child_level =
+    INT_MAX;
+
+  uint32_t local_flags =
+    0u;
+
+  // The 64-bit bitmap is represented by two independent
+  // uint32_t register words.
+  uint32_t local_parent_bitmap_low =
+    0u;
+
+  uint32_t local_parent_bitmap_high =
+    0u;
+
+  // ----------------------------------------------------------
+  // Cooperative selected-parent scan
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         parent_begin + lane;
+       position < parent_end;
+       position += kGpuDagWarpSize) {
+    const uint32_t parent =
+      inverse_adj[position];
+
+    const uint32_t parent_state =
+      atomicAdd(
+        &selected_state[parent],
+        0u);
+
+    if (parent_state == 0u) {
+      continue;
+    }
+
+    const int parent_level =
+      atomicAdd(
+        &level[parent],
+        0);
+
+    if (parent_level < 0) {
+      continue;
+    }
+
+    local_flags |=
+      kGpuDagWarpHasSelectedParent;
+
+    if (parent_level >
+        local_max_parent_level) {
+      local_max_parent_level =
+        parent_level;
+    }
+
+    const uint32_t bit =
+      parent & 63u;
+
+    const uint32_t word_mask =
+      1u << (bit & 31u);
+
+    if (bit < 32u) {
+      local_parent_bitmap_low |=
+        word_mask;
+    }
+    else {
+      local_parent_bitmap_high |=
+        word_mask;
+    }
+  }
+
+  const uint32_t parent_bitmap_low =
+    gpu_dag_warp_or_reduce_and_broadcast(
+      local_parent_bitmap_low);
+
+  const uint32_t parent_bitmap_high =
+    gpu_dag_warp_or_reduce_and_broadcast(
+      local_parent_bitmap_high);
+
+  // ----------------------------------------------------------
+  // Cooperative selected-child scan
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         child_begin + lane;
+       position < child_end;
+       position += kGpuDagWarpSize) {
+    const uint32_t child =
+      forward_adj[position];
+
+    const uint32_t child_state =
+      atomicAdd(
+        &selected_state[child],
+        0u);
+
+    if (child_state == 0u) {
+      continue;
+    }
+
+    const int child_level =
+      atomicAdd(
+        &level[child],
+        0);
+
+    if (child_level < 0) {
+      continue;
+    }
+
+    local_flags |=
+      kGpuDagWarpHasSelectedChild;
+
+    if (child_level <
+        local_min_child_level) {
+      local_min_child_level =
+        child_level;
+    }
+
+    const uint32_t bit =
+      child & 63u;
+
+    const uint32_t word_mask =
+      1u << (bit & 31u);
+
+    const bool bitmap_hit =
+      bit < 32u
+        ? (parent_bitmap_low &
+           word_mask) != 0u
+        : (parent_bitmap_high &
+           word_mask) != 0u;
+
+    if (bitmap_hit) {
+      local_flags |=
+        kGpuDagWarpHasSelectedOverlap;
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Reduce candidate summary into lane 0.
+  // ----------------------------------------------------------
+  for (uint32_t offset =
+         kGpuDagWarpSize / 2u;
+       offset > 0u;
+       offset >>= 1u) {
+    const int other_max_parent_level =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_max_parent_level,
+        offset);
+
+    const int other_min_child_level =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_min_child_level,
+        offset);
+
+    const uint32_t other_flags =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_flags,
+        offset);
+
+    if (other_max_parent_level >
+        local_max_parent_level) {
+      local_max_parent_level =
+        other_max_parent_level;
+    }
+
+    if (other_min_child_level <
+        local_min_child_level) {
+      local_min_child_level =
+        other_min_child_level;
+    }
+
+    local_flags |=
+      other_flags;
+  }
+
+  if (lane == 0u) {
+    const bool has_selected_parent =
+      (local_flags &
+       kGpuDagWarpHasSelectedParent) != 0u;
+
+    const bool has_selected_child =
+      (local_flags &
+       kGpuDagWarpHasSelectedChild) != 0u;
+
+    const bool has_selected_overlap =
+      (local_flags &
+       kGpuDagWarpHasSelectedOverlap) != 0u;
+
+    bool valid =
+      !has_selected_overlap &&
+      local_max_parent_level <
+        local_min_child_level;
+
+    int proposed_level =
+      -1;
+
+    if (valid &&
+        is_top_down_insertion) {
+      valid =
+        has_selected_parent;
+
+      if (valid) {
+        proposed_level =
+          local_max_parent_level + 1;
+      }
+    }
+    else if (valid) {
+      valid =
+        has_selected_child;
+
+      if (valid) {
+        proposed_level =
+          local_min_child_level - 1;
+      }
+    }
+
+    valid =
+      valid &&
+      proposed_level >= 0;
+
+    if (valid) {
+      level[u] =
+        proposed_level;
+
+      if (atomicCAS(
+            &selected_state[u],
+            0u,
+            2u) == 0u) {
+        atomicAdd(
+          u0,
+          1u);
+      }
+    }
+  }
+
+  __syncwarp(
+    kGpuDagWarpFullMask);
+}
+
+
+// ============================================================
+// Warp Bitmap-32 kernels
+// ============================================================
+
+__global__
+void _gpu_dag_insert_warp_bitmap32_batch_kl(
+  const uint32_t num_endes,
+  const uint32_t num_batches,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t warp_in_block =
+    threadIdx.x /
+    kGpuDagWarpSize;
+
+  const uint32_t warps_per_block =
+    blockDim.x /
+    kGpuDagWarpSize;
+
+  const uint32_t global_warp =
+    blockIdx.x * warps_per_block +
+    warp_in_block;
+
+  const uint32_t candidate_lanes =
+    (num_endes +
+     num_batches - 1u) /
+    num_batches;
+
+  // Uniform for all lanes in this warp.
+  if (global_warp >=
+      candidate_lanes) {
+    return;
+  }
+
+  for (uint32_t batch_index = 0u;
+       batch_index < num_batches;
+       ++batch_index) {
+    const uint32_t u =
+      global_warp * num_batches +
+      batch_index;
+
+    // Uniform for all lanes in this warp.
+    if (u >= num_endes) {
+      continue;
+    }
+
+    gpu_dag_process_warp_bitmap32_candidate(
+      u,
+      is_top_down_insertion,
+      selected_state,
+      forward_adj,
+      forward_adj_ptr,
+      inverse_adj,
+      inverse_adj_ptr,
+      level,
+      u0);
+  }
+}
+
+
+__global__
+void _gpu_dag_insert_warp_bitmap32_direct_kl(
+  const uint32_t num_endes,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t warp_in_block =
+    threadIdx.x /
+    kGpuDagWarpSize;
+
+  const uint32_t warps_per_block =
+    blockDim.x /
+    kGpuDagWarpSize;
+
+  const uint32_t global_warp =
+    blockIdx.x * warps_per_block +
+    warp_in_block;
+
+  const uint32_t u =
+    global_warp;
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  gpu_dag_process_warp_bitmap32_candidate(
+    u,
+    is_top_down_insertion,
+    selected_state,
+    forward_adj,
+    forward_adj_ptr,
+    inverse_adj,
+    inverse_adj_ptr,
+    level,
+    u0);
+}
+
+
+// ============================================================
+// Warp Bitmap-64 kernels
+// ============================================================
+
+__global__
+void _gpu_dag_insert_warp_bitmap64_batch_kl(
+  const uint32_t num_endes,
+  const uint32_t num_batches,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t warp_in_block =
+    threadIdx.x /
+    kGpuDagWarpSize;
+
+  const uint32_t warps_per_block =
+    blockDim.x /
+    kGpuDagWarpSize;
+
+  const uint32_t global_warp =
+    blockIdx.x * warps_per_block +
+    warp_in_block;
+
+  const uint32_t candidate_lanes =
+    (num_endes +
+     num_batches - 1u) /
+    num_batches;
+
+  if (global_warp >=
+      candidate_lanes) {
+    return;
+  }
+
+  for (uint32_t batch_index = 0u;
+       batch_index < num_batches;
+       ++batch_index) {
+    const uint32_t u =
+      global_warp * num_batches +
+      batch_index;
+
+    if (u >= num_endes) {
+      continue;
+    }
+
+    gpu_dag_process_warp_bitmap64_candidate(
+      u,
+      is_top_down_insertion,
+      selected_state,
+      forward_adj,
+      forward_adj_ptr,
+      inverse_adj,
+      inverse_adj_ptr,
+      level,
+      u0);
+  }
+}
+
+
+__global__
+void _gpu_dag_insert_warp_bitmap64_direct_kl(
+  const uint32_t num_endes,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0)
+{
+  const uint32_t warp_in_block =
+    threadIdx.x /
+    kGpuDagWarpSize;
+
+  const uint32_t warps_per_block =
+    blockDim.x /
+    kGpuDagWarpSize;
+
+  const uint32_t global_warp =
+    blockIdx.x * warps_per_block +
+    warp_in_block;
+
+  const uint32_t u =
+    global_warp;
+
+  if (u >= num_endes) {
+    return;
+  }
+
+  gpu_dag_process_warp_bitmap64_candidate(
+    u,
+    is_top_down_insertion,
+    selected_state,
+    forward_adj,
+    forward_adj_ptr,
+    inverse_adj,
+    inverse_adj_ptr,
+    level,
+    u0);
+}
+
+
+// ============================================================
+// Warp Bitmap-32 host launchers
+// ============================================================
+
+void G_EXT::_gpu_dag_insert_warp_bitmap32_batch(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_block)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap32_batch requires "
+      "initialized GPU DAG buffers");
+  }
+
+  const uint32_t num_batches =
+    (_num_ende +
+     kGpuDagBatchSize - 1u) /
+    kGpuDagBatchSize;
+
+  const uint32_t candidate_lanes =
+    (_num_ende +
+     num_batches - 1u) /
+    num_batches;
+
+  const uint32_t warps_per_block =
+    threads_per_block /
+    kGpuDagWarpSize;
+
+  const uint32_t blocks =
+    (candidate_lanes +
+     warps_per_block - 1u) /
+    warps_per_block;
+
+  _gpu_dag_insert_warp_bitmap32_batch_kl
+    <<<blocks,
+       threads_per_block>>>(
+      _num_ende,
+      num_batches,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_warp_bitmap32_batch_kl failed");
+}
+
+
+void G_EXT::_gpu_dag_insert_warp_bitmap32_direct(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_block)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap32_direct requires "
+      "initialized GPU DAG buffers");
+  }
+
+  const uint32_t warps_per_block =
+    threads_per_block /
+    kGpuDagWarpSize;
+
+  const uint32_t blocks =
+    (_num_ende +
+     warps_per_block - 1u) /
+    warps_per_block;
+
+  _gpu_dag_insert_warp_bitmap32_direct_kl
+    <<<blocks,
+       threads_per_block>>>(
+      _num_ende,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_warp_bitmap32_direct_kl failed");
+}
+
+
+// ============================================================
+// Warp Bitmap-64 host launchers
+// ============================================================
+
+void G_EXT::_gpu_dag_insert_warp_bitmap64_batch(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_block)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap64_batch requires "
+      "initialized GPU DAG buffers");
+  }
+
+  const uint32_t num_batches =
+    (_num_ende +
+     kGpuDagBatchSize - 1u) /
+    kGpuDagBatchSize;
+
+  const uint32_t candidate_lanes =
+    (_num_ende +
+     num_batches - 1u) /
+    num_batches;
+
+  const uint32_t warps_per_block =
+    threads_per_block /
+    kGpuDagWarpSize;
+
+  const uint32_t blocks =
+    (candidate_lanes +
+     warps_per_block - 1u) /
+    warps_per_block;
+
+  _gpu_dag_insert_warp_bitmap64_batch_kl
+    <<<blocks,
+       threads_per_block>>>(
+      _num_ende,
+      num_batches,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_warp_bitmap64_batch_kl failed");
+}
+
+
+void G_EXT::_gpu_dag_insert_warp_bitmap64_direct(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_block)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap64_direct requires "
+      "initialized GPU DAG buffers");
+  }
+
+  const uint32_t warps_per_block =
+    threads_per_block /
+    kGpuDagWarpSize;
+
+  const uint32_t blocks =
+    (_num_ende +
+     warps_per_block - 1u) /
+    warps_per_block;
+
+  _gpu_dag_insert_warp_bitmap64_direct_kl
+    <<<blocks,
+       threads_per_block>>>(
+      _num_ende,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_warp_bitmap64_direct_kl failed");
+}
+
 void G_EXT::_gpu_dag_insert_configured(
   const bool use_direct_mode,
   const bool is_top_down_insertion)
@@ -4396,18 +5495,56 @@ void G_EXT::_gpu_dag_insert_configured(
       return;
 
     case DagKernel::Warp:
-      if (use_direct_mode) {
-        _gpu_dag_insert_warp_direct(
-          is_top_down_insertion,
-          _dag_threads_per_candidate);
-      }
-      else {
-        _gpu_dag_insert_warp_batch(
-          is_top_down_insertion,
-          _dag_threads_per_candidate);
-      }
+      switch (_dag_bitmap_bits) {
+        case 0u:
+          // Existing Exact Warp implementation.
+          if (use_direct_mode) {
+            _gpu_dag_insert_warp_direct(
+              is_top_down_insertion,
+              _dag_threads_per_candidate);
+          }
+          else {
+            _gpu_dag_insert_warp_batch(
+              is_top_down_insertion,
+              _dag_threads_per_candidate);
+          }
 
-      return;
+          return;
+
+        case 32u:
+          // Register-based Warp Bitmap-32 implementation.
+          if (use_direct_mode) {
+            _gpu_dag_insert_warp_bitmap32_direct(
+              is_top_down_insertion,
+              _dag_threads_per_candidate);
+          }
+          else {
+            _gpu_dag_insert_warp_bitmap32_batch(
+              is_top_down_insertion,
+              _dag_threads_per_candidate);
+          }
+
+          return;
+
+        case 64u:
+          // Register-based Warp Bitmap-64 implementation.
+          if (use_direct_mode) {
+            _gpu_dag_insert_warp_bitmap64_direct(
+              is_top_down_insertion,
+              _dag_threads_per_candidate);
+          }
+          else {
+            _gpu_dag_insert_warp_bitmap64_batch(
+              is_top_down_insertion,
+              _dag_threads_per_candidate);
+          }
+
+          return;
+
+        default:
+          throw std::logic_error(
+            "Invalid Warp DAG bitmap configuration");
+      }
 
     case DagKernel::Block:
       if (_dag_bitmap_bits == 0u) {
@@ -6444,7 +7581,8 @@ G_EXT::_unittest_gpu_insert_warp_once(
   const std::vector<int>& input_level,
   const bool is_top_down_insertion,
   const bool use_direct_mode,
-  const uint32_t threads_per_block)
+  const uint32_t threads_per_block,
+  const uint32_t bitmap_bits)
 {
   if (_ende_name.empty()) {
     throw std::logic_error(
@@ -6480,6 +7618,9 @@ G_EXT::_unittest_gpu_insert_warp_once(
   _validate_warp_threads_per_block(
     threads_per_block);
 
+  _validate_warp_bitmap_bits(
+    bitmap_bits);
+
   if (_dvc_picked_endes == nullptr) {
     (void)_gpu_tree_construction();
   }
@@ -6514,6 +7655,23 @@ G_EXT::_unittest_gpu_insert_warp_once(
     // In Warp mode this value means total CUDA threads/block.
     _dag_threads_per_candidate =
       threads_per_block;
+
+    // Reset the complete runtime bitmap configuration on every
+    // unit-test call.
+    //
+    // This prevents a previous Bitmap-32 or Bitmap-64 call from
+    // leaking configuration into a later Exact Warp call that
+    // reuses the same G_EXT object.
+    _dag_bitmap_bits =
+      bitmap_bits;
+
+    _dag_bitmap_mask =
+      bitmap_bits == 0u
+        ? 0u
+        : bitmap_bits - 1u;
+
+    _dag_bitmap_words =
+      bitmap_bits / 32u;
 
     _gpu_dag_insert_configured(
       use_direct_mode,
@@ -6564,14 +7722,16 @@ G_EXT::unittest_gpu_insert_warp_batch_once(
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& input_level,
   const bool is_top_down_insertion,
-  const uint32_t threads_per_block)
+  const uint32_t threads_per_block,
+  const uint32_t bitmap_bits)
 {
   return _unittest_gpu_insert_warp_once(
     selected_state,
     input_level,
     is_top_down_insertion,
     false,
-    threads_per_block);
+    threads_per_block,
+    bitmap_bits);
 }
 
 G_EXT::GpuInsertionResult
@@ -6579,14 +7739,16 @@ G_EXT::unittest_gpu_insert_warp_direct_once(
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& input_level,
   const bool is_top_down_insertion,
-  const uint32_t threads_per_block)
+  const uint32_t threads_per_block,
+  const uint32_t bitmap_bits)
 {
   return _unittest_gpu_insert_warp_once(
     selected_state,
     input_level,
     is_top_down_insertion,
     true,
-    threads_per_block);
+    threads_per_block,
+    bitmap_bits);
 }
 
 G_EXT::GpuInsertionResult

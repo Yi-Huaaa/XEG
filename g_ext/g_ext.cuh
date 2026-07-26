@@ -212,7 +212,8 @@ public:
     const std::vector<uint32_t>& selected_state,
     const std::vector<int>& level,
     bool is_top_down_insertion,
-    uint32_t threads_per_block);
+    uint32_t threads_per_block,
+    uint32_t bitmap_bits = 0u);
 
   // Run exactly one Warp-Direct insertion phase.
   //
@@ -226,7 +227,8 @@ public:
     const std::vector<uint32_t>& selected_state,
     const std::vector<int>& level,
     bool is_top_down_insertion,
-    uint32_t threads_per_block);
+    uint32_t threads_per_block,
+    uint32_t bitmap_bits = 0u);
 
   // Run exactly one Block-Batch insertion phase.
   //
@@ -335,11 +337,8 @@ public:
         _validate_warp_threads_per_block(
           num_thread_dag_constrution);
 
-        if (dag_bitmap_bits != 0u) {
-          throw std::invalid_argument(
-            "Warp DAG kernel requires "
-            "BITMAP_BITS=0");
-        }
+        _validate_warp_bitmap_bits(
+          dag_bitmap_bits);
 
         break;
 
@@ -706,6 +705,21 @@ private:
   void _validate_warp_threads_per_block(
     uint32_t threads_per_block) const;
 
+  // Validate the runtime Warp bitmap size.
+  //
+  // 0:
+  //   Use the existing exact Warp implementation.
+  //
+  // 32:
+  //   Use the register-based Warp Bitmap-32 implementation.
+  //
+  // 64:
+  //   Use the register-based Warp Bitmap-64 implementation.
+  //
+  // No other bitmap size is supported by Warp kernels.
+  void _validate_warp_bitmap_bits(
+    uint32_t bitmap_bits) const;
+
   // Validate the runtime Block configuration.
   //
   // The initial shared-memory reduction supports:
@@ -795,6 +809,37 @@ private:
   // Multiple independent candidate warps may share one CUDA
   // block.
   void _gpu_dag_insert_warp_direct(
+    bool is_top_down_insertion,
+    uint32_t threads_per_block);
+
+  // Warp-cooperative transposed-batch insertion using one
+  // fixed 32-bit register bitmap per warp.
+  //
+  // Only selected parents with valid levels populate the bitmap.
+  // Only selected children with valid levels probe it.
+  //
+  // A bitmap hit is conservatively treated as overlap without
+  // exact verification.
+  void _gpu_dag_insert_warp_bitmap32_batch(
+    bool is_top_down_insertion,
+    uint32_t threads_per_block);
+
+  // Warp-cooperative direct insertion using one fixed 32-bit
+  // register bitmap per warp.
+  void _gpu_dag_insert_warp_bitmap32_direct(
+    bool is_top_down_insertion,
+    uint32_t threads_per_block);
+
+  // Warp-cooperative transposed-batch insertion using one
+  // fixed 64-bit register bitmap represented by two uint32_t
+  // words per warp.
+  void _gpu_dag_insert_warp_bitmap64_batch(
+    bool is_top_down_insertion,
+    uint32_t threads_per_block);
+
+  // Warp-cooperative direct insertion using one fixed 64-bit
+  // register bitmap represented by two uint32_t words per warp.
+  void _gpu_dag_insert_warp_bitmap64_direct(
     bool is_top_down_insertion,
     uint32_t threads_per_block);
 
@@ -894,7 +939,8 @@ private:
     const std::vector<int>& level,
     bool is_top_down_insertion,
     bool use_direct_mode,
-    uint32_t threads_per_block);
+    uint32_t threads_per_block,
+    uint32_t bitmap_bits);
 
   // Shared implementation for the two public Block insertion
   // unit-test wrappers.
@@ -1023,21 +1069,35 @@ private:
   // interface refactor.
   uint32_t _dag_threads_per_candidate = 1;
 
-  // Runtime Block bitmap configuration.
+  // Runtime GPU DAG bitmap configuration.
   //
-  // _dag_bitmap_bits == 0:
-  //   use the existing exact Block insertion implementation.
+  // Thread:
+  //   0 only.
   //
-  // _dag_bitmap_bits > 0:
-  //   use approximate overlap detection between:
+  // Warp:
+  //   0  -> existing Exact Warp implementation
+  //   32 -> register-based Warp Bitmap-32
+  //   64 -> register-based Warp Bitmap-64
   //
-  //     selected, level-valid parents
-  //     selected, level-valid children
+  // Block:
+  //   0    -> existing Exact Block implementation
+  //   32..2048 power-of-two
+  //        -> shared-memory Bitmap Block implementation
   //
-  //   A hash collision may conservatively reject a candidate.
+  // A nonzero bitmap performs approximate overlap detection
+  // between:
+  //
+  //   selected, level-valid parents
+  //   selected, level-valid children
+  //
+  // A hash collision may conservatively reject a candidate.
   uint32_t _dag_bitmap_bits = 0u;
 
   // Valid only when _dag_bitmap_bits > 0.
+  //
+  // Warp Bitmap-32/64 implementations use fixed compile-time
+  // masks internally. Block bitmap implementations receive this
+  // runtime mask.
   //
   // Examples:
   //
@@ -1049,6 +1109,9 @@ private:
   // Number of uint32_t words:
   //
   //   words = bits / 32
+  //
+  // Warp fixed-size kernels do not require this value, but it is
+  // still reset consistently by run() and unit-test wrappers.
   uint32_t _dag_bitmap_words = 0u;
 
   // Print function
