@@ -816,6 +816,15 @@ private:
   // runtime-sized shared-memory bitmap for approximate overlap
   // detection.
   //
+  // The bitmap represents only parent e-nodes that are:
+  //
+  //   selected_state[parent] != 0
+  //   level[parent] >= 0
+  //
+  // Selected children with valid levels probe this bitmap.
+  // A bitmap hit is conservatively treated as overlap without
+  // exact verification.
+  //
   // The existing exact Block-Batch implementation remains
   // unchanged and is selected when BITMAP_BITS == 0.
   void _gpu_dag_insert_block_bitmap_batch(
@@ -826,6 +835,10 @@ private:
 
   // Block-cooperative direct insertion using a runtime-sized
   // shared-memory bitmap for approximate overlap detection.
+  //
+  // Only selected parent e-nodes with valid levels populate the
+  // bitmap. Only selected child e-nodes with valid levels probe
+  // it.
   //
   // One CUDA block evaluates one candidate.
   void _gpu_dag_insert_block_bitmap_direct(
@@ -1016,7 +1029,12 @@ private:
   //   use the existing exact Block insertion implementation.
   //
   // _dag_bitmap_bits > 0:
-  //   use the isolated Block-Bitmap insertion implementation.
+  //   use approximate overlap detection between:
+  //
+  //     selected, level-valid parents
+  //     selected, level-valid children
+  //
+  //   A hash collision may conservatively reject a candidate.
   uint32_t _dag_bitmap_bits = 0u;
 
   // Valid only when _dag_bitmap_bits > 0.

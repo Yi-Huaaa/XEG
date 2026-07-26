@@ -3153,9 +3153,23 @@ void G_EXT::_gpu_dag_insert_block_direct(
 //   GpuDagBlockThreadScratch scratch[blockDim.x]
 //   uint32_t parent_bitmap[bitmap_words]
 //
-// Every static parent ID is inserted into the bitmap.
+// Only parents satisfying:
 //
-// Only selected children with valid levels probe the bitmap.
+//   selected_state[parent] != 0
+//   level[parent] >= 0
+//
+// are inserted into the bitmap.
+//
+// Only children satisfying:
+//
+//   selected_state[child] != 0
+//   level[child] >= 0
+//
+// probe the bitmap.
+//
+// Therefore the approximate overlap test operates on the same
+// selected, level-valid parent and child sets as the exact Block
+// evaluator.
 //
 // A bitmap hit is conservatively treated as overlap. No exact
 // verification is performed.
@@ -3283,21 +3297,23 @@ void gpu_dag_process_block_bitmap_candidate(
   };
 
   // ----------------------------------------------------------
-  // Cooperative parent scan
+  // Cooperative selected-parent scan
   //
-  // Important:
+  // Match the exact Block evaluator's participating set:
   //
-  // Every static parent ID is inserted into the bitmap,
-  // regardless of its current selected state.
+  //   selected_state[parent] != 0
+  //   level[parent] >= 0
   //
-  // This prevents a selected-state timing race from causing a
-  // true parent-child overlap to miss the bitmap.
+  // Only a parent satisfying both conditions is:
   //
-  // Selected-state and level checks are still used separately
-  // for:
+  //   1. counted as a selected parent
+  //   2. used to update max_parent_level
+  //   3. inserted into the approximate overlap bitmap
   //
-  //   has_selected_parent
-  //   max_parent_level
+  // Unselected parents and parents with invalid levels must not
+  // populate the bitmap. Otherwise they can create artificial
+  // false-positive overlap rejections unrelated to the exact
+  // selected parent-child sets.
   // ----------------------------------------------------------
   for (uint32_t position =
          parent_begin + lane;
@@ -3305,11 +3321,6 @@ void gpu_dag_process_block_bitmap_candidate(
        position += blockDim.x) {
     const uint32_t parent =
       inverse_adj[position];
-
-    gpu_dag_block_bitmap_insert(
-      parent_bitmap,
-      parent,
-      bitmap_mask);
 
     const uint32_t parent_state =
       atomicAdd(
@@ -3328,6 +3339,17 @@ void gpu_dag_process_block_bitmap_candidate(
     if (parent_level < 0) {
       continue;
     }
+
+    // Only selected parents with valid levels participate in
+    // approximate overlap detection.
+    //
+    // This must remain after both checks above. Moving it before
+    // either check allows inactive or invalid parents to pollute
+    // the bitmap and reject otherwise legal candidates.
+    gpu_dag_block_bitmap_insert(
+      parent_bitmap,
+      parent,
+      bitmap_mask);
 
     local.flags |=
       kGpuDagBlockHasSelectedParent;
