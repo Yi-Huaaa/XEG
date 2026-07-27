@@ -3148,44 +3148,131 @@ void G_EXT::_gpu_dag_insert_block_direct(
 // ============================================================
 // Block-cooperative Bitmap GPU DAG insertion
 //
-// This implementation is intentionally separate from the
-// existing exact Block implementation.
+// This is the only Block Bitmap implementation.
 //
 // BITMAP_BITS == 0:
-//   Existing exact Block kernels.
+//   Existing exact Block kernels remain unchanged.
 //
 // BITMAP_BITS > 0:
-//   These Bitmap Block kernels.
+//   Existing Block Bitmap Batch and Direct kernels use
+//   Strategy A1 directly.
 //
-// One runtime-sized parent bitmap is stored in dynamic shared
-// memory for each CUDA block.
+// Strategy A1:
+//
+//   1. Mix each selected, level-valid parent e-node ID.
+//   2. Split the bitmap into equal lower and upper halves.
+//   3. Set one mixed bit in each half.
+//   4. A selected, level-valid child reports overlap only when
+//      both corresponding bits are present.
+//
+// The two probes always occupy different halves of the bitmap.
+// This reduces the probability that one ordinary modulo
+// collision rejects a candidate.
+//
+// A two-probe hit may still be a false positive because its two
+// bits may have been populated by different parents. Such a hit
+// is conservatively rejected without exact verification.
+//
+// One runtime-sized parent bitmap remains stored in dynamic
+// shared memory for each CUDA block.
 //
 // Shared-memory layout:
 //
 //   GpuDagBlockThreadScratch scratch[blockDim.x]
 //   uint32_t parent_bitmap[bitmap_words]
 //
-// Only parents satisfying:
-//
-//   selected_state[parent] != 0
-//   level[parent] >= 0
-//
-// are inserted into the bitmap.
-//
-// Only children satisfying:
-//
-//   selected_state[child] != 0
-//   level[child] >= 0
-//
-// probe the bitmap.
-//
-// Therefore the approximate overlap test operates on the same
-// selected, level-valid parent and child sets as the exact Block
-// evaluator.
-//
-// A bitmap hit is conservatively treated as overlap. No exact
-// verification is performed.
+// No new global allocation, kernel, launcher, runtime branch,
+// or synchronization barrier is introduced.
 // ============================================================
+// Mix one 32-bit e-node ID before extracting bitmap positions.
+//
+// The arithmetic is intentionally uint32_t, so multiplication
+// wraps modulo 2^32.
+__device__ __forceinline__
+uint32_t gpu_dag_block_bitmap_mix32(
+  uint32_t value)
+{
+  value ^=
+    value >> 16u;
+
+  value *=
+    0x7feb352du;
+
+  value ^=
+    value >> 15u;
+
+  value *=
+    0x846ca68bu;
+
+  value ^=
+    value >> 16u;
+
+  return value;
+}
+
+
+// Strategy A1 assigns exactly two bits to one e-node:
+//
+//   first:
+//     one bit in the lower half
+//
+//   second:
+//     one bit in the upper half
+//
+// Keeping the two probes in disjoint halves guarantees that
+// they are two different physical bitmap positions.
+struct GpuDagBlockBitmapA1ProbeBits
+{
+  uint32_t first;
+  uint32_t second;
+};
+
+
+__device__ __forceinline__
+GpuDagBlockBitmapA1ProbeBits
+gpu_dag_block_bitmap_a1_probe_bits(
+  const uint32_t node,
+  const uint32_t bitmap_mask)
+{
+  // Existing host configuration stores:
+  //
+  //   bitmap_mask = bitmap_bits - 1
+  //
+  // Therefore the runtime bitmap size can be recovered without
+  // changing any existing function signature.
+  const uint32_t bitmap_bits =
+    bitmap_mask + 1u;
+
+  const uint32_t half_bits =
+    bitmap_bits >> 1u;
+
+  const uint32_t half_mask =
+    half_bits - 1u;
+
+  const uint32_t mixed =
+    gpu_dag_block_bitmap_mix32(
+      node);
+
+  GpuDagBlockBitmapA1ProbeBits result;
+
+  // Lower-half position:
+  //
+  //   [0, half_bits)
+  result.first =
+    mixed &
+    half_mask;
+
+  // Upper-half position:
+  //
+  //   [half_bits, bitmap_bits)
+  result.second =
+    half_bits +
+    ((mixed >> 16u) &
+     half_mask);
+
+  return result;
+}
+
 
 __device__ __forceinline__
 void gpu_dag_block_bitmap_insert(
@@ -3193,19 +3280,36 @@ void gpu_dag_block_bitmap_insert(
   const uint32_t node,
   const uint32_t bitmap_mask)
 {
-  const uint32_t bit =
-    node & bitmap_mask;
+  const GpuDagBlockBitmapA1ProbeBits probe =
+    gpu_dag_block_bitmap_a1_probe_bits(
+      node,
+      bitmap_mask);
 
-  const uint32_t word =
-    bit >> 5u;
+  const uint32_t first_word =
+    probe.first >> 5u;
 
-  const uint32_t word_mask =
-    1u << (bit & 31u);
+  const uint32_t first_word_mask =
+    1u << (probe.first & 31u);
 
-  // Multiple threads may hash into the same shared-memory word.
+  const uint32_t second_word =
+    probe.second >> 5u;
+
+  const uint32_t second_word_mask =
+    1u << (probe.second & 31u);
+
+  // Multiple parent threads may update the same shared-memory
+  // word, so both A1 bit updates remain atomic.
+  //
+  // For BITMAP_BITS=32, the two bits are in different 16-bit
+  // halves but may reside in the same uint32_t word. Two
+  // atomicOr operations are still correct.
   atomicOr(
-    &bitmap[word],
-    word_mask);
+    &bitmap[first_word],
+    first_word_mask);
+
+  atomicOr(
+    &bitmap[second_word],
+    second_word_mask);
 }
 
 
@@ -3215,20 +3319,39 @@ bool gpu_dag_block_bitmap_contains(
   const uint32_t node,
   const uint32_t bitmap_mask)
 {
-  const uint32_t bit =
-    node & bitmap_mask;
+  const GpuDagBlockBitmapA1ProbeBits probe =
+    gpu_dag_block_bitmap_a1_probe_bits(
+      node,
+      bitmap_mask);
 
-  const uint32_t word =
-    bit >> 5u;
+  const uint32_t first_word =
+    probe.first >> 5u;
 
-  const uint32_t word_mask =
-    1u << (bit & 31u);
+  const uint32_t first_word_mask =
+    1u << (probe.first & 31u);
 
+  const uint32_t second_word =
+    probe.second >> 5u;
+
+  const uint32_t second_word_mask =
+    1u << (probe.second & 31u);
+
+  const bool first_hit =
+    (bitmap[first_word] &
+     first_word_mask) != 0u;
+
+  const bool second_hit =
+    (bitmap[second_word] &
+     second_word_mask) != 0u;
+
+  // Strategy A1 rejects only when both probes hit.
+  //
+  // This remains conservative:
+  // the two bits may have been set by two different parents.
   return
-    (bitmap[word] &
-     word_mask) != 0u;
+    first_hit &&
+    second_hit;
 }
-
 
 __device__ __forceinline__
 void gpu_dag_process_block_bitmap_candidate(
@@ -3353,11 +3476,14 @@ void gpu_dag_process_block_bitmap_candidate(
     }
 
     // Only selected parents with valid levels participate in
-    // approximate overlap detection.
+    // Strategy-A1 approximate overlap detection.
     //
-    // This must remain after both checks above. Moving it before
-    // either check allows inactive or invalid parents to pollute
-    // the bitmap and reject otherwise legal candidates.
+    // gpu_dag_block_bitmap_insert() mixes this parent ID and
+    // sets one bit in each half of the bitmap.
+    //
+    // This call must remain after both checks above. Moving it
+    // before either check allows inactive or invalid parents to
+    // pollute the bitmap and reject otherwise legal candidates.
     gpu_dag_block_bitmap_insert(
       parent_bitmap,
       parent,
@@ -3428,12 +3554,17 @@ void gpu_dag_process_block_bitmap_candidate(
         child_level;
     }
 
-    // Approximate overlap detection.
+    // Strategy-A1 approximate overlap detection.
     //
-    // A hit may be:
+    // The child ID is mixed using the same function as the
+    // parents. The candidate is rejected only when both the
+    // lower-half and upper-half probes hit.
+    //
+    // A two-probe hit may be:
     //
     //   true overlap
-    //   hash collision
+    //   two-bit hash collision
+    //   two bits populated by different parents
     //
     // No exact verification is performed.
     if (gpu_dag_block_bitmap_contains(

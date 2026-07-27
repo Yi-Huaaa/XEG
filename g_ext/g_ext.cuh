@@ -857,18 +857,20 @@ private:
   void _gpu_dag_insert_block_direct(
     bool is_top_down_insertion,
     uint32_t threads_per_candidate);
-  // Block-cooperative transposed-batch insertion using a
-  // runtime-sized shared-memory bitmap for approximate overlap
-  // detection.
+  // Block-cooperative transposed-batch insertion using the
+  // runtime-sized shared-memory Strategy-A1 bitmap.
   //
-  // The bitmap represents only parent e-nodes that are:
+  // Strategy A1 first mixes each selected, level-valid parent
+  // e-node ID. It then sets two bitmap bits:
   //
-  //   selected_state[parent] != 0
-  //   level[parent] >= 0
+  //   one bit in the lower half of the bitmap
+  //   one bit in the upper half of the bitmap
   //
-  // Selected children with valid levels probe this bitmap.
-  // A bitmap hit is conservatively treated as overlap without
-  // exact verification.
+  // A selected, level-valid child is treated as an approximate
+  // overlap only when both of its corresponding bits are set.
+  //
+  // A two-bit hit may still be caused by hash collisions and is
+  // conservatively rejected without exact verification.
   //
   // The existing exact Block-Batch implementation remains
   // unchanged and is selected when BITMAP_BITS == 0.
@@ -878,12 +880,12 @@ private:
     uint32_t bitmap_mask,
     uint32_t bitmap_words);
 
-  // Block-cooperative direct insertion using a runtime-sized
-  // shared-memory bitmap for approximate overlap detection.
+  // Block-cooperative direct insertion using the same
+  // runtime-sized shared-memory Strategy-A1 bitmap as the
+  // Block-Batch implementation.
   //
-  // Only selected parent e-nodes with valid levels populate the
-  // bitmap. Only selected child e-nodes with valid levels probe
-  // it.
+  // Only selected, level-valid parents set their two A1 bits.
+  // Only selected, level-valid children probe those two bits.
   //
   // One CUDA block evaluates one candidate.
   void _gpu_dag_insert_block_bitmap_direct(
