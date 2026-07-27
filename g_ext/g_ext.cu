@@ -5459,14 +5459,16 @@ void G_EXT::_gpu_dag_insert_warp_bitmap32_batch(
       "initialized GPU DAG buffers");
   }
 
-  // Phase 1 intentionally preserves the 256-lane Warp
-  // Bitmap mapping. After the Exact/Block-Bitmap split is
-  // validated, Phase 2 changes this to
-  // kGpuDagBitmapBatchSize.
+  // Warp Bitmap-32 limits the number of concurrent
+  // transposed candidate lanes to improve solution stability.
+  //
+  // This changes only the candidate-lane batch mapping.
+  // threads_per_block and the number of CUDA threads assigned
+  // to each candidate warp remain unchanged.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagExactBatchSize - 1u) /
-    kGpuDagExactBatchSize;
+     kGpuDagBitmapBatchSize - 1u) /
+    kGpuDagBitmapBatchSize;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -5572,14 +5574,16 @@ void G_EXT::_gpu_dag_insert_warp_bitmap64_batch(
       "initialized GPU DAG buffers");
   }
 
-  // Phase 1 intentionally preserves the 256-lane Warp
-  // Bitmap mapping. After the Exact/Block-Bitmap split is
-  // validated, Phase 2 changes this to
-  // kGpuDagBitmapBatchSize.
+  // Warp Bitmap-64 limits the number of concurrent
+  // transposed candidate lanes to improve solution stability.
+  //
+  // This changes only the candidate-lane batch mapping.
+  // threads_per_block and the number of CUDA threads assigned
+  // to each candidate warp remain unchanged.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagExactBatchSize - 1u) /
-    kGpuDagExactBatchSize;
+     kGpuDagBitmapBatchSize - 1u) /
+    kGpuDagBitmapBatchSize;
 
   const uint32_t candidate_lanes =
     (_num_ende +
