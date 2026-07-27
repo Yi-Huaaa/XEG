@@ -759,8 +759,8 @@ private:
   // Single-block transposed-batch live optimistic insertion.
   //
   // One call scans all e-node slots inside one single-block
-  // kernel. The kernel processes transposed batches
-  // sequentially using kGpuDagBatchSize lanes.
+  // kernel. Exact Thread insertion processes transposed batches
+  // sequentially using the configured exact batch size.
   //
   // Candidate IDs are assigned using a deterministic
   // full-transpose mapping so neighboring IDs are spread

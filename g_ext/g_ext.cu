@@ -49,7 +49,24 @@ namespace {
 
 constexpr uint32_t kGpuThreads = 512u;
 constexpr uint32_t kGpuReachabilityThreads = 256u;
-constexpr uint32_t kGpuDagBatchSize = 32u; // Note: this must be 256 to ensure the solution quality
+
+// Exact overlap insertion preserves the original 256-lane
+// transposed-batch policy.
+constexpr uint32_t kGpuDagExactBatchSize = 256u;
+
+// Bitmap overlap insertion uses fewer concurrent candidate
+// lanes to stabilize solution quality. This does not change
+// the CUDA threads assigned to each Block candidate.
+constexpr uint32_t kGpuDagBitmapBatchSize = 32u;
+
+static_assert(
+  kGpuDagExactBatchSize > 0u &&
+  kGpuDagExactBatchSize <= 1024u,
+  "Exact DAG batch size must be a valid CUDA block size");
+
+static_assert(
+  kGpuDagBitmapBatchSize > 0u,
+  "Bitmap DAG batch size must be positive");
 
 // Compile-time controller for GPU DAG levelization.
 //
@@ -165,6 +182,25 @@ static_assert(
   kGpuDagLowActivityMinimumIterations >=
     kGpuDagLowActivityPatience,
   "Minimum iterations should cover the low-activity streak");
+
+// ============================================================
+// Bitmap direct-mode iteration limit
+//
+// This limit applies only when:
+//
+//   1. the configured DAG kernel is Warp or Block
+//   2. bitmap overlap detection is enabled
+//   3. the controller has entered Direct mode
+//
+// Exact overlap detection remains convergence-driven and is
+// not limited by this parameter.
+// ============================================================
+constexpr uint32_t
+  kGpuDagBitmapMaxDirectIterations = 5u;
+
+static_assert(
+  kGpuDagBitmapMaxDirectIterations > 0u,
+  "Bitmap direct iteration limit must be positive");
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -2232,21 +2268,21 @@ void G_EXT::_gpu_dag_insert_batch(
       "initialized GPU DAG buffers");
   }
 
-  // Keep the original batch-count calculation.
+  // Keep the original exact batch-count calculation.
   //
-  // kGpuDagBatchSize is both:
+  // kGpuDagExactBatchSize is both:
   //   1. the number of threads in the single block
   //   2. the number of candidate lanes per transposed batch
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBatchSize - 1u) /
-    kGpuDagBatchSize;
+     kGpuDagExactBatchSize - 1u) /
+    kGpuDagExactBatchSize;
 
   // Launch one single-block kernel for the entire insertion
   // phase. The kernel processes all batch_index values
   // sequentially and synchronizes after every batch.
   _gpu_dag_insert_batch_kl
-    <<<1u, kGpuDagBatchSize>>>(
+    <<<1u, kGpuDagExactBatchSize>>>(
       _num_ende,
       num_batches,
       is_top_down_insertion,
@@ -3065,13 +3101,13 @@ void G_EXT::_gpu_dag_insert_block_batch(
   // Preserve the existing 256-lane transposed Batch mapping.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBatchSize - 1u) /
-    kGpuDagBatchSize;
+     kGpuDagExactBatchSize - 1u) /
+    kGpuDagExactBatchSize;
 
   // Launch only candidate-lane blocks that own at least one
   // valid candidate.
   //
-  // candidate_lanes is at most kGpuDagBatchSize.
+  // candidate_lanes is at most kGpuDagExactBatchSize.
   const uint32_t candidate_lanes =
     (_num_ende +
      num_batches - 1u) /
@@ -3830,10 +3866,14 @@ void G_EXT::_gpu_dag_insert_block_bitmap_batch(
       "an invalid bitmap word count");
   }
 
+  // Bitmap Block insertion limits the number of concurrent
+  // transposed candidate lanes to improve solution stability.
+  // This does not change threads_per_candidate; a 64-thread
+  // Block candidate still launches with 64 CUDA threads.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBatchSize - 1u) /
-    kGpuDagBatchSize;
+     kGpuDagBitmapBatchSize - 1u) /
+    kGpuDagBitmapBatchSize;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -4438,10 +4478,14 @@ void G_EXT::_gpu_dag_insert_warp_batch(
   }
 
   // Keep the existing 256-lane transposed Batch mapping.
+  // Bitmap Block insertion limits the number of concurrent
+  // transposed candidate lanes to improve solution stability.
+  // This does not change threads_per_candidate; a 64-thread
+  // Block candidate still launches with 64 CUDA threads.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBatchSize - 1u) /
-    kGpuDagBatchSize;
+     kGpuDagExactBatchSize - 1u) /
+    kGpuDagExactBatchSize;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -5415,10 +5459,14 @@ void G_EXT::_gpu_dag_insert_warp_bitmap32_batch(
       "initialized GPU DAG buffers");
   }
 
+  // Phase 1 intentionally preserves the 256-lane Warp
+  // Bitmap mapping. After the Exact/Block-Bitmap split is
+  // validated, Phase 2 changes this to
+  // kGpuDagBitmapBatchSize.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBatchSize - 1u) /
-    kGpuDagBatchSize;
+     kGpuDagExactBatchSize - 1u) /
+    kGpuDagExactBatchSize;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -5524,10 +5572,14 @@ void G_EXT::_gpu_dag_insert_warp_bitmap64_batch(
       "initialized GPU DAG buffers");
   }
 
+  // Phase 1 intentionally preserves the 256-lane Warp
+  // Bitmap mapping. After the Exact/Block-Bitmap split is
+  // validated, Phase 2 changes this to
+  // kGpuDagBitmapBatchSize.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBatchSize - 1u) /
-    kGpuDagBatchSize;
+     kGpuDagExactBatchSize - 1u) /
+    kGpuDagExactBatchSize;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -7102,6 +7154,19 @@ void G_EXT::_gpu_DAG_construction(
   uint32_t batch_iterations = 0u;
   uint32_t direct_iterations = 0u;
 
+  // Enable the finite Direct-mode limit only for the two bitmap
+  // implementations:
+  //
+  //   Warp  + BITMAP_BITS > 0
+  //   Block + BITMAP_BITS > 0
+  //
+  // Exact Warp, Exact Block, and Thread insertion continue until
+  // the original host_u0 == 0 convergence condition is reached.
+  const bool bitmap_direct_limit_enabled =
+    _dag_bitmap_bits > 0u &&
+    (_dag_kernel == DagKernel::Warp ||
+    _dag_kernel == DagKernel::Block);
+
   // Largest survived insertion count observed during batch
   // insertion.
   uint32_t peak_survived = 0u;
@@ -7122,12 +7187,43 @@ void G_EXT::_gpu_DAG_construction(
   // low-activity condition is reached.
   bool batch_early_stop_triggered = false;
 
+  // Records termination caused by the Bitmap Direct-mode
+  // iteration limit.
+  //
+  // This flag is set only when:
+  //
+  //   direct_iterations has reached the configured limit
+  //   host_u0 is still greater than zero
+  //
+  // If the fifth Direct iteration naturally produces host_u0 ==
+  // zero, termination is still reported as ordinary convergence.
+  bool bitmap_direct_limit_triggered = false;
+
   // BatchThenDirect records the Batch -> Direct transition.
   bool switched_to_direct = false;
   uint32_t switch_iteration = 0u;
   uint32_t switch_survived = 0u;
 
   while (host_u0 > 0u) {
+    // Bitmap Warp/Block Direct mode executes at most
+    // kGpuDagBitmapMaxDirectIterations complete outer
+    // iterations.
+    //
+    // This check is placed at the beginning of the loop so that:
+    //
+    //   direct_iterations == 0 -> Direct iteration 1 may run
+    //   direct_iterations == 4 -> Direct iteration 5 may run
+    //   direct_iterations == 5 -> stop before iteration 6
+    //
+    // Exact modes never enter this branch because
+    // bitmap_direct_limit_enabled is false.
+    if (bitmap_direct_limit_enabled &&
+        use_direct_mode &&
+        direct_iterations >=
+          kGpuDagBitmapMaxDirectIterations) {
+      bitmap_direct_limit_triggered = true;
+      break;
+    }
     // Keep one insertion mode for both the bottom-up and
     // top-down phases of this complete outer iteration.
     const bool iteration_uses_direct =
@@ -7409,6 +7505,18 @@ void G_EXT::_gpu_DAG_construction(
       break;
   }
 
+  const char* termination_reason =
+    "converged";
+
+  if (batch_early_stop_triggered) {
+    termination_reason =
+      "low-activity-stop";
+  }
+  else if (bitmap_direct_limit_triggered) {
+    termination_reason =
+      "bitmap-direct-limit";
+  }
+
   printf(
     "[GPU DAG Outer Loop] "
     "policy=%s, "
@@ -7427,9 +7535,7 @@ void G_EXT::_gpu_DAG_construction(
     outer_iteration,
     batch_iterations,
     direct_iterations,
-    batch_early_stop_triggered
-      ? "low-activity-stop"
-      : "converged",
+    termination_reason,
     peak_survived,
     host_u0,
     low_activity_threshold,

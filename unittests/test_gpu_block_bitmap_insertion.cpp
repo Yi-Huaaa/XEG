@@ -96,49 +96,48 @@ nlohmann::json make_indexed_graph(
 
 // Create this graph:
 //
-//   selected parent ID 1
+//   selected parent ID 7
 //            |
 //            v
 //      candidate ID 0
 //            |
 //            v
-//   selected child ID 33
+//   selected child ID 35
 //
 // Candidate 0 has:
 //
-//   selected parent ID = 1,  level = 0
-//   selected child  ID = 33, level = 2
+//   selected parent ID = 7,  level = 0
+//   selected child  ID = 35, level = 2
 //
 // Exact overlap:
 //
-//   1 != 33
+//   7 != 35
 //
-// 32-bit bitmap:
+// Under the current two-probe mixed hash, Bitmap-32 produces:
 //
-//   1  & 31 = 1
-//   33 & 31 = 1
+//   node 7  -> probes {6, 27}
+//   node 35 -> probes {6, 27}
 //
-// Therefore a 32-bit bitmap conservatively rejects candidate 0
-// because of a real hash collision between one selected valid
-// parent and one selected valid child.
+// Therefore Bitmap-32 conservatively rejects candidate 0
+// because both probes collide.
 //
-// Bitmap sizes >= 64 distinguish IDs 1 and 33.
+// Bitmap sizes >= 64 distinguish IDs 7 and 35.
 nlohmann::json make_selected_parent_collision_graph()
 {
   constexpr uint32_t kNumNodes =
-    34u;
+    36u;
 
   nlohmann::json graph =
     make_indexed_graph(
       kNumNodes);
 
-  // Parent ID 1 -> candidate ID 0.
-  graph["nodes"]["n01"]["children"].push_back(
+  // Parent ID 7 -> candidate ID 0.
+  graph["nodes"]["n07"]["children"].push_back(
     "n00");
 
-  // Candidate ID 0 -> child ID 33.
+  // Candidate ID 0 -> child ID 35.
   graph["nodes"]["n00"]["children"].push_back(
-    "n33");
+    "n35");
 
   return graph;
 }
@@ -368,15 +367,15 @@ make_selected_parent_collision_state()
 {
   std::vector<uint32_t>
     selected_state(
-      34u,
+      36u,
       0u);
 
-  // Selected valid parent ID 1.
-  selected_state[1u] =
+  // Selected valid parent ID 7.
+  selected_state[7u] =
     1u;
 
-  // Selected valid child ID 33.
-  selected_state[33u] =
+  // Selected valid child ID 35.
+  selected_state[35u] =
     1u;
 
   return selected_state;
@@ -388,13 +387,13 @@ make_selected_parent_collision_level()
 {
   std::vector<int>
     level(
-      34u,
+      36u,
       -1);
 
-  level[1u] =
+  level[7u] =
     0;
 
-  level[33u] =
+  level[35u] =
     2;
 
   return level;
@@ -631,10 +630,11 @@ TEST_CASE(
        thread_counts) {
     for (const uint32_t bitmap_bits :
          bitmap_sizes) {
-      // Exact mode accepts because IDs 1 and 33 differ.
+      // Exact mode accepts because IDs 7 and 35 differ.
       //
-      // A 32-bit bitmap rejects because both selected valid
-      // IDs hash to bit 1.
+      // Under the current mixed two-probe hash, Bitmap-32
+      // maps both IDs to probes {6, 27} and conservatively
+      // rejects the candidate.
       //
       // Every larger bitmap distinguishes the two IDs.
       const bool expect_accepted =
