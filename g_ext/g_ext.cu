@@ -49,7 +49,7 @@ namespace {
 
 constexpr uint32_t kGpuThreads = 512u;
 constexpr uint32_t kGpuReachabilityThreads = 256u;
-constexpr uint32_t kGpuDagBatchSize = 256u; // Note: this must be 256 to ensure the solution quality
+constexpr uint32_t kGpuDagBatchSize = 32u; // Note: this must be 256 to ensure the solution quality
 
 // Compile-time controller for GPU DAG levelization.
 //
@@ -71,7 +71,7 @@ constexpr uint32_t
 // persistent mode. This prevents switching because of one short,
 // temporary dip in frontier width.
 constexpr uint32_t
-  kGpuDagPersistentRequiredSmallLevels = 8u;
+  kGpuDagPersistentRequiredSmallLevels = 8u; // 8 is good
 
 // The persistent kernel processes frontiers up to this width.
 // A wider frontier is left unprocessed and returned to the host,
