@@ -1,4 +1,5 @@
 #include "g_ext.cuh"
+#include <cuda/atomic>
 
 #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
 
@@ -385,6 +386,483 @@ void G_EXT::_validate_block_bitmap_bits(
       "Block DAG bitmap size must be one of: "
       "0, 32, 64, 128, 256, 512, 1024, 2048");
   }
+}
+
+void G_EXT::_run_impl(
+  const bool ILP_solver,
+  const double ILP_time_limit,
+  const DagKernel dag_kernel,
+  const uint32_t num_thread_dag_constrution,
+  const uint32_t dag_bitmap_bits,
+  const CpsatInitialSolutionMode initial_solution_mode,
+  const uint32_t random_seed)
+{
+  switch (dag_kernel) {
+    case DagKernel::Thread:
+      if (num_thread_dag_constrution != 1u) {
+        throw std::invalid_argument(
+          "Thread DAG kernel requires exactly "
+          "one thread per candidate");
+      }
+
+      if (dag_bitmap_bits != 0u) {
+        throw std::invalid_argument(
+          "Thread DAG kernel requires "
+          "BITMAP_BITS=0");
+      }
+
+      break;
+
+    case DagKernel::Warp:
+      _validate_warp_threads_per_block(
+        num_thread_dag_constrution);
+
+      _validate_warp_bitmap_bits(
+        dag_bitmap_bits);
+
+      break;
+
+    case DagKernel::Block:
+      _validate_block_threads_per_candidate(
+        num_thread_dag_constrution);
+
+      _validate_block_bitmap_bits(
+        dag_bitmap_bits);
+
+      break;
+
+    default:
+      throw std::invalid_argument(
+        "Invalid DagKernel value");
+  }
+
+  _dag_kernel =
+    dag_kernel;
+
+  _dag_threads_per_candidate =
+    num_thread_dag_constrution;
+
+  _dag_bitmap_bits =
+    dag_bitmap_bits;
+
+  _dag_bitmap_mask =
+    dag_bitmap_bits == 0u
+      ? 0u
+      : dag_bitmap_bits - 1u;
+
+  _dag_bitmap_words =
+    dag_bitmap_bits / 32u;
+
+  // CPU version
+  std::vector<double> cost_of_ecls; // Final cost of each eclass
+  std::vector<double> cost_of_ende; // Final cost of each enode
+  std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
+  std::vector<bool> picked_endes;
+  std::chrono::duration<double> duration;
+  auto start = std::chrono::steady_clock::now(); 
+    auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_tree_construction(
+      _ende_cost, 
+      cost_of_ecls, 
+      cost_of_ende, 
+      best_ende_of_ecls, 
+      picked_endes);
+  auto end = std::chrono::steady_clock::now();
+  duration = end - start;
+  std::cout << "CPU tree construction runtime: " << 
+    round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
+  printf("CPU version cost:\n\tunder tree code model = %.2lf, \
+    \n\tunder DAG cost model = %.2lf\n", 
+    best_tree_cost_cpu, dag_cost_cpu);
+
+  std::vector<bool> picked_endes_tmp = picked_endes;
+
+  start = std::chrono::steady_clock::now();
+
+  _cpu_DAG_construction(picked_endes);
+  // _cpu_DAG_construction_mt_bitmap(picked_endes);
+
+  end = std::chrono::steady_clock::now();
+  duration = end - start;
+
+  std::cout
+    << "CPU DAG construction runtime: "
+    << round_to(
+          duration.count() * 1000,
+          0.01)
+    << " (ms)\n";
+
+  // Debug statistics are outside the measured runtime.
+  uint32_t cpu_tree_selected = 0u;
+  uint32_t cpu_dag_selected = 0u;
+  uint32_t cpu_filtered = 0u;
+
+  for (bool selected : picked_endes_tmp) {
+    cpu_tree_selected += selected ? 1u : 0u;
+  }
+
+  for (bool selected : picked_endes) {
+    cpu_dag_selected += selected ? 1u : 0u;
+  }
+
+  for (bool selected : _in_subgraph) {
+    cpu_filtered += selected ? 1u : 0u;
+  }
+
+  printf(
+    "[CPU DAG Debug] tree=%u, expanded=%u, filtered=%u\n",
+    cpu_tree_selected,
+    cpu_dag_selected,
+    cpu_filtered);    
+
+  // if (ILP_solver) {
+  //   _cpsat_solver(
+  //     ILP_time_limit, 
+  //     _ecls_its_ende_newG, 
+  //     _ende_child, 
+  //     _ende_child_ptr, 
+  //     _root_eclass_id, 
+  //     _ende_cost,
+  //     best_ende_of_ecls, 
+  //     picked_endes_tmp); 
+  // }
+
+  // GPU version starts
+  auto [best_tree_cost_gpu, dag_cost_gpu] =
+    _gpu_tree_construction();
+
+  printf(
+    "GPU version cost:\n"
+    "\tunder tree cost model = %.2lf,\n"
+    "\tunder DAG cost model = %.2lf\n",
+    best_tree_cost_gpu,
+    dag_cost_gpu);
+
+  // Save the GPU tree solution before DAG construction
+  // expands _dvc_picked_endes.
+  std::vector<uint32_t> best_ende_of_ecls_gpu;
+  std::vector<bool> picked_endes_gpu;
+
+  if (ILP_solver) {
+    _copy_best_ende_of_ecls_back(
+      best_ende_of_ecls_gpu);
+
+    _copy_pickedende_back(
+      picked_endes_gpu);
+
+    uint32_t gpu_tree_selected = 0u;
+
+    for (bool selected : picked_endes_gpu) {
+      gpu_tree_selected += selected ? 1u : 0u;
+    }
+
+    printf(
+      "[GPU DAG Debug] tree=%u\n",
+      gpu_tree_selected);
+  }
+
+
+  _gpu_allocate_dag_buffers();
+  _gpu_initialize_dag_buffers();
+
+  // GPU DAG insertion policy.
+  //
+  // FullBatch:
+  //   Use batch insertion until full convergence.
+  //
+  // BatchEarlyStop:
+  //   Use batch insertion and stop when the low-activity
+  //   condition is triggered.
+  //
+  // BatchThenDirect:
+  //   Start with batch insertion, then switch permanently
+  //   to direct insertion when the low-activity condition
+  //   is triggered.
+  constexpr GpuDagInsertionPolicy
+    gpu_dag_insertion_policy =
+      GpuDagInsertionPolicy::BatchThenDirect;
+
+  // _dvc_picked_endes still contains the GPU tree produced by
+  // _gpu_tree_construction().
+  _gpu_DAG_construction(
+    gpu_dag_insertion_policy);
+
+  if (ILP_solver) {
+    // Copy the final GPU root-to-leaf filtering mask.
+    std::vector<uint32_t> in_subgraph_gpu(
+      _num_ende,
+      0u);
+
+    if (_num_ende > 0u) {
+      const cudaError_t err = cudaMemcpy(
+        in_subgraph_gpu.data(),
+        _dvc_in_subgraph,
+        static_cast<size_t>(_num_ende) *
+          sizeof(uint32_t),
+        cudaMemcpyDeviceToHost);
+
+      if (err != cudaSuccess) {
+        _gpu_free_dag_buffers();
+
+        throw std::runtime_error(
+          std::string(
+            "Failed to copy GPU in_subgraph: ") +
+          cudaGetErrorString(err));
+      }
+    }
+
+    // Copy the expanded GPU DAG selection for debugging.
+    // This happens after the GPU DAG timer has stopped.
+    std::vector<bool> gpu_dag_selected;
+    _copy_pickedende_back(
+      gpu_dag_selected);
+
+    uint32_t gpu_dag_selected_count = 0u;
+    uint32_t gpu_filtered_count = 0u;
+
+    for (bool selected : gpu_dag_selected) {
+      gpu_dag_selected_count +=
+        selected ? 1u : 0u;
+    }
+
+    for (uint32_t selected : in_subgraph_gpu) {
+      gpu_filtered_count +=
+        selected != 0u ? 1u : 0u;
+    }
+
+    printf(
+      "[GPU DAG Debug] expanded=%u, filtered=%u\n",
+      gpu_dag_selected_count,
+      gpu_filtered_count);
+
+    // Reconstruct the GPU DAG search space for ILP.
+    _ecls_its_ende_newG_GPU.assign(
+      _num_ecls,
+      std::vector<uint32_t>());
+
+    for (uint32_t ecls = 0u;
+          ecls < _num_ecls;
+          ++ecls) {
+      const auto& original_enodes =
+        _ecls_its_ende[ecls];
+
+      auto& gpu_dag_enodes =
+        _ecls_its_ende_newG_GPU[ecls];
+
+      gpu_dag_enodes.reserve(
+        original_enodes.size());
+
+      for (uint32_t ende : original_enodes) {
+        if (in_subgraph_gpu[ende] != 0u) {
+          gpu_dag_enodes.push_back(ende);
+        }
+      }
+    }
+  }
+
+
+  // Free only GPU DAG scratch memory.
+  _gpu_free_dag_buffers();
+
+  // if (ILP_solver) {
+  //   _cpsat_solver(
+  //     ILP_time_limit,
+  //     _ecls_its_ende_newG_GPU,
+  //     _ende_child,
+  //     _ende_child_ptr,
+  //     _root_eclass_id,
+  //     _ende_cost,
+  //     best_ende_of_ecls_gpu,
+  //     picked_endes_gpu);
+  // }
+  
+  if (ILP_solver) {
+    switch (initial_solution_mode) {
+      case CpsatInitialSolutionMode::GpuTree:
+        _cpsat_solver(
+          ILP_time_limit,
+          _ecls_its_ende_newG_GPU,
+          _ende_child,
+          _ende_child_ptr,
+          _root_eclass_id,
+          _ende_cost,
+          best_ende_of_ecls_gpu,
+          picked_endes_gpu);
+        break;
+
+      case CpsatInitialSolutionMode::Random: {
+        std::vector<uint32_t>
+          random_best_ende_of_ecls;
+
+        std::vector<bool>
+          random_picked_endes;
+
+        _build_random_cpsat_initial_solution(
+          random_seed,
+          picked_endes_gpu,
+          random_best_ende_of_ecls,
+          random_picked_endes);
+
+        _cpsat_solver(
+          ILP_time_limit,
+          _ecls_its_ende_newG_GPU,
+          _ende_child,
+          _ende_child_ptr,
+          _root_eclass_id,
+          _ende_cost,
+          random_best_ende_of_ecls,
+          random_picked_endes);
+        break;
+      }
+
+      default:
+        throw std::logic_error(
+          "Invalid CP-SAT initial-solution mode");
+    }
+  }
+  // // GPU version ends
+}
+
+void G_EXT::_build_random_cpsat_initial_solution(
+  const uint32_t random_seed,
+  const std::vector<bool>& picked_endes_gpu,
+  std::vector<uint32_t>& random_best_ende_of_ecls,
+  std::vector<bool>& random_picked_endes) const
+{
+  if (picked_endes_gpu.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::invalid_argument(
+      "picked_endes_gpu size does not match "
+      "the number of e-nodes");
+  }
+
+  if (_ecls_its_ende.size() !=
+      static_cast<size_t>(_num_ecls)) {
+    throw std::logic_error(
+      "Original e-class membership is not initialized");
+  }
+
+  if (_ecls_its_ende_newG_GPU.size() !=
+      static_cast<size_t>(_num_ecls)) {
+    throw std::logic_error(
+      "GPU-pruned CP-SAT search space is not initialized");
+  }
+
+  random_best_ende_of_ecls.assign(
+    _num_ecls,
+    UINT32_MAX);
+
+  // XEG-T requirement:
+  // begin with the GPU-tree picked mask.
+  random_picked_endes =
+    picked_endes_gpu;
+
+  std::mt19937 random_generator(
+    random_seed);
+
+  uint32_t representatives_in_search_space =
+    0u;
+
+  uint32_t representatives_absent_from_search_space =
+    0u;
+
+  uint64_t representative_checksum =
+    1469598103934665603ull;
+
+  for (uint32_t ecls = 0u;
+       ecls < _num_ecls;
+       ++ecls) {
+    // Random representatives must be selected from the
+    // original post-read, pre-DAG-construction e-class.
+    const auto& original_enodes =
+      _ecls_its_ende[ecls];
+
+    if (original_enodes.empty()) {
+      throw std::logic_error(
+        "XEG-T cannot choose a representative "
+        "from an empty e-class");
+    }
+
+    std::uniform_int_distribution<size_t>
+      choose_index(
+        0u,
+        original_enodes.size() - 1u);
+
+    const uint32_t random_ende =
+      original_enodes[
+        choose_index(random_generator)];
+
+    if (random_ende >= _num_ende) {
+      throw std::logic_error(
+        "XEG-T selected an out-of-range e-node");
+    }
+
+    if (_ende_ecls[random_ende] != ecls) {
+      throw std::logic_error(
+        "XEG-T selected an e-node from the wrong e-class");
+    }
+
+    random_best_ende_of_ecls[ecls] =
+      random_ende;
+
+    representative_checksum ^=
+      static_cast<uint64_t>(random_ende);
+
+    representative_checksum *=
+      1099511628211ull;
+
+    // Keep the copied GPU-tree mask, then add every random
+    // representative to it.
+    random_picked_endes[random_ende] =
+      true;
+
+    // Diagnostic only. Do not resample when absent.
+    const auto& pruned_enodes =
+      _ecls_its_ende_newG_GPU[ecls];
+
+    const bool representative_is_present =
+      std::find(
+        pruned_enodes.begin(),
+        pruned_enodes.end(),
+        random_ende) !=
+      pruned_enodes.end();
+
+    if (representative_is_present) {
+      ++representatives_in_search_space;
+    }
+    else {
+      ++representatives_absent_from_search_space;
+    }
+  }
+
+  uint32_t unique_random_representatives =
+    0u;
+
+  std::vector<uint32_t> representative_seen(
+    _num_ende,
+    0u);
+
+  for (uint32_t random_ende :
+       random_best_ende_of_ecls) {
+    if (representative_seen[random_ende] == 0u) {
+      representative_seen[random_ende] = 1u;
+      ++unique_random_representatives;
+    }
+  }
+
+  printf(
+    "[XEG-T] random_seed=%u, "
+    "representatives=%u, "
+    "unique=%u, "
+    "in_pruned_search_space=%u, "
+    "absent_from_pruned_search_space=%u, "
+    "checksum=%llu\n",
+    random_seed,
+    _num_ecls,
+    unique_random_representatives,
+    representatives_in_search_space,
+    representatives_absent_from_search_space,
+    static_cast<unsigned long long>(
+      representative_checksum));
 }
 
 // G_EXT fucntions
@@ -3389,6 +3867,370 @@ bool gpu_dag_block_bitmap_contains(
     second_hit;
 }
 
+// __device__ __forceinline__
+// void gpu_dag_process_block_bitmap_candidate(
+//   const uint32_t u,
+//   const bool is_top_down_insertion,
+//   uint32_t* selected_state,
+//   const uint32_t* forward_adj,
+//   const uint32_t* forward_adj_ptr,
+//   const uint32_t* inverse_adj,
+//   const uint32_t* inverse_adj_ptr,
+//   int* level,
+//   uint32_t* u0,
+//   GpuDagBlockThreadScratch* scratch,
+//   uint32_t* candidate_active,
+//   uint32_t* parent_bitmap,
+//   const uint32_t bitmap_mask,
+//   const uint32_t bitmap_words)
+// {
+//   const uint32_t lane =
+//     threadIdx.x;
+
+//   // ----------------------------------------------------------
+//   // Candidate activity and bitmap initialization
+//   //
+//   // Thread 0 snapshots candidate activity.
+//   //
+//   // At the same time, all threads cooperatively clear the
+//   // runtime-sized bitmap.
+//   //
+//   // The following __syncthreads() publishes both:
+//   //
+//   //   candidate_active
+//   //   cleared parent_bitmap
+//   //
+//   // Therefore bitmap initialization does not require its own
+//   // additional barrier.
+//   // ----------------------------------------------------------
+//   if (lane == 0u) {
+//     *candidate_active =
+//       atomicAdd(
+//         &selected_state[u],
+//         0u) == 0u
+//         ? 1u
+//         : 0u;
+//   }
+
+//   for (uint32_t word = lane;
+//        word < bitmap_words;
+//        word += blockDim.x) {
+//     parent_bitmap[word] =
+//       0u;
+//   }
+
+//   __syncthreads();
+
+//   // Uniform return because all threads read the same shared
+//   // candidate_active value.
+//   if (*candidate_active == 0u) {
+//     return;
+//   }
+
+//   const uint32_t parent_begin =
+//     inverse_adj_ptr[u];
+
+//   const uint32_t parent_end =
+//     inverse_adj_ptr[u + 1u];
+
+//   const uint32_t child_begin =
+//     forward_adj_ptr[u];
+
+//   const uint32_t child_end =
+//     forward_adj_ptr[u + 1u];
+
+//   GpuDagBlockThreadScratch local{
+//     -1,
+//     INT_MAX,
+//     0u
+//   };
+
+//   // ----------------------------------------------------------
+//   // Cooperative selected-parent scan
+//   //
+//   // Match the exact Block evaluator's participating set:
+//   //
+//   //   selected_state[parent] != 0
+//   //   level[parent] >= 0
+//   //
+//   // Only a parent satisfying both conditions is:
+//   //
+//   //   1. counted as a selected parent
+//   //   2. used to update max_parent_level
+//   //   3. inserted into the approximate overlap bitmap
+//   //
+//   // Unselected parents and parents with invalid levels must not
+//   // populate the bitmap. Otherwise they can create artificial
+//   // false-positive overlap rejections unrelated to the exact
+//   // selected parent-child sets.
+//   // ----------------------------------------------------------
+//   for (uint32_t position =
+//          parent_begin + lane;
+//        position < parent_end;
+//        position += blockDim.x) {
+//     const uint32_t parent =
+//       inverse_adj[position];
+
+//     const uint32_t parent_state =
+//       atomicAdd(
+//         &selected_state[parent],
+//         0u);
+
+//     if (parent_state == 0u) {
+//       continue;
+//     }
+
+//     const int parent_level =
+//       atomicAdd(
+//         &level[parent],
+//         0);
+
+//     if (parent_level < 0) {
+//       continue;
+//     }
+
+//     // Only selected parents with valid levels participate in
+//     // Strategy-A1 approximate overlap detection.
+//     //
+//     // gpu_dag_block_bitmap_insert() mixes this parent ID and
+//     // sets one bit in each half of the bitmap.
+//     //
+//     // This call must remain after both checks above. Moving it
+//     // before either check allows inactive or invalid parents to
+//     // pollute the bitmap and reject otherwise legal candidates.
+//     gpu_dag_block_bitmap_insert(
+//       parent_bitmap,
+//       parent,
+//       bitmap_mask);
+
+//     local.flags |=
+//       kGpuDagBlockHasSelectedParent;
+
+//     if (parent_level >
+//         local.max_parent_level) {
+//       local.max_parent_level =
+//         parent_level;
+//     }
+//   }
+
+//   // Every parent bitmap update must complete before any child
+//   // thread probes the bitmap.
+//   //
+//   // This is the one additional block-wide barrier required by
+//   // the Bitmap evaluator.
+//   __syncthreads();
+
+//   // ----------------------------------------------------------
+//   // Cooperative child scan
+//   //
+//   // Preserve the existing selected-child semantics:
+//   //
+//   //   selected_state[child] != 0
+//   //   level[child] >= 0
+//   //
+//   // Only such children contribute to:
+//   //
+//   //   has_selected_child
+//   //   min_child_level
+//   //   overlap detection
+//   // ----------------------------------------------------------
+//   for (uint32_t position =
+//          child_begin + lane;
+//        position < child_end;
+//        position += blockDim.x) {
+//     const uint32_t child =
+//       forward_adj[position];
+
+//     const uint32_t child_state =
+//       atomicAdd(
+//         &selected_state[child],
+//         0u);
+
+//     if (child_state == 0u) {
+//       continue;
+//     }
+
+//     const int child_level =
+//       atomicAdd(
+//         &level[child],
+//         0);
+
+//     if (child_level < 0) {
+//       continue;
+//     }
+
+//     local.flags |=
+//       kGpuDagBlockHasSelectedChild;
+
+//     if (child_level <
+//         local.min_child_level) {
+//       local.min_child_level =
+//         child_level;
+//     }
+
+//     // Strategy-A1 approximate overlap detection.
+//     //
+//     // The child ID is mixed using the same function as the
+//     // parents. The candidate is rejected only when both the
+//     // lower-half and upper-half probes hit.
+//     //
+//     // A two-probe hit may be:
+//     //
+//     //   true overlap
+//     //   two-bit hash collision
+//     //   two bits populated by different parents
+//     //
+//     // No exact verification is performed.
+//     if (gpu_dag_block_bitmap_contains(
+//           parent_bitmap,
+//           child,
+//           bitmap_mask)) {
+//       local.flags |=
+//         kGpuDagBlockHasSelectedOverlap;
+//     }
+//   }
+
+//   // ----------------------------------------------------------
+//   // The remainder is intentionally copied from the existing
+//   // exact Block evaluator.
+//   //
+//   // Do not factor this into a shared helper during the first
+//   // implementation, because that would modify the Exact path.
+//   // ----------------------------------------------------------
+//   scratch[lane] =
+//     local;
+
+//   __syncthreads();
+
+//   for (uint32_t stride =
+//          blockDim.x / 2u;
+//        stride > 0u;
+//        stride >>= 1u) {
+//     if (lane < stride) {
+//       const GpuDagBlockThreadScratch other =
+//         scratch[lane + stride];
+
+//       if (other.max_parent_level >
+//           scratch[lane].max_parent_level) {
+//         scratch[lane].max_parent_level =
+//           other.max_parent_level;
+//       }
+
+//       if (other.min_child_level <
+//           scratch[lane].min_child_level) {
+//         scratch[lane].min_child_level =
+//           other.min_child_level;
+//       }
+
+//       scratch[lane].flags |=
+//         other.flags;
+//     }
+
+//     __syncthreads();
+//   }
+
+//   if (lane == 0u) {
+//     const GpuDagBlockThreadScratch summary =
+//       scratch[0];
+
+//     const bool has_selected_parent =
+//       (summary.flags &
+//        kGpuDagBlockHasSelectedParent) != 0u;
+
+//     const bool has_selected_child =
+//       (summary.flags &
+//        kGpuDagBlockHasSelectedChild) != 0u;
+
+//     const bool has_selected_overlap =
+//       (summary.flags &
+//        kGpuDagBlockHasSelectedOverlap) != 0u;
+
+//     bool valid =
+//       !has_selected_overlap &&
+//       summary.max_parent_level <
+//         summary.min_child_level;
+
+//     int proposed_level =
+//       -1;
+
+//     if (valid &&
+//         is_top_down_insertion) {
+//       valid =
+//         has_selected_parent;
+
+//       if (valid) {
+//         proposed_level =
+//           summary.max_parent_level + 1;
+//       }
+//     }
+//     else if (valid) {
+//       valid =
+//         has_selected_child;
+
+//       if (valid) {
+//         proposed_level =
+//           summary.min_child_level - 1;
+//       }
+//     }
+
+//     valid =
+//       valid &&
+//       proposed_level >= 0;
+
+//     if (valid) {
+//       // Preserve the existing live optimistic publication
+//       // order.
+//       //
+//       // Do not add __threadfence().
+//       level[u] =
+//         proposed_level;
+
+//       if (atomicCAS(
+//             &selected_state[u],
+//             0u,
+//             2u) == 0u) {
+//         atomicAdd(
+//           u0,
+//           1u);
+//       }
+//     }
+//   }
+
+//   // Required by Block-Batch before the same CUDA block reuses
+//   // its scratch and bitmap storage for the next candidate.
+//   __syncthreads();
+// }
+
+// 20270730 hua test start
+
+template <typename T>
+__device__ __forceinline__
+T gpu_atomic_load_relaxed(
+  T* ptr)
+{
+  cuda::atomic_ref<
+    T,
+    cuda::thread_scope_device> ref(*ptr);
+
+  return ref.load(
+    cuda::memory_order_relaxed);
+}
+
+template <typename T>
+__device__ __forceinline__
+void gpu_atomic_store_relaxed(
+  T* ptr,
+  const T value)
+{
+  cuda::atomic_ref<
+    T,
+    cuda::thread_scope_device> ref(*ptr);
+
+  ref.store(
+    value,
+    cuda::memory_order_relaxed);
+}
+
 __device__ __forceinline__
 void gpu_dag_process_block_bitmap_candidate(
   const uint32_t u,
@@ -3427,9 +4269,7 @@ void gpu_dag_process_block_bitmap_candidate(
   // ----------------------------------------------------------
   if (lane == 0u) {
     *candidate_active =
-      atomicAdd(
-        &selected_state[u],
-        0u) == 0u
+      selected_state[u] == 0u
         ? 1u
         : 0u;
   }
@@ -3511,6 +4351,18 @@ void gpu_dag_process_block_bitmap_candidate(
       continue;
     }
 
+    // const uint32_t parent_state =
+    //   atomicAdd(
+    //     &selected_state[parent],
+    //     0u);
+
+    // const int parent_level =
+    //   level[parent];
+
+    // if (parent_level < 0) {
+    //   continue;
+    // }
+
     // Only selected parents with valid levels participate in
     // Strategy-A1 approximate overlap detection.
     //
@@ -3563,23 +4415,37 @@ void gpu_dag_process_block_bitmap_candidate(
     const uint32_t child =
       forward_adj[position];
 
+    // const uint32_t child_state =
+    //   atomicAdd(
+    //     &selected_state[child],
+    //     0u);
+
+    // if (child_state == 0u) {
+    //   continue;
+    // }
+
+    // const int child_level =
+    //   atomicAdd(
+    //     &level[child],
+    //     0);
+
+    // if (child_level < 0) {
+    //   continue;
+    // }
+
     const uint32_t child_state =
-      atomicAdd(
-        &selected_state[child],
-        0u);
+      selected_state[child];
 
     if (child_state == 0u) {
       continue;
     }
 
     const int child_level =
-      atomicAdd(
-        &level[child],
-        0);
+      level[child];
 
     if (child_level < 0) {
       continue;
-    }
+    }    
 
     local.flags |=
       kGpuDagBlockHasSelectedChild;
@@ -3716,12 +4582,27 @@ void gpu_dag_process_block_bitmap_candidate(
           1u);
       }
     }
+    // if (valid) {
+    //   gpu_atomic_store_relaxed(
+    //     &level[u],
+    //     proposed_level);
+
+    //   gpu_atomic_store_relaxed(
+    //     &selected_state[u],
+    //     2u);
+
+    //   // Many candidate blocks update the same counter.
+    //   atomicAdd(
+    //     u0,
+    //     1u);
+    // }    
   }
 
   // Required by Block-Batch before the same CUDA block reuses
   // its scratch and bitmap storage for the next candidate.
   __syncthreads();
 }
+// 20270730 hua test end
 
 
 __global__ void _gpu_dag_insert_block_bitmap_batch_kl(

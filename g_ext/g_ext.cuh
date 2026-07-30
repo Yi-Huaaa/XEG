@@ -1,5 +1,6 @@
 #ifndef EXT_GPU_H
 #define EXT_GPU_H
+#include <algorithm>
 #include <climits>
 #include <fstream>
 #include <iostream>
@@ -73,6 +74,12 @@ static_assert(
 }  // namespace g_ext_detail
 
 class G_EXT {
+
+private:
+  enum class CpsatInitialSolutionMode : uint32_t {
+    GpuTree = 0u,
+    Random = 1u,
+  };
 
 public:
   // Read input file
@@ -309,292 +316,38 @@ public:
     return std::round(value / precision) * precision;
   }
   
-
   void run(
     const bool ILP_solver = false,
     const double ILP_time_limit = 360,
     DagKernel dag_kernel = DagKernel::Thread,
     uint32_t num_thread_dag_constrution = 1u,
-    uint32_t dag_bitmap_bits = 0u)  
+    uint32_t dag_bitmap_bits = 0u)
   {
-    switch (dag_kernel) {
-      case DagKernel::Thread:
-        if (num_thread_dag_constrution != 1u) {
-          throw std::invalid_argument(
-            "Thread DAG kernel requires exactly "
-            "one thread per candidate");
-        }
+    _run_impl(
+      ILP_solver,
+      ILP_time_limit,
+      dag_kernel,
+      num_thread_dag_constrution,
+      dag_bitmap_bits,
+      CpsatInitialSolutionMode::GpuTree,
+      0u);
+  }
 
-        if (dag_bitmap_bits != 0u) {
-          throw std::invalid_argument(
-            "Thread DAG kernel requires "
-            "BITMAP_BITS=0");
-        }
-
-        break;
-
-      case DagKernel::Warp:
-        _validate_warp_threads_per_block(
-          num_thread_dag_constrution);
-
-        _validate_warp_bitmap_bits(
-          dag_bitmap_bits);
-
-        break;
-
-      case DagKernel::Block:
-        _validate_block_threads_per_candidate(
-          num_thread_dag_constrution);
-
-        _validate_block_bitmap_bits(
-          dag_bitmap_bits);
-
-        break;
-
-      default:
-        throw std::invalid_argument(
-          "Invalid DagKernel value");
-    }
-
-    _dag_kernel =
-      dag_kernel;
-
-    _dag_threads_per_candidate =
-      num_thread_dag_constrution;
-
-    _dag_bitmap_bits =
-      dag_bitmap_bits;
-
-    _dag_bitmap_mask =
-      dag_bitmap_bits == 0u
-        ? 0u
-        : dag_bitmap_bits - 1u;
-
-    _dag_bitmap_words =
-      dag_bitmap_bits / 32u;
-
-    // CPU version
-    std::vector<double> cost_of_ecls; // Final cost of each eclass
-    std::vector<double> cost_of_ende; // Final cost of each enode
-    std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
-    std::vector<bool> picked_endes;
-    std::chrono::duration<double> duration;
-    auto start = std::chrono::steady_clock::now(); 
-      auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_tree_construction(
-        _ende_cost, 
-        cost_of_ecls, 
-        cost_of_ende, 
-        best_ende_of_ecls, 
-        picked_endes);
-    auto end = std::chrono::steady_clock::now();
-    duration = end - start;
-    std::cout << "CPU tree construction runtime: " << 
-      round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-    printf("CPU version cost:\n\tunder tree code model = %.2lf, \
-      \n\tunder DAG cost model = %.2lf\n", 
-      best_tree_cost_cpu, dag_cost_cpu);
-
-    std::vector<bool> picked_endes_tmp = picked_endes;
-
-    start = std::chrono::steady_clock::now();
-
-    _cpu_DAG_construction(picked_endes);
-    // _cpu_DAG_construction_mt_bitmap(picked_endes);
-
-    end = std::chrono::steady_clock::now();
-    duration = end - start;
-
-    std::cout
-      << "CPU DAG construction runtime: "
-      << round_to(
-           duration.count() * 1000,
-           0.01)
-      << " (ms)\n";
-
-    // Debug statistics are outside the measured runtime.
-    uint32_t cpu_tree_selected = 0u;
-    uint32_t cpu_dag_selected = 0u;
-    uint32_t cpu_filtered = 0u;
-
-    for (bool selected : picked_endes_tmp) {
-      cpu_tree_selected += selected ? 1u : 0u;
-    }
-
-    for (bool selected : picked_endes) {
-      cpu_dag_selected += selected ? 1u : 0u;
-    }
-
-    for (bool selected : _in_subgraph) {
-      cpu_filtered += selected ? 1u : 0u;
-    }
-
-    printf(
-      "[CPU DAG Debug] tree=%u, expanded=%u, filtered=%u\n",
-      cpu_tree_selected,
-      cpu_dag_selected,
-      cpu_filtered);    
-
-    // if (ILP_solver) {
-    //   _cpsat_solver(
-    //     ILP_time_limit, 
-    //     _ecls_its_ende_newG, 
-    //     _ende_child, 
-    //     _ende_child_ptr, 
-    //     _root_eclass_id, 
-    //     _ende_cost,
-    //     best_ende_of_ecls, 
-    //     picked_endes_tmp); 
-    // }
-
-    // GPU version starts
-    auto [best_tree_cost_gpu, dag_cost_gpu] =
-      _gpu_tree_construction();
-
-    printf(
-      "GPU version cost:\n"
-      "\tunder tree cost model = %.2lf,\n"
-      "\tunder DAG cost model = %.2lf\n",
-      best_tree_cost_gpu,
-      dag_cost_gpu);
-
-    // Save the GPU tree solution before DAG construction
-    // expands _dvc_picked_endes.
-    std::vector<uint32_t> best_ende_of_ecls_gpu;
-    std::vector<bool> picked_endes_gpu;
-
-    if (ILP_solver) {
-      _copy_best_ende_of_ecls_back(
-        best_ende_of_ecls_gpu);
-
-      _copy_pickedende_back(
-        picked_endes_gpu);
-
-      uint32_t gpu_tree_selected = 0u;
-
-      for (bool selected : picked_endes_gpu) {
-        gpu_tree_selected += selected ? 1u : 0u;
-      }
-
-      printf(
-        "[GPU DAG Debug] tree=%u\n",
-        gpu_tree_selected);
-    }
-
-
-    _gpu_allocate_dag_buffers();
-    _gpu_initialize_dag_buffers();
-
-    // GPU DAG insertion policy.
-    //
-    // FullBatch:
-    //   Use batch insertion until full convergence.
-    //
-    // BatchEarlyStop:
-    //   Use batch insertion and stop when the low-activity
-    //   condition is triggered.
-    //
-    // BatchThenDirect:
-    //   Start with batch insertion, then switch permanently
-    //   to direct insertion when the low-activity condition
-    //   is triggered.
-    constexpr GpuDagInsertionPolicy
-      gpu_dag_insertion_policy =
-        GpuDagInsertionPolicy::BatchThenDirect;
-
-    // _dvc_picked_endes still contains the GPU tree produced by
-    // _gpu_tree_construction().
-    _gpu_DAG_construction(
-      gpu_dag_insertion_policy);
-
-    if (ILP_solver) {
-      // Copy the final GPU root-to-leaf filtering mask.
-      std::vector<uint32_t> in_subgraph_gpu(
-        _num_ende,
-        0u);
-
-      if (_num_ende > 0u) {
-        const cudaError_t err = cudaMemcpy(
-          in_subgraph_gpu.data(),
-          _dvc_in_subgraph,
-          static_cast<size_t>(_num_ende) *
-            sizeof(uint32_t),
-          cudaMemcpyDeviceToHost);
-
-        if (err != cudaSuccess) {
-          _gpu_free_dag_buffers();
-
-          throw std::runtime_error(
-            std::string(
-              "Failed to copy GPU in_subgraph: ") +
-            cudaGetErrorString(err));
-        }
-      }
-
-      // Copy the expanded GPU DAG selection for debugging.
-      // This happens after the GPU DAG timer has stopped.
-      std::vector<bool> gpu_dag_selected;
-      _copy_pickedende_back(
-        gpu_dag_selected);
-
-      uint32_t gpu_dag_selected_count = 0u;
-      uint32_t gpu_filtered_count = 0u;
-
-      for (bool selected : gpu_dag_selected) {
-        gpu_dag_selected_count +=
-          selected ? 1u : 0u;
-      }
-
-      for (uint32_t selected : in_subgraph_gpu) {
-        gpu_filtered_count +=
-          selected != 0u ? 1u : 0u;
-      }
-
-      printf(
-        "[GPU DAG Debug] expanded=%u, filtered=%u\n",
-        gpu_dag_selected_count,
-        gpu_filtered_count);
-
-      // Reconstruct the GPU DAG search space for ILP.
-      _ecls_its_ende_newG_GPU.assign(
-        _num_ecls,
-        std::vector<uint32_t>());
-
-      for (uint32_t ecls = 0u;
-           ecls < _num_ecls;
-           ++ecls) {
-        const auto& original_enodes =
-          _ecls_its_ende[ecls];
-
-        auto& gpu_dag_enodes =
-          _ecls_its_ende_newG_GPU[ecls];
-
-        gpu_dag_enodes.reserve(
-          original_enodes.size());
-
-        for (uint32_t ende : original_enodes) {
-          if (in_subgraph_gpu[ende] != 0u) {
-            gpu_dag_enodes.push_back(ende);
-          }
-        }
-      }
-    }
-
-
-    // Free only GPU DAG scratch memory.
-    _gpu_free_dag_buffers();
-
-    if (ILP_solver) {
-      _cpsat_solver(
-        ILP_time_limit,
-        _ecls_its_ende_newG_GPU,
-        _ende_child,
-        _ende_child_ptr,
-        _root_eclass_id,
-        _ende_cost,
-        best_ende_of_ecls_gpu,
-        picked_endes_gpu);
-    }
-    // // GPU version ends
+  void run_xeg_t_exp(
+    const double ILP_time_limit = 360,
+    DagKernel dag_kernel = DagKernel::Thread,
+    uint32_t num_thread_dag_constrution = 1u,
+    uint32_t dag_bitmap_bits = 0u,
+    uint32_t random_seed = 42u)
+  {
+    _run_impl(
+      true,
+      ILP_time_limit,
+      dag_kernel,
+      num_thread_dag_constrution,
+      dag_bitmap_bits,
+      CpsatInitialSolutionMode::Random,
+      random_seed);
   }
 
 private:
@@ -634,6 +387,21 @@ private:
   /* ASPLOS rebuttal ends */
 
   /* Run */
+  void _run_impl(
+    bool ILP_solver,
+    double ILP_time_limit,
+    DagKernel dag_kernel,
+    uint32_t num_thread_dag_constrution,
+    uint32_t dag_bitmap_bits,
+    CpsatInitialSolutionMode initial_solution_mode,
+    uint32_t random_seed);
+
+  void _build_random_cpsat_initial_solution(
+    uint32_t random_seed,
+    const std::vector<bool>& picked_endes_gpu,
+    std::vector<uint32_t>& random_best_ende_of_ecls,
+    std::vector<bool>& random_picked_endes) const;
+
   /* Tree Level Relaxation */
   // CPU version
   std::pair<double, double> _cpu_tree_construction(
