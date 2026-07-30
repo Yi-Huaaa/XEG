@@ -27,9 +27,9 @@ export LC_ALL=C
 # asking for experiment configurations.
 #
 # Then enter one experiment configuration per line using exactly
-# four positive integers:
+# five integers:
 #
-#   DAG_KERNEL DAG_THREADS CPU_THREADS NUM_REPEATS
+#   DAG_KERNEL DAG_THREADS CPU_THREADS BITMAP_BITS NUM_REPEATS
 #
 # DAG_KERNEL:
 #
@@ -43,37 +43,49 @@ export LC_ALL=C
 #   Warp:   32, 64, 128, 256, 512, 1024
 #   Block:  64, 128, 256, 512, 1024
 #
+# Valid BITMAP_BITS values:
+#
+#   Thread: 0
+#   Warp:   0, 32, 64
+#   Block:  0, 32, 64, 128, 256, 512, 1024, 2048
+#
+# BITMAP_BITS=0 selects exact overlap detection.
+# A nonzero BITMAP_BITS value selects approximate bitmap
+# overlap detection.
+#
 # Finish configuration input by pressing Enter on an empty line.
 # The script prints a complete summary and asks for confirmation
 # before building or running anything.
 #
 # Example 1: one Thread configuration
 #
-#   0 1 32 3
+#   0 1 32 0 3
 #
-# Example 2: compare several Warp block sizes
+# Example 2: compare Exact Warp and Warp Bitmap versions
 #
-#   1 32 32 3
-#   1 64 32 3
-#   1 128 32 3
-#   1 256 32 3
+#   1 128 32 0  3
+#   1 128 32 32 3
+#   1 128 32 64 3
 #
 # Example 3: compare Thread, Warp, and Block
 #
-#   0 1 32 3
-#   1 128 32 3
-#   2 128 32 3
-#   2 256 32 3
+#   0 1   32 0   3
+#   1 128 32 0   3
+#   1 128 32 64  3
+#   2 128 32 0   3
+#   2 128 32 256 3
 #
 # For RUN_MODE=0, every configuration entered in one invocation
 # shares one RUN_ID, for example:
 #
 # results/
 # └── 20260725_173312/
-#     ├── kernel_0_dagthreads_1_cputhreads_32/
-#     ├── kernel_1_dagthreads_128_cputhreads_32/
-#     ├── kernel_2_dagthreads_128_cputhreads_32/
-#     └── kernel_2_dagthreads_256_cputhreads_32/
+#     ├── kernel_0_dagthreads_1_cputhreads_32_exact/
+#     ├── kernel_1_dagthreads_128_cputhreads_32_exact/
+#     ├── kernel_1_dagthreads_128_cputhreads_32_bitmap_32/
+#     ├── kernel_1_dagthreads_128_cputhreads_32_bitmap_64/
+#     ├── kernel_2_dagthreads_128_cputhreads_32_exact/
+#     └── kernel_2_dagthreads_128_cputhreads_32_bitmap_256/
 # ============================================================
 
 
@@ -107,15 +119,15 @@ BENCH_ROOTS=(
     # "$HOME/e-boost/benchmark/E-syn"
 
     # New dataset roots
-    # "$HOME/smoothe-artifact/dataset/eboost_boolE"
-    # "$HOME/smoothe-artifact/dataset/eboost_boolE_map"
-    # "$HOME/smoothe-artifact/dataset/eboost_esyn"
-    # "$HOME/smoothe-artifact/dataset/eboost_morphic"
-    # "$HOME/smoothe-artifact/dataset/eboost_smoothe_diospyros"
-    # "$HOME/smoothe-artifact/dataset/eboost_smoothe_impress"
-    # "$HOME/smoothe-artifact/dataset/eboost_smoothe_rover"
-    # "$HOME/smoothe-artifact/dataset/eboost_smoothe_tensat"
-    # "$HOME/smoothe-artifact/dataset/eboost_smoothe_flexc"
+    "$HOME/smoothe-artifact/dataset/eboost_boolE"
+    "$HOME/smoothe-artifact/dataset/eboost_boolE_map"
+    "$HOME/smoothe-artifact/dataset/eboost_esyn"
+    "$HOME/smoothe-artifact/dataset/eboost_morphic"
+    "$HOME/smoothe-artifact/dataset/eboost_smoothe_diospyros"
+    "$HOME/smoothe-artifact/dataset/eboost_smoothe_impress"
+    "$HOME/smoothe-artifact/dataset/eboost_smoothe_rover"
+    "$HOME/smoothe-artifact/dataset/eboost_smoothe_tensat"
+    "$HOME/smoothe-artifact/dataset/eboost_smoothe_flexc"
     "$HOME/smoothe-artifact/dataset/eboost_smoothe_maxsat"
 )
 
@@ -214,6 +226,58 @@ dag_kernel_name()
 
 
 # ============================================================
+# Helper: return a human-readable overlap detection name.
+#
+# Arguments:
+#
+#   $1 = BITMAP_BITS
+#
+# Examples:
+#
+#   0    -> Exact
+#   32   -> Bitmap-32
+#   1024 -> Bitmap-1024
+# ============================================================
+
+bitmap_mode_name()
+{
+    local bitmap_bits="$1"
+
+    if [ "$bitmap_bits" -eq 0 ]; then
+        printf '%s' "Exact"
+    else
+        printf 'Bitmap-%s' "$bitmap_bits"
+    fi
+}
+
+
+# ============================================================
+# Helper: return the folder-name suffix for one bitmap mode.
+#
+# Arguments:
+#
+#   $1 = BITMAP_BITS
+#
+# Examples:
+#
+#   0    -> exact
+#   32   -> bitmap_32
+#   1024 -> bitmap_1024
+# ============================================================
+
+bitmap_folder_tag()
+{
+    local bitmap_bits="$1"
+
+    if [ "$bitmap_bits" -eq 0 ]; then
+        printf '%s' "exact"
+    else
+        printf 'bitmap_%s' "$bitmap_bits"
+    fi
+}
+
+
+# ============================================================
 # Validate one configuration.
 #
 # Arguments:
@@ -221,7 +285,8 @@ dag_kernel_name()
 #   $1 = DAG_KERNEL
 #   $2 = DAG_THREADS
 #   $3 = CPU_THREADS
-#   $4 = NUM_REPEATS
+#   $4 = BITMAP_BITS
+#   $5 = NUM_REPEATS
 #
 # Return:
 #
@@ -234,7 +299,8 @@ validate_configuration()
     local dag_kernel="$1"
     local dag_threads="$2"
     local cpu_threads="$3"
-    local num_repeats="$4"
+    local bitmap_bits="$4"
+    local num_repeats="$5"
 
     if ! [[ "$dag_kernel" =~ ^[0-2]$ ]]; then
         echo "[ERROR] DAG_KERNEL must be 0, 1, or 2"
@@ -251,6 +317,11 @@ validate_configuration()
         return 1
     fi
 
+    if ! [[ "$bitmap_bits" =~ ^[0-9]+$ ]]; then
+        echo "[ERROR] BITMAP_BITS must be a nonnegative integer"
+        return 1
+    fi
+
     if ! [[ "$num_repeats" =~ ^[1-9][0-9]*$ ]]; then
         echo "[ERROR] NUM_REPEATS must be a positive integer"
         return 1
@@ -260,6 +331,11 @@ validate_configuration()
         0)
             if [ "$dag_threads" -ne 1 ]; then
                 echo "[ERROR] Thread DAG kernel requires DAG_THREADS=1"
+                return 1
+            fi
+
+            if [ "$bitmap_bits" -ne 0 ]; then
+                echo "[ERROR] Thread DAG kernel requires BITMAP_BITS=0"
                 return 1
             fi
             ;;
@@ -275,6 +351,17 @@ validate_configuration()
                     return 1
                     ;;
             esac
+
+            case "$bitmap_bits" in
+                0|32|64)
+                    ;;
+
+                *)
+                    echo "[ERROR] Warp DAG kernel requires one of these BITMAP_BITS values:"
+                    echo "        0, 32, 64"
+                    return 1
+                    ;;
+            esac
             ;;
 
         2)
@@ -285,6 +372,17 @@ validate_configuration()
                 *)
                     echo "[ERROR] Block DAG kernel requires one of these DAG_THREADS values:"
                     echo "        64, 128, 256, 512, 1024"
+                    return 1
+                    ;;
+            esac
+
+            case "$bitmap_bits" in
+                0|32|64|128|256|512|1024|2048)
+                    ;;
+
+                *)
+                    echo "[ERROR] Block DAG kernel requires one of these BITMAP_BITS values:"
+                    echo "        0, 32, 64, 128, 256, 512, 1024, 2048"
                     return 1
                     ;;
             esac
@@ -374,7 +472,7 @@ Step 3: Enter one configuration per line.
 
   Required format:
 
-    DAG_KERNEL DAG_THREADS CPU_THREADS NUM_REPEATS
+    DAG_KERNEL DAG_THREADS CPU_THREADS BITMAP_BITS NUM_REPEATS
 
   DAG_KERNEL:
 
@@ -385,6 +483,7 @@ Step 3: Enter one configuration per line.
   Thread requirements:
 
     DAG_THREADS must be 1.
+    BITMAP_BITS must be 0.
 
   Warp requirements:
 
@@ -392,11 +491,24 @@ Step 3: Enter one configuration per line.
 
       32, 64, 128, 256, 512, 1024
 
+    BITMAP_BITS must be one of:
+
+      0, 32, 64
+
   Block requirements:
 
     DAG_THREADS must be one of:
 
       64, 128, 256, 512, 1024
+
+    BITMAP_BITS must be one of:
+
+      0, 32, 64, 128, 256, 512, 1024, 2048
+
+  BITMAP_BITS:
+
+    0       = Exact overlap detection
+    nonzero = Approximate bitmap overlap detection
 
   An invalid configuration stops the script immediately.
 
@@ -406,30 +518,31 @@ Step 5: Review the printed summary and enter y to start.
 
 Example 1: one Thread configuration
 
-  0 1 32 3
+  0 1 32 0 3
 
-Example 2: compare several Warp configurations
+Example 2: compare Exact Warp and Warp Bitmap configurations
 
-  1 32 32 3
-  1 64 32 3
-  1 128 32 3
-  1 256 32 3
+  1 128 32 0  3
+  1 128 32 32 3
+  1 128 32 64 3
 
 Example 3: compare Thread, Warp, and Block
 
-  0 1 32 3
-  1 128 32 3
-  2 128 32 3
-  2 256 32 3
+  0 1   32 0   3
+  1 128 32 0   3
+  1 128 32 64  3
+  2 128 32 0   3
+  2 128 32 256 3
 
 Important:
 
   NUM_REPEATS belongs to one configuration. For example:
 
-    2 128 32 3
+    2 128 32 256 3
 
-  creates repeat_1, repeat_2, and repeat_3 inside the Block-128
-  configuration folder. It does not create three RUN_ID folders.
+  creates repeat_1, repeat_2, and repeat_3 inside the
+  Block-128 Bitmap-256 configuration folder. It does not create
+  three RUN_ID folders.
 
 ============================================================
 EOF_USAGE
@@ -492,12 +605,13 @@ fi
 CONFIG_KERNELS=()
 CONFIG_DAG_THREADS=()
 CONFIG_CPU_THREADS=()
+CONFIG_BITMAP_BITS=()
 CONFIG_REPEATS=()
 CONFIG_KEYS=()
 
 echo
 echo "Enter configurations one line at a time."
-echo "Format: DAG_KERNEL DAG_THREADS CPU_THREADS NUM_REPEATS"
+echo "Format: DAG_KERNEL DAG_THREADS CPU_THREADS BITMAP_BITS NUM_REPEATS"
 echo "Press Enter on an empty line to finish."
 echo
 
@@ -516,6 +630,7 @@ while true; do
     dag_kernel=""
     dag_threads=""
     cpu_threads=""
+    bitmap_bits=""
     num_repeats=""
     extra_field=""
 
@@ -523,6 +638,7 @@ while true; do
         dag_kernel \
         dag_threads \
         cpu_threads \
+        bitmap_bits \
         num_repeats \
         extra_field \
         <<< "$configuration_line"
@@ -530,10 +646,11 @@ while true; do
     if [ -z "$dag_kernel" ] ||
        [ -z "$dag_threads" ] ||
        [ -z "$cpu_threads" ] ||
+       [ -z "$bitmap_bits" ] ||
        [ -z "$num_repeats" ] ||
        [ -n "$extra_field" ]; then
-        echo "[ERROR] Each line must contain exactly four integers:"
-        echo "        DAG_KERNEL DAG_THREADS CPU_THREADS NUM_REPEATS"
+        echo "[ERROR] Each line must contain exactly five integers:"
+        echo "        DAG_KERNEL DAG_THREADS CPU_THREADS BITMAP_BITS NUM_REPEATS"
         exit 1
     fi
 
@@ -541,12 +658,18 @@ while true; do
         "$dag_kernel" \
         "$dag_threads" \
         "$cpu_threads" \
+        "$bitmap_bits" \
         "$num_repeats"; then
         echo "[ERROR] Invalid configuration: $configuration_line"
         exit 1
     fi
 
-    configuration_key="${dag_kernel}_${dag_threads}_${cpu_threads}"
+    # BITMAP_BITS is part of the configuration identity.
+    #
+    # This allows Exact, Bitmap-32, Bitmap-64, and other bitmap
+    # variants to use the same kernel/thread settings within one
+    # experiment.
+    configuration_key="${dag_kernel}_${dag_threads}_${cpu_threads}_${bitmap_bits}"
     duplicate_configuration=0
 
     for existing_key in "${CONFIG_KEYS[@]}"; do
@@ -558,21 +681,23 @@ while true; do
 
     if [ "$duplicate_configuration" -eq 1 ]; then
         echo "[ERROR] Duplicate configuration:"
-        echo "        $dag_kernel $dag_threads $cpu_threads"
-        echo "[ERROR] Enter each kernel/DAG-thread/CPU-thread combination only once."
+        echo "        $dag_kernel $dag_threads $cpu_threads $bitmap_bits"
+        echo "[ERROR] Enter each kernel/DAG-thread/CPU-thread/bitmap combination only once."
         exit 1
     fi
 
     CONFIG_KERNELS+=("$dag_kernel")
     CONFIG_DAG_THREADS+=("$dag_threads")
     CONFIG_CPU_THREADS+=("$cpu_threads")
+    CONFIG_BITMAP_BITS+=("$bitmap_bits")
     CONFIG_REPEATS+=("$num_repeats")
     CONFIG_KEYS+=("$configuration_key")
 
     configuration_index="${#CONFIG_KERNELS[@]}"
     kernel_name="$(dag_kernel_name "$dag_kernel")"
+    overlap_mode="$(bitmap_mode_name "$bitmap_bits")"
 
-    echo "[ACCEPTED $configuration_index] $kernel_name: kernel=$dag_kernel, DAG threads=$dag_threads, CPU threads=$cpu_threads, repeats=$num_repeats"
+    echo "[ACCEPTED $configuration_index] $kernel_name: kernel=$dag_kernel, DAG threads=$dag_threads, CPU threads=$cpu_threads, overlap=$overlap_mode, BITMAP_BITS=$bitmap_bits, repeats=$num_repeats"
 done
 
 
@@ -649,16 +774,21 @@ for ((config_index = 0;
     dag_kernel="${CONFIG_KERNELS[$config_index]}"
     dag_threads="${CONFIG_DAG_THREADS[$config_index]}"
     cpu_threads="${CONFIG_CPU_THREADS[$config_index]}"
+    bitmap_bits="${CONFIG_BITMAP_BITS[$config_index]}"
     num_repeats="${CONFIG_REPEATS[$config_index]}"
+
     kernel_name="$(dag_kernel_name "$dag_kernel")"
+    overlap_mode="$(bitmap_mode_name "$bitmap_bits")"
 
     printf \
-        '[%u] %-6s kernel=%s, DAG threads=%s, CPU threads=%s, repeats=%s\n' \
+        '[%u] %-6s kernel=%s, DAG threads=%s, CPU threads=%s, overlap=%s, BITMAP_BITS=%s, repeats=%s\n' \
         "$((config_index + 1))" \
         "$kernel_name" \
         "$dag_kernel" \
         "$dag_threads" \
         "$cpu_threads" \
+        "$overlap_mode" \
+        "$bitmap_bits" \
         "$num_repeats"
 done
 
@@ -721,6 +851,8 @@ initialize_repeat_log()
         echo "DAG kernel       : $DAG_KERNEL_NAME ($DAG_KERNEL)"
         echo "DAG threads      : $DAG_THREADS"
         echo "CPU threads      : $CPU_THREADS"
+        echo "Overlap detection: $BITMAP_MODE"
+        echo "BITMAP_BITS      : $BITMAP_BITS"
         echo "Run mode         : $RUN_MODE"
         echo "Output file      : $CURRENT_REPEAT_LOG"
         echo "Start time       : $(date --iso-8601=seconds)"
@@ -750,6 +882,7 @@ initialize_repeat_log()
 #   argv[1] = input file
 #   argv[2] = DAG_KERNEL
 #   argv[3] = DAG_THREADS
+#   argv[4] = BITMAP_BITS
 #
 # CPU_THREADS is supplied through OMP_NUM_THREADS.
 # ============================================================
@@ -773,6 +906,8 @@ run_benchmark()
     echo "DAG kernel  : $DAG_KERNEL_NAME ($DAG_KERNEL)"
     echo "DAG threads : $DAG_THREADS"
     echo "CPU threads : $CPU_THREADS"
+    echo "Overlap     : $BITMAP_MODE"
+    echo "BITMAP_BITS : $BITMAP_BITS"
 
     if [ "$SAVE_LOGS" -eq 1 ]; then
         echo "Output file : $CURRENT_REPEAT_LOG"
@@ -796,6 +931,8 @@ run_benchmark()
         echo "DAG kernel  : $DAG_KERNEL_NAME ($DAG_KERNEL)"
         echo "DAG threads : $DAG_THREADS"
         echo "CPU threads : $CPU_THREADS"
+        echo "Overlap     : $BITMAP_MODE"
+        echo "BITMAP_BITS : $BITMAP_BITS"
         echo "Start time  : $(date --iso-8601=seconds)"
         echo "------------------------------------------------------------"
 
@@ -803,7 +940,8 @@ run_benchmark()
             ./main/simple \
             "$input_file" \
             "$DAG_KERNEL" \
-            "$DAG_THREADS"
+            "$DAG_THREADS" \
+            "$BITMAP_BITS"
 
         echo "------------------------------------------------------------"
         echo "End time    : $(date --iso-8601=seconds)"
@@ -953,10 +1091,14 @@ run_configuration()
     DAG_KERNEL="${CONFIG_KERNELS[$config_index]}"
     DAG_THREADS="${CONFIG_DAG_THREADS[$config_index]}"
     CPU_THREADS="${CONFIG_CPU_THREADS[$config_index]}"
+    BITMAP_BITS="${CONFIG_BITMAP_BITS[$config_index]}"
     NUM_REPEATS="${CONFIG_REPEATS[$config_index]}"
-    DAG_KERNEL_NAME="$(dag_kernel_name "$DAG_KERNEL")"
 
-    CONFIG_NAME="kernel_${DAG_KERNEL}_dagthreads_${DAG_THREADS}_cputhreads_${CPU_THREADS}"
+    DAG_KERNEL_NAME="$(dag_kernel_name "$DAG_KERNEL")"
+    BITMAP_MODE="$(bitmap_mode_name "$BITMAP_BITS")"
+    BITMAP_FOLDER_TAG="$(bitmap_folder_tag "$BITMAP_BITS")"
+
+    CONFIG_NAME="kernel_${DAG_KERNEL}_dagthreads_${DAG_THREADS}_cputhreads_${CPU_THREADS}_${BITMAP_FOLDER_TAG}"
 
     if [ "$SAVE_LOGS" -eq 1 ]; then
         CONFIG_OUT_DIR="$RUN_OUT_DIR/$CONFIG_NAME"
@@ -972,6 +1114,8 @@ run_configuration()
     echo "DAG kernel       : $DAG_KERNEL_NAME ($DAG_KERNEL)"
     echo "DAG threads      : $DAG_THREADS"
     echo "CPU threads      : $CPU_THREADS"
+    echo "Overlap detection: $BITMAP_MODE"
+    echo "BITMAP_BITS      : $BITMAP_BITS"
     echo "Number of repeats: $NUM_REPEATS"
 
     if [ "$SAVE_LOGS" -eq 1 ]; then
@@ -1028,6 +1172,11 @@ run_configuration()
             echo "============================================================"
             echo "Repeat                : $CURRENT_REPEAT/$NUM_REPEATS"
             echo "Applications executed : $RUN_COUNT"
+            echo "DAG kernel            : $DAG_KERNEL_NAME ($DAG_KERNEL)"
+            echo "DAG threads           : $DAG_THREADS"
+            echo "CPU threads           : $CPU_THREADS"
+            echo "Overlap detection     : $BITMAP_MODE"
+            echo "BITMAP_BITS           : $BITMAP_BITS"
             echo "End time              : $(date --iso-8601=seconds)"
             echo "============================================================"
         } >> "$CURRENT_REPEAT_LOG"
@@ -1105,59 +1254,242 @@ echo "============================================================"
 #   5. Review the summary and enter y
 #
 # Configuration format:
-#   DAG_KERNEL DAG_THREADS CPU_THREADS NUM_REPEATS
+#   DAG_KERNEL DAG_THREADS CPU_THREADS BITMAP_BITS NUM_REPEATS
 #
-# Thread:
-#   0 1 32 3
+# Thread Exact:
+#   0 1 32 0 3
 #
-# Warp 32:
-#   1 32 32 3
+# Warp 32 threads, Exact:
+#   1 32 32 0 3
 #
-# Warp 64:
-#   1 64 32 3
+# Warp 32 threads, Bitmap-32:
+#   1 32 32 32 3
 #
-# Warp 128:
-#   1 128 32 3
+# Warp 32 threads, Bitmap-64:
+#   1 32 32 64 3
 #
-# Warp 256:
-#   1 256 32 3
+# Warp 64 threads, Exact:
+#   1 64 32 0 3
 #
-# Warp 512:
-#   1 512 32 3
+# Warp 64 threads, Bitmap-32:
+#   1 64 32 32 3
 #
-# Warp 1024:
-#   1 1024 32 3
+# Warp 64 threads, Bitmap-64:
+#   1 64 32 64 3
 #
-# Block 64:
-#   2 64 32 3
+# Warp 128 threads, Exact:
+#   1 128 32 0 3
 #
-# Block 128:
-#   2 128 32 3
+# Warp 128 threads, Bitmap-32:
+#   1 128 32 32 3
 #
-# Block 256:
-#   2 256 32 3
+# Warp 128 threads, Bitmap-64:
+#   1 128 32 64 3
 #
-# Block 512:
-#   2 512 32 3
+# Warp 256 threads, Exact:
+#   1 256 32 0 3
 #
-# Block 1024:
-#   2 1024 32 3
+# Warp 256 threads, Bitmap-32:
+#   1 256 32 32 3
+#
+# Warp 256 threads, Bitmap-64:
+#   1 256 32 64 3
+#
+# Warp 512 threads, Exact:
+#   1 512 32 0 3
+#
+# Warp 512 threads, Bitmap-32:
+#   1 512 32 32 3
+#
+# Warp 512 threads, Bitmap-64:
+#   1 512 32 64 3
+#
+# Warp 1024 threads, Exact:
+#   1 1024 32 0 3
+#
+# Warp 1024 threads, Bitmap-32:
+#   1 1024 32 32 3
+#
+# Warp 1024 threads, Bitmap-64:
+#   1 1024 32 64 3
+#
+# Block 64 threads, Exact:
+#   2 64 32 0 3
+#
+# Block 64 threads, Bitmap-32:
+#   2 64 32 32 3
+#
+# Block 64 threads, Bitmap-64:
+#   2 64 32 64 3
+#
+# Block 64 threads, Bitmap-128:
+#   2 64 32 128 3
+#
+# Block 64 threads, Bitmap-256:
+#   2 64 32 256 3
+#
+# Block 64 threads, Bitmap-512:
+#   2 64 32 512 3
+#
+# Block 64 threads, Bitmap-1024:
+#   2 64 32 1024 3
+#
+# Block 64 threads, Bitmap-2048:
+#   2 64 32 2048 3
+#
+# Block 128 threads, Exact:
+#   2 128 32 0 3
+#
+# Block 128 threads, Bitmap-32:
+#   2 128 32 32 3
+#
+# Block 128 threads, Bitmap-64:
+#   2 128 32 64 3
+#
+# Block 128 threads, Bitmap-128:
+#   2 128 32 128 3
+#
+# Block 128 threads, Bitmap-256:
+#   2 128 32 256 3
+#
+# Block 128 threads, Bitmap-512:
+#   2 128 32 512 3
+#
+# Block 128 threads, Bitmap-1024:
+#   2 128 32 1024 3
+#
+# Block 128 threads, Bitmap-2048:
+#   2 128 32 2048 3
+#
+# Block 256 threads, Exact:
+#   2 256 32 0 3
+#
+# Block 256 threads, Bitmap-32:
+#   2 256 32 32 3
+#
+# Block 256 threads, Bitmap-64:
+#   2 256 32 64 3
+#
+# Block 256 threads, Bitmap-128:
+#   2 256 32 128 3
+#
+# Block 256 threads, Bitmap-256:
+#   2 256 32 256 3
+#
+# Block 256 threads, Bitmap-512:
+#   2 256 32 512 3
+#
+# Block 256 threads, Bitmap-1024:
+#   2 256 32 1024 3
+#
+# Block 256 threads, Bitmap-2048:
+#   2 256 32 2048 3
+#
+# Block 512 threads, Exact:
+#   2 512 32 0 3
+#
+# Block 512 threads, Bitmap-32:
+#   2 512 32 32 3
+#
+# Block 512 threads, Bitmap-64:
+#   2 512 32 64 3
+#
+# Block 512 threads, Bitmap-128:
+#   2 512 32 128 3
+#
+# Block 512 threads, Bitmap-256:
+#   2 512 32 256 3
+#
+# Block 512 threads, Bitmap-512:
+#   2 512 32 512 3
+#
+# Block 512 threads, Bitmap-1024:
+#   2 512 32 1024 3
+#
+# Block 512 threads, Bitmap-2048:
+#   2 512 32 2048 3
+#
+# Block 1024 threads, Exact:
+#   2 1024 32 0 3
+#
+# Block 1024 threads, Bitmap-32:
+#   2 1024 32 32 3
+#
+# Block 1024 threads, Bitmap-64:
+#   2 1024 32 64 3
+#
+# Block 1024 threads, Bitmap-128:
+#   2 1024 32 128 3
+#
+# Block 1024 threads, Bitmap-256:
+#   2 1024 32 256 3
+#
+# Block 1024 threads, Bitmap-512:
+#   2 1024 32 512 3
+#
+# Block 1024 threads, Bitmap-1024:
+#   2 1024 32 1024 3
+#
+# Block 1024 threads, Bitmap-2048:
+#   2 1024 32 2048 3
 #
 # CPU single-thread version:
-#   2 128 1 3
+#   2 128 1 0 3
+#   2 128 1 256 3
 #
 # Example complete comparison entered in one invocation:
-#   0 1 32 3
-#   1 32 32 3
-#   1 64 32 3
-#   1 128 32 3
-#   1 256 32 3
-#   2 64 32 3
-#   2 128 32 3
-#   2 256 32 3
+#   0 1   32 0    3
+#
+#   1 32  32 0    3
+#   1 32  32 32   3
+#   1 32  32 64   3
+#
+#   1 64  32 0    3
+#   1 64  32 32   3
+#   1 64  32 64   3
+#
+#   1 128 32 0    3
+#   1 128 32 32   3
+#   1 128 32 64   3
+#
+#   1 256 32 0    3
+#   1 256 32 32   3
+#   1 256 32 64   3
+#
+#   2 64  32 0    3
+#   2 64  32 32   3
+#   2 64  32 64   3
+#   2 64  32 128  3
+#   2 64  32 256  3
+#   2 64  32 512  3
+#   2 64  32 1024 3
+#   2 64  32 2048 3
+#
+#   2 128 32 0    3
+#   2 128 32 32   3
+#   2 128 32 64   3
+#   2 128 32 128  3
+#   2 128 32 256  3
+#   2 128 32 512  3
+#   2 128 32 1024 3
+#   2 128 32 2048 3
 #
 # All configurations above share one timestamped RUN_ID when
 # RUN_MODE=0.
+#
+# Result folder examples:
+#
+#   results/<RUN_ID>/kernel_0_dagthreads_1_cputhreads_32_exact/
+#
+#   results/<RUN_ID>/kernel_1_dagthreads_128_cputhreads_32_exact/
+#
+#   results/<RUN_ID>/kernel_1_dagthreads_128_cputhreads_32_bitmap_32/
+#
+#   results/<RUN_ID>/kernel_1_dagthreads_128_cputhreads_32_bitmap_64/
+#
+#   results/<RUN_ID>/kernel_2_dagthreads_128_cputhreads_32_exact/
+#
+#   results/<RUN_ID>/kernel_2_dagthreads_128_cputhreads_32_bitmap_1024/
 #
 # ctest from project root:
 #   ctest --test-dir build --output-on-failure
@@ -1179,15 +1511,225 @@ echo "============================================================"
 # 例如後續要抓每個 application 的 GPU runtime，可以直接：
 # grep -E \
 #   'File name|GPU DAG total runtime' \
-#   results/$RUN_ID/kernel_2_dagthreads_128_cputhreads_32/repeat_1/all_applications.log
+#   results/$RUN_ID/kernel_2_dagthreads_128_cputhreads_32_exact/repeat_1/all_applications.log
+#
+# 抓 Block Bitmap-1024 的結果：
+# grep -E \
+#   'File name|GPU DAG total runtime' \
+#   results/$RUN_ID/kernel_2_dagthreads_128_cputhreads_32_bitmap_1024/repeat_1/all_applications.log
+#
+# 抓 Warp Bitmap-64 的結果：
+# grep -E \
+#   'File name|GPU DAG total runtime' \
+#   results/$RUN_ID/kernel_1_dagthreads_128_cputhreads_32_bitmap_64/repeat_1/all_applications.log
 #
 # 要找該 configuration 的所有 repeats：
 # grep -R -E \
 #   'File name|GPU DAG total runtime' \
-#   results/$RUN_ID/kernel_2_dagthreads_128_cputhreads_32/
+#   results/$RUN_ID/kernel_2_dagthreads_128_cputhreads_32_bitmap_1024/
 #
 # 要搜尋該次完整 experiment：
 # grep -R -E \
 #   'File name|GPU DAG total runtime' \
 #   results/$RUN_ID/
+#
+# 完整的 cmake 所有東西：
+# cmake -S . -B build
+# cmake --build build -j "$(nproc)"
+#
+# 只 cmake simple：
+# cmake --build build -j --target simple
+#
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE/mul32.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_esyn/i7.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_esyn/c2670.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_esyn/mul3.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/vector_2d_conv_3x3_3x3_root_168.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/direct_recexpr_2_root_18.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/direct_recexpr_root_18.rename.json
+#
+# INPUT=<your-input-json>
+#
+# Warp, Exact:
+# ./build/main/simple "$INPUT" 1 32 0
+# ./build/main/simple "$INPUT" 1 64 0
+# ./build/main/simple "$INPUT" 1 128 0
+#
+# Warp, Bitmap-32:
+# ./build/main/simple "$INPUT" 1 32 32
+# ./build/main/simple "$INPUT" 1 64 32
+# ./build/main/simple "$INPUT" 1 128 32
+#
+# Warp, Bitmap-64:
+# ./build/main/simple "$INPUT" 1 32 64
+# ./build/main/simple "$INPUT" 1 64 64
+# ./build/main/simple "$INPUT" 1 128 64
+#
+# Thread, Exact only:
+# ./build/main/simple "$INPUT" 0 1 0
+#
+# Block, Exact:
+# ./build/main/simple "$INPUT" 2 64 0
+#
+# Block, Bitmap-32:
+# ./build/main/simple "$INPUT" 2 64 32
+#
+# Block, Bitmap-64:
+# ./build/main/simple "$INPUT" 2 64 64
+#
+# Block, Bitmap-128:
+# ./build/main/simple "$INPUT" 2 64 128
+#
+# Block, Bitmap-256:
+# ./build/main/simple "$INPUT" 2 64 256
+#
+# Block, Bitmap-512:
+# ./build/main/simple "$INPUT" 2 64 512
+#
+# Block, Bitmap-1024:
+# ./build/main/simple "$INPUT" 2 64 1024
+#
+# Block, Bitmap-2048:
+# ./build/main/simple "$INPUT" 2 64 2048
+
+# for log in \
+#   results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_64/repeat_*/all_applications.log
+# do
+#   echo "===== $(basename "$(dirname "$log")") ====="
+#   grep -h -E \
+#     '^(Objective value = .+|No feasible solution found\.)$' \
+#     "$log"
+# done
+# cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+# cmake --build build -j "$(nproc)"
+
+# ctest --test-dir build --output-on-failure
+# mul32.rename.json
+# 2 64 32 64 1
 # ============================================================
+
+# kernel_2_dagthreads_64_cputhreads_32_bitmap_64
+# kernel_2_dagthreads_64_cputhreads_32_bitmap_128
+# kernel_2_dagthreads_64_cputhreads_32_bitmap_256
+# kernel_2_dagthreads_64_cputhreads_32_bitmap_512
+# kernel_2_dagthreads_64_cputhreads_32_bitmap_1024
+
+# kernel_2_dagthreads_128_cputhreads_32_bitmap_64
+# kernel_2_dagthreads_128_cputhreads_32_bitmap_128
+# kernel_2_dagthreads_128_cputhreads_32_bitmap_256
+# kernel_2_dagthreads_128_cputhreads_32_bitmap_512
+# kernel_2_dagthreads_128_cputhreads_32_bitmap_1024
+
+# kernel_2_dagthreads_256_cputhreads_32_bitmap_64
+# kernel_2_dagthreads_256_cputhreads_32_bitmap_128
+# kernel_2_dagthreads_256_cputhreads_32_bitmap_256
+# kernel_2_dagthreads_256_cputhreads_32_bitmap_512
+# kernel_2_dagthreads_256_cputhreads_32_bitmap_1024
+
+
+# for log in \
+#   results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_*/all_applications.log
+# do
+#   echo "===== $(basename "$(dirname "$log")") ====="
+#   grep -h -E \
+#     '^(Objective value = .+|No feasible solution found\.)$' \
+#     "$log"
+# done
+
+# for log in results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_{1,2,3}/all_applications.log
+# do
+#   awk -F'[: s]+' '
+#     /APPLICATION_BEGIN/ { last=""; nofeas=0 }
+#     /Incumbent Solution:/ { last=$3 }
+#     /No feasible solution found\./ { nofeas=1 }
+#     /APPLICATION_END/ {
+#       if (nofeas) print "No feasible solution found."
+#       else print last
+#     }
+#   ' "$log"
+# done > tmp2.log
+
+# grep -oP 'GPU tree construction runtime: \K[0-9.]+' results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_*/all_applications.log
+# grep -oP 'GPU DAG total runtime: \K[0-9.]+' results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_*/all_applications.log
+# grep -oP 'CPU DAG construction runtime: \K[0-9.]+' results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_*/all_applications.log
+
+
+# 20260726 用的一些筆記
+# cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j "$(nproc)"
+# ctest --test-dir build --output-on-failure
+
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE/mul32.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE/mul48.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_esyn/i7.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_esyn/C432.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_esyn/c2670.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_esyn/mul3.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/vector_2d_conv_3x3_3x3_root_168.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/direct_recexpr_2_root_18.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/direct_recexpr_root_18.rename.json
+
+# ./build/main/simple "$INPUT" 2 64 64
+
+# for INPUT in ~/smoothe-artifact/dataset/eboost_esyn/*.rename.json; do echo "Running: $INPUT"; ./build/main/simple "$INPUT" 2 64 64; done
+
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE/mul32.rename.json
+
+# for run in 1 2 3; do
+#   echo "===== Exact Block run ${run} ====="
+#   ./build/main/simple "$INPUT" 2 64 0
+# done
+
+# for run in 1 2 3; do
+#   echo "===== Exact Block run ${run} ====="
+#   ./build/main/simple "$INPUT" 2 64 64
+# done
+
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE_map/mul16_map.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE_map/mul32_map.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE_map/mul48_map.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_tensat/bert.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_tensat/nasneta.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_rover/box_filter_3iteration_egraph.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_rover/box_filter_4iteration_egraph.rename.json (BITMAP 會爆)
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_rover/mcm_3_7_21_original_8iteration_egraph.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_rover/mcm_3_7_21_original_9iteration_egraph.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/direct_recexpr_root_18.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/direct_recexpr_2_root_18.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_diospyros/vector_2d_conv_3x3_3x3_root_168.rename.json (這個 bitmap 很厲害)
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_flexc/fdbbd205-1519-4880-9a24-07b2ea772d16.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_smoothe_flexc/fea54919-328c-4f00-aedc-2698d17914b6.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_morphic/div.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE_map/mul112_map.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE_map/mul128_map.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE/mul112.rename.json
+# INPUT=~/smoothe-artifact/dataset/eboost_boolE/mul128.rename.json
+
+
+# 20260729
+# for log in \
+#   results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_*/all_applications.log
+# do
+#   echo "===== $(basename "$(dirname "$log")") ====="
+#   grep -h -E \
+#     '^(Objective value = .+|No feasible solution found\.)$' \
+#     "$log"
+# done
+
+# for log in results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_{1,2,3}/all_applications.log
+# do
+#   awk -F'[: s]+' '
+#     /APPLICATION_BEGIN/ { last=""; nofeas=0 }
+#     /Incumbent Solution:/ { last=$3 }
+#     /No feasible solution found\./ { nofeas=1 }
+#     /APPLICATION_END/ {
+#       if (nofeas) print "No feasible solution found."
+#       else print last
+#     }
+#   ' "$log"
+# done > tmp2.log
+
+# cmake -S . -B build
+# cmake --build build -j "$(nproc)"
+# grep -oP 'GPU tree construction runtime: \K[0-9.]+' results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_*/all_applications.log
+# grep -oP 'GPU DAG total runtime: \K[0-9.]+' results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_*/all_applications.log
+# grep -oP 'CPU DAG construction runtime: \K[0-9.]+' results/20260726_235909/kernel_2_dagthreads_64_cputhreads_32_bitmap_512/repeat_*/all_applications.log

@@ -174,7 +174,7 @@ int main(int argc, char *argv[]) {
 
   g_ext.run(
     true,
-    60,
+    400,
     dag_kernel,
     num_thread_dag_constr,
     bitmap_bits);  
