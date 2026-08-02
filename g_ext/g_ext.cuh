@@ -90,6 +90,28 @@ public:
     _read_input(input_path); 
   }
 
+  // Dump the current in-memory e-graph using the same JSON
+  // structure accepted by _read_input().
+  //
+  // The output directory is fixed to:
+  //
+  //   /home/ychung79/gpu_extraction/ablation_benchmarks
+  //
+  // The generated filename has the form:
+  //
+  //   <input-stem>_sf<multiplier>_<index>.json
+  //
+  // Example:
+  //
+  //   mul112.rename_sf2_1.json
+  //
+  // Existing files are never intentionally overwritten. The
+  // smallest available positive index is selected.
+  //
+  // Returns the complete path of the generated JSON file.
+  std::string dump_output_degree_exp_json(
+    const std::string& input_path,
+    const uint32_t output_degree_multiplier);
   // Read the original e-graph and then construct the isolated
   // output-degree ablation graph.
   //
@@ -105,7 +127,8 @@ public:
   void read_output_degree_exp(
     const std::string& input_path,
     const uint32_t output_degree_multiplier,
-    const uint32_t random_seed = 42u)
+    const uint32_t random_seed = 42u,
+    const bool dump_augmented_json = false)
   {
     if (!_ende_name.empty()) {
       throw std::logic_error(
@@ -132,6 +155,22 @@ public:
     _augment_output_degree_for_exp(
       output_degree_multiplier,
       random_seed);
+
+    // Dump only after augmentation and reconstruction have
+    // completed. At this point _ende_child,
+    // _ende_child_ptr, and all derived graph data represent
+    // the final augmented graph.
+    if (dump_augmented_json) {
+      const std::string dumped_path =
+        dump_output_degree_exp_json(
+          input_path,
+          output_degree_multiplier);
+
+      std::cout
+        << "[Output-Degree Exp] dumped_json="
+        << dumped_path
+        << "\n";
+    }
   }
 
   // ============================================================

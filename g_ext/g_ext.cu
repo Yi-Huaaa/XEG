@@ -1,6 +1,9 @@
 #include "g_ext.cuh"
 #include <cuda/atomic>
 
+#include <filesystem>
+#include <iomanip>
+
 #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
 
 /* DEBUG */
@@ -219,6 +222,14 @@ constexpr uint32_t
 static_assert(
   kOutputDegreeExpMaxConsecutiveFailures > 0u,
   "Output-degree failure limit must be positive");
+
+// Fixed output directory for generated output-degree ablation
+// benchmark JSON files.
+// Note: when open source this part must be updated!!!
+constexpr char
+  kOutputDegreeExpDumpDirectory[] =
+    "/home/ychung79/gpu_extraction/"
+    "ablation_benchmarks";
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -2038,6 +2049,399 @@ void G_EXT::_augment_output_degree_for_exp(
     _global_adj_1D.size(),
     static_cast<unsigned long long>(
       augmentation_checksum));
+}
+
+std::string G_EXT::dump_output_degree_exp_json(
+  const std::string& input_path,
+  const uint32_t output_degree_multiplier)
+{
+  namespace fs =
+    std::filesystem;
+
+  if (_ende_name.empty() ||
+      _num_ende == 0u) {
+    throw std::logic_error(
+      "dump_output_degree_exp_json requires "
+      "an initialized non-empty graph");
+  }
+
+  if (output_degree_multiplier == 0u) {
+    throw std::invalid_argument(
+      "Output-degree multiplier must be at least 1");
+  }
+
+  const fs::path output_directory(
+    kOutputDegreeExpDumpDirectory);
+
+  std::error_code filesystem_error;
+
+  // Create the complete directory hierarchy when it does not
+  // already exist.
+  fs::create_directories(
+    output_directory,
+    filesystem_error);
+
+  if (filesystem_error) {
+    throw std::runtime_error(
+      std::string(
+        "Failed to create output-degree dump directory: ") +
+      output_directory.string() +
+      " (" +
+      filesystem_error.message() +
+      ")");
+  }
+
+  filesystem_error.clear();
+
+  const bool output_path_is_directory =
+    fs::is_directory(
+      output_directory,
+      filesystem_error);
+
+  if (filesystem_error) {
+    throw std::runtime_error(
+      std::string(
+        "Failed to inspect output-degree dump directory: ") +
+      output_directory.string() +
+      " (" +
+      filesystem_error.message() +
+      ")");
+  }
+
+  if (!output_path_is_directory) {
+    throw std::runtime_error(
+      std::string(
+        "Output-degree dump path exists but is not "
+        "a directory: ") +
+      output_directory.string());
+  }
+
+  const fs::path original_input_path(
+    input_path);
+
+  // For:
+  //
+  //   mul112.rename.json
+  //
+  // filename().stem() returns:
+  //
+  //   mul112.rename
+  const std::string input_stem =
+    original_input_path
+      .filename()
+      .stem()
+      .string();
+
+  if (input_stem.empty()) {
+    throw std::invalid_argument(
+      "Cannot derive an output filename from "
+      "the input path");
+  }
+
+  for (uint32_t file_index = 1u;
+       ;
+       ++file_index) {
+    const std::string output_filename =
+      input_stem +
+      "_sf" +
+      std::to_string(
+        output_degree_multiplier) +
+      "_" +
+      std::to_string(
+        file_index) +
+      ".json";
+
+    const fs::path output_path =
+      output_directory /
+      output_filename;
+
+    filesystem_error.clear();
+
+    const bool output_already_exists =
+      fs::exists(
+        output_path,
+        filesystem_error);
+
+    if (filesystem_error) {
+      throw std::runtime_error(
+        std::string(
+          "Failed to inspect candidate output file: ") +
+        output_path.string() +
+        " (" +
+        filesystem_error.message() +
+        ")");
+    }
+
+    if (!output_already_exists) {
+      try {
+        _dump_to_egg_json(
+          output_path.string(),
+          _num_ecls,
+          _num_ende,
+          _ende_name,
+          _ende_op,
+          _ende_cost,
+          _ende_ecls,
+          _ende_child,
+          _ende_child_ptr,
+          _root_eclass_id);
+      }
+      catch (...) {
+        // Do not leave a partial JSON file behind if writing
+        // fails after the file has been created.
+        std::error_code remove_error;
+
+        fs::remove(
+          output_path,
+          remove_error);
+
+        throw;
+      }
+
+      return output_path.string();
+    }
+
+    if (file_index ==
+        std::numeric_limits<uint32_t>::max()) {
+      throw std::overflow_error(
+        "Output-degree dump file index exceeded uint32_t");
+    }
+  }
+}
+
+void G_EXT::_dump_to_egg_json(
+  const std::string& out_path,
+  const uint32_t num_ecls,
+  const uint32_t num_ende,
+  const std::vector<std::string>& ende_name,
+  const std::vector<std::string>& ende_op,
+  const std::vector<float>& ende_cost,
+  const std::vector<uint32_t>& ende_ecls,
+  const std::vector<uint32_t>& ende_child,
+  const std::vector<uint32_t>& ende_child_ptr,
+  const std::vector<uint32_t>& root_eclass_id)
+{
+  if (num_ecls == 0u ||
+      num_ende == 0u) {
+    throw std::logic_error(
+      "Cannot dump an empty e-graph");
+  }
+
+  if (ende_name.size() !=
+        static_cast<size_t>(num_ende) ||
+      ende_op.size() !=
+        static_cast<size_t>(num_ende) ||
+      ende_cost.size() !=
+        static_cast<size_t>(num_ende) ||
+      ende_ecls.size() !=
+        static_cast<size_t>(num_ende)) {
+    throw std::logic_error(
+      "Cannot dump e-graph because e-node arrays "
+      "have inconsistent sizes");
+  }
+
+  if (ende_child_ptr.size() !=
+      static_cast<size_t>(num_ende) + 1u) {
+    throw std::logic_error(
+      "Cannot dump e-graph because the child-pointer "
+      "array has an invalid size");
+  }
+
+  if (ende_child_ptr.front() != 0u) {
+    throw std::logic_error(
+      "Cannot dump e-graph because the first "
+      "child pointer is not zero");
+  }
+
+  if (ende_child_ptr.back() !=
+      ende_child.size()) {
+    throw std::logic_error(
+      "Cannot dump e-graph because the final "
+      "child pointer does not match the child array");
+  }
+
+  // Validate every CSR range before using it.
+  for (uint32_t ende = 0u;
+       ende < num_ende;
+       ++ende) {
+    const uint32_t child_begin =
+      ende_child_ptr[ende];
+
+    const uint32_t child_end =
+      ende_child_ptr[ende + 1u];
+
+    if (child_begin > child_end ||
+        child_end > ende_child.size()) {
+      throw std::logic_error(
+        "Cannot dump e-graph because an e-node has "
+        "an invalid child range");
+    }
+  }
+
+  // The in-memory representation stores:
+  //
+  //   e-node -> child e-class ID
+  //
+  // The string-child JSON format stores:
+  //
+  //   e-node -> one e-node name belonging to the child e-class
+  //
+  // Select the first e-node in every e-class as its canonical
+  // JSON representative.
+  std::vector<uint32_t>
+    representative_ende_of_eclass(
+      num_ecls,
+      UINT32_MAX);
+
+  for (uint32_t ende = 0u;
+       ende < num_ende;
+       ++ende) {
+    const uint32_t eclass =
+      ende_ecls[ende];
+
+    if (eclass >= num_ecls) {
+      throw std::logic_error(
+        "Cannot dump e-graph because an e-node "
+        "belongs to an out-of-range e-class");
+    }
+
+    if (representative_ende_of_eclass[eclass] ==
+        UINT32_MAX) {
+      representative_ende_of_eclass[eclass] =
+        ende;
+    }
+  }
+
+  nlohmann::json output_json;
+
+  output_json["nodes"] =
+    nlohmann::json::object();
+
+  output_json["root_eclasses"] =
+    nlohmann::json::array();
+
+  for (uint32_t ende = 0u;
+       ende < num_ende;
+       ++ende) {
+    const std::string& node_name =
+      ende_name[ende];
+
+    if (node_name.empty()) {
+      throw std::logic_error(
+        "Cannot dump an e-node with an empty name");
+    }
+
+    if (output_json["nodes"].contains(
+          node_name)) {
+      throw std::logic_error(
+        std::string(
+          "Cannot dump duplicate e-node name: ") +
+        node_name);
+    }
+
+    nlohmann::json node_json;
+
+    node_json["children"] =
+      nlohmann::json::array();
+
+    const uint32_t child_begin =
+      ende_child_ptr[ende];
+
+    const uint32_t child_end =
+      ende_child_ptr[ende + 1u];
+
+    for (uint32_t position = child_begin;
+         position < child_end;
+         ++position) {
+      const uint32_t child_eclass =
+        ende_child[position];
+
+      if (child_eclass >= num_ecls) {
+        throw std::logic_error(
+          "Cannot dump e-graph because a child "
+          "e-class is out of range");
+      }
+
+      const uint32_t representative_ende =
+        representative_ende_of_eclass[
+          child_eclass];
+
+      if (representative_ende ==
+          UINT32_MAX) {
+        throw std::logic_error(
+          "Cannot dump e-graph because a referenced "
+          "child e-class has no e-node");
+      }
+
+      node_json["children"].push_back(
+        ende_name[
+          representative_ende]);
+    }
+
+    node_json["cost"] =
+      ende_cost[ende];
+
+    // The original external e-class names are not retained after
+    // _read_input() and pruning. Use the current dense e-class
+    // ID as the serialized e-class name.
+    node_json["eclass"] =
+      std::to_string(
+        ende_ecls[ende]);
+
+    node_json["op"] =
+      ende_op[ende];
+
+    output_json["nodes"][node_name] =
+      std::move(
+        node_json);
+  }
+
+  for (uint32_t root_eclass :
+       root_eclass_id) {
+    if (root_eclass >= num_ecls) {
+      throw std::logic_error(
+        "Cannot dump e-graph because a root "
+        "e-class is out of range");
+    }
+
+    if (representative_ende_of_eclass[
+          root_eclass] ==
+        UINT32_MAX) {
+      throw std::logic_error(
+        "Cannot dump e-graph because a root "
+        "e-class has no e-node");
+    }
+
+    output_json["root_eclasses"].push_back(
+      std::to_string(
+        root_eclass));
+  }
+
+  std::ofstream output_stream(
+    out_path,
+    std::ios::out |
+    std::ios::trunc);
+
+  if (!output_stream.is_open()) {
+    throw std::runtime_error(
+      std::string(
+        "Failed to open output JSON file: ") +
+      out_path);
+  }
+
+  output_stream
+    << std::setw(2)
+    << output_json
+    << '\n';
+
+  output_stream.flush();
+
+  if (!output_stream.good()) {
+    throw std::runtime_error(
+      std::string(
+        "Failed while writing output JSON file: ") +
+      out_path);
+  }
 }
 
 // =========================== TREE/DAG functions =========================== // 

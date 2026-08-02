@@ -1,0 +1,199 @@
+# XEG Main Programs
+
+This directory contains three main programs.
+
+## 1. `simple.cpp`
+
+`simple.cpp` runs the complete XEG flow on the original input e-graph.
+
+### Usage
+
+```bash
+./build/main/simple \
+  <input_file> \
+  [DAG_KERNEL] \
+  [NUM_THREAD_DAG_CONSTR] \
+  [BITMAP_BITS]
+```
+
+Only `<input_file>` is required. The default values are:
+
+```text
+DAG_KERNEL = 0
+NUM_THREAD_DAG_CONSTR = 1
+BITMAP_BITS = 0
+```
+
+### Example
+
+```bash
+./build/main/simple input.json 1 128 64
+```
+
+## 2. `xeg_t.cpp`
+
+`xeg_t.cpp` runs the XEG-T flow.
+
+It uses the same input format and command line arguments as `simple.cpp`. The main difference is that it calls `run_xeg_t_exp()` instead of `run()`.
+
+### Usage
+
+```bash
+./build/main/xeg_t \
+  <input_file> \
+  [DAG_KERNEL] \
+  [NUM_THREAD_DAG_CONSTR] \
+  [BITMAP_BITS]
+```
+
+### Example
+
+```bash
+./build/main/xeg_t input.json 1 128 64
+```
+
+## 3. `output_degree_ablation.cpp`
+
+`output_degree_ablation.cpp` is used for the output-degree ablation study in Figure 10.
+
+It supports two execution modes.
+
+### Dump-only mode
+
+Dump-only mode reads the original e-graph, increases its output degree, writes the generated graph to a JSON file, and exits without running XEG.
+
+### Usage
+
+```bash
+./build/main/output_degree_ablation \
+  --dump \
+  <input_file> \
+  <OUTPUT_DEGREE_MULTIPLIER> \
+  <RANDOM_SEED>
+```
+
+### Example
+
+```bash
+./build/main/output_degree_ablation \
+  --dump \
+  input.json \
+  2 \
+  42
+```
+
+Generated graphs are written to:
+
+```text
+/home/ychung79/gpu_extraction/ablation_benchmarks
+```
+
+The output filename follows this format:
+
+```text
+<input_name>_sf<multiplier>_<index>.json
+```
+
+For example:
+
+```text
+mul32.rename_sf2_1.json
+```
+
+Using the same input, multiplier, and random seed reproduces the same graph. Different random seeds normally generate different graph instances.
+
+Example seeds used in the experiments are:
+
+```text
+42
+113
+2027
+65537
+```
+
+### Build-and-run mode
+
+Build-and-run mode reads the original graph, increases its output degree in memory, and immediately runs the complete XEG flow.
+
+### Usage
+
+```bash
+./build/main/output_degree_ablation \
+  <input_file> \
+  <DAG_KERNEL> \
+  <NUM_THREAD_DAG_CONSTR> \
+  <BITMAP_BITS> \
+  <OUTPUT_DEGREE_MULTIPLIER>
+```
+
+### Example
+
+```bash
+./build/main/output_degree_ablation \
+  input.json \
+  1 \
+  128 \
+  64 \
+  2
+```
+
+This mode uses the default random seed defined in `output_degree_ablation.cpp`.
+
+## Common Arguments
+
+### `DAG_KERNEL`
+
+```text
+0: Thread
+1: Warp
+2: Block
+```
+
+### `NUM_THREAD_DAG_CONSTR`
+
+This value controls the execution width used during DAG construction.
+
+Typical values include:
+
+```text
+1
+32
+128
+256
+```
+
+### `BITMAP_BITS`
+
+```text
+0: Exact overlap detection
+32 to 2048: Approximate bitmap overlap detection
+```
+
+Valid nonzero values are:
+
+```text
+32
+64
+128
+256
+512
+1024
+2048
+```
+
+The Thread kernel supports only `BITMAP_BITS=0`.
+
+### `OUTPUT_DEGREE_MULTIPLIER`
+
+This value controls how much the total number of child references is increased.
+
+Typical values include:
+
+```text
+2
+4
+8
+16
+32
+64
+```
