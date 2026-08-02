@@ -4,6 +4,7 @@
 
 #include <g_ext/g_ext.cuh>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -11,10 +12,13 @@
 #include <fstream>
 #include <iomanip>
 #include <initializer_list>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -22,21 +26,71 @@
 
 namespace {
 
-constexpr uint32_t kNodeCount = 80u;
-
-// TemporaryGraphFile stores nodes in a JSON object whose keys
-// are iterated lexicographically.
-//
-// Use the full decimal width of uint32_t so lexicographic order
-// remains identical to numeric node-ID order, including tests
-// with more than 999 nodes.
 constexpr int kTestNodeIdWidth = 10;
+
+constexpr uint32_t kProbeSearchBegin = 2u;
+constexpr uint32_t kProbeSearchLimit = 200000u;
+
+constexpr uint32_t kCandidateParentLevel = 1u;
+constexpr uint32_t kCandidateChildLevel = 3u;
+constexpr int kExpectedCandidateLevel = 2;
+
+const std::vector<uint32_t> kSupportedBitmapBits{
+  32u,
+  64u,
+  128u,
+  256u,
+  512u,
+  1024u,
+  2048u
+};
 
 struct Edge
 {
   uint32_t parent;
   uint32_t child;
 };
+
+struct NodePair
+{
+  uint32_t parent;
+  uint32_t child;
+};
+
+struct ProbeBits
+{
+  uint32_t first;
+  uint32_t second;
+};
+
+struct CandidateState
+{
+  std::vector<uint32_t> selected_state;
+  std::vector<int> level;
+};
+
+struct StrategyGraphCase
+{
+  uint32_t bitmap_bits;
+
+  NodePair full_collision;
+  NodePair first_probe_only_collision;
+  NodePair second_probe_only_collision;
+
+  uint32_t full_collision_candidate;
+  uint32_t first_probe_candidate;
+  uint32_t second_probe_candidate;
+
+  uint32_t node_count;
+  std::vector<Edge> edges;
+};
+
+enum class PartialProbeMatch
+{
+  First,
+  Second
+};
+
 
 std::string node_name(
   const uint32_t node)
@@ -52,6 +106,7 @@ std::string node_name(
   return stream.str();
 }
 
+
 std::string eclass_name(
   const uint32_t node)
 {
@@ -66,97 +121,323 @@ std::string eclass_name(
   return stream.str();
 }
 
-std::vector<Edge> make_test_edges()
+
+// Host-side copy of gpu_dag_bitmap_mix32().
+//
+// uint32_t arithmetic intentionally wraps modulo 2^32.
+uint32_t strategy_a1_mix32(
+  uint32_t value)
 {
-  return {
-    // Candidate 0:
-    //
-    //   selected parent = 4
-    //   selected child  = 36
-    //
-    // 4 != 36
-    // 4 & 31 == 36 & 31
-    // 4 & 63 != 36 & 63
-    //
-    // Therefore:
-    //   Exact -> accept
-    //   32-bit -> reject
-    //   64-bit -> accept
-    {4u, 0u},
-    {0u, 36u},
+  value ^=
+    value >> 16u;
 
-    // Candidate 1:
-    //
-    // No collision for either bitmap size.
-    {5u, 1u},
-    {1u, 6u},
+  value *=
+    0x7feb352du;
 
-    // Candidate 2:
-    //
-    //   selected parent = 7
-    //   selected child  = 71
-    //
-    // 7 != 71
-    // 7 & 31 == 71 & 31
-    // 7 & 63 == 71 & 63
-    //
-    // Therefore:
-    //   Exact -> accept
-    //   32-bit -> reject
-    //   64-bit -> reject
-    {7u, 2u},
-    {2u, 71u},
+  value ^=
+    value >> 15u;
 
-    // Candidate 3:
-    //
-    // Selected valid parent:
-    //   8
-    //
-    // Unselected parent:
-    //   68
-    //
-    // Selected child:
-    //   4
-    //
-    // 68 collides with 4 under both 32-bit and 64-bit
-    // hashing, but parent 68 is unselected and must not enter
-    // either bitmap.
-    {8u, 3u},
-    {68u, 3u},
-    {3u, 4u},
+  value *=
+    0x846ca68bu;
 
-    // Candidate 9:
-    //
-    // Selected valid parent:
-    //   10
-    //
-    // Selected parent with invalid level:
-    //   69
-    //
-    // Selected child:
-    //   5
-    //
-    // 69 collides with 5 under both 32-bit and 64-bit
-    // hashing, but parent 69 has level -1 and must not enter
-    // either bitmap.
-    {10u, 9u},
-    {69u, 9u},
-    {9u, 5u},
+  value ^=
+    value >> 16u;
 
-    // Candidate 11:
-    //
-    // Node 12 appears in both the parent and child segments.
-    {12u, 11u},
-    {11u, 12u},
-
-    // Candidate 13:
-    //
-    // Ordinary non-collision candidate used for Batch/Direct
-    // parity testing.
-    {14u, 13u},
-    {13u, 15u}
-  };
+  return value;
 }
+
+
+// Host-side copy of gpu_dag_bitmap_a1_probe_bits().
+ProbeBits strategy_a1_probe_bits(
+  const uint32_t node,
+  const uint32_t bitmap_bits)
+{
+  if (bitmap_bits < 32u ||
+      bitmap_bits > 2048u ||
+      (bitmap_bits &
+       (bitmap_bits - 1u)) != 0u) {
+    throw std::invalid_argument(
+      "Invalid Strategy-A1 bitmap size");
+  }
+
+  const uint32_t half_bits =
+    bitmap_bits >> 1u;
+
+  const uint32_t half_mask =
+    half_bits - 1u;
+
+  const uint32_t mixed =
+    strategy_a1_mix32(
+      node);
+
+  ProbeBits result;
+
+  result.first =
+    mixed &
+    half_mask;
+
+  result.second =
+    half_bits +
+    ((mixed >> 16u) &
+     half_mask);
+
+  return result;
+}
+
+
+uint64_t probe_pair_key(
+  const ProbeBits& probe)
+{
+  return
+    (
+      static_cast<uint64_t>(
+        probe.first) << 32u
+    ) |
+    static_cast<uint64_t>(
+      probe.second);
+}
+
+
+bool probe_pairs_equal(
+  const ProbeBits& lhs,
+  const ProbeBits& rhs)
+{
+  return
+    lhs.first == rhs.first &&
+    lhs.second == rhs.second;
+}
+
+
+bool contains_node(
+  const std::unordered_set<uint32_t>& excluded,
+  const uint32_t node)
+{
+  return
+    excluded.find(node) !=
+    excluded.end();
+}
+
+
+NodePair find_full_probe_collision(
+  const uint32_t bitmap_bits,
+  const std::unordered_set<uint32_t>& excluded)
+{
+  std::unordered_map<uint64_t, uint32_t>
+    first_node_for_probe;
+
+  first_node_for_probe.reserve(
+    kProbeSearchLimit / 2u);
+
+  for (uint32_t node = kProbeSearchBegin;
+       node < kProbeSearchLimit;
+       ++node) {
+    if (contains_node(
+          excluded,
+          node)) {
+      continue;
+    }
+
+    const ProbeBits probe =
+      strategy_a1_probe_bits(
+        node,
+        bitmap_bits);
+
+    const uint64_t key =
+      probe_pair_key(
+        probe);
+
+    const auto insertion =
+      first_node_for_probe.emplace(
+        key,
+        node);
+
+    if (!insertion.second) {
+      const uint32_t previous =
+        insertion.first->second;
+
+      if (previous != node &&
+          !contains_node(
+            excluded,
+            previous)) {
+        return {
+          previous,
+          node
+        };
+      }
+    }
+  }
+
+  throw std::runtime_error(
+    "Failed to find a full Strategy-A1 collision");
+}
+
+
+NodePair find_partial_probe_collision(
+  const uint32_t bitmap_bits,
+  const PartialProbeMatch match,
+  const std::unordered_set<uint32_t>& excluded)
+{
+  // key:
+  //   the probe position that must match
+  //
+  // value.first:
+  //   first node that produced the key
+  //
+  // value.second:
+  //   the other probe position, which must differ
+  std::unordered_map<
+    uint32_t,
+    std::pair<uint32_t, uint32_t>>
+      first_node_for_probe;
+
+  first_node_for_probe.reserve(
+    kProbeSearchLimit / 2u);
+
+  for (uint32_t node = kProbeSearchBegin;
+       node < kProbeSearchLimit;
+       ++node) {
+    if (contains_node(
+          excluded,
+          node)) {
+      continue;
+    }
+
+    const ProbeBits probe =
+      strategy_a1_probe_bits(
+        node,
+        bitmap_bits);
+
+    const uint32_t key =
+      match == PartialProbeMatch::First
+        ? probe.first
+        : probe.second;
+
+    const uint32_t other_probe =
+      match == PartialProbeMatch::First
+        ? probe.second
+        : probe.first;
+
+    const auto insertion =
+      first_node_for_probe.emplace(
+        key,
+        std::make_pair(
+          node,
+          other_probe));
+
+    if (!insertion.second) {
+      const uint32_t previous_node =
+        insertion.first->second.first;
+
+      const uint32_t previous_other_probe =
+        insertion.first->second.second;
+
+      // Same requested probe, but different other probe:
+      //
+      //   First:
+      //     same first, different second
+      //
+      //   Second:
+      //     same second, different first
+      if (previous_other_probe !=
+          other_probe) {
+        return {
+          previous_node,
+          node
+        };
+      }
+    }
+  }
+
+  throw std::runtime_error(
+    "Failed to find a partial Strategy-A1 collision");
+}
+
+
+uint32_t find_noncolliding_node(
+  const uint32_t bitmap_bits,
+  const ProbeBits& target_probe,
+  const std::unordered_set<uint32_t>& excluded)
+{
+  for (uint32_t node = kProbeSearchBegin;
+       node < kProbeSearchLimit;
+       ++node) {
+    if (contains_node(
+          excluded,
+          node)) {
+      continue;
+    }
+
+    const ProbeBits probe =
+      strategy_a1_probe_bits(
+        node,
+        bitmap_bits);
+
+    if (!probe_pairs_equal(
+          probe,
+          target_probe)) {
+      return node;
+    }
+  }
+
+  throw std::runtime_error(
+    "Failed to find a noncolliding Strategy-A1 node");
+}
+
+
+std::vector<uint32_t>
+find_nodes_avoiding_probe_positions(
+  const uint32_t bitmap_bits,
+  const ProbeBits& target_probe,
+  const uint32_t requested_count,
+  const std::unordered_set<uint32_t>& excluded)
+{
+  std::vector<uint32_t> result;
+
+  result.reserve(
+    requested_count);
+
+  for (uint32_t node = kProbeSearchBegin;
+       node < kProbeSearchLimit &&
+       result.size() <
+         static_cast<size_t>(
+           requested_count);
+       ++node) {
+    if (contains_node(
+          excluded,
+          node)) {
+      continue;
+    }
+
+    const ProbeBits probe =
+      strategy_a1_probe_bits(
+        node,
+        bitmap_bits);
+
+    // Strategy A1 always places first and second in disjoint
+    // halves. By avoiding each corresponding target position,
+    // the union of all safe-parent bits cannot contain either
+    // target bit.
+    if (probe.first ==
+          target_probe.first ||
+        probe.second ==
+          target_probe.second) {
+      continue;
+    }
+
+    result.push_back(
+      node);
+  }
+
+  if (result.size() !=
+      static_cast<size_t>(
+        requested_count)) {
+    throw std::runtime_error(
+      "Failed to find enough safe Strategy-A1 parents");
+  }
+
+  return result;
+}
+
 
 class TemporaryGraphFile
 {
@@ -165,12 +446,20 @@ public:
     const uint32_t num_nodes,
     const std::vector<Edge>& edges)
   {
+    std::vector<std::vector<uint32_t>>
+      children_by_parent(
+        num_nodes);
+
     for (const Edge& edge : edges) {
       if (edge.parent >= num_nodes ||
           edge.child >= num_nodes) {
         throw std::invalid_argument(
           "Temporary graph edge is outside node range");
       }
+
+      children_by_parent[
+        edge.parent].push_back(
+          edge.child);
     }
 
     static std::atomic<uint32_t>
@@ -189,7 +478,7 @@ public:
     path_ =
       std::filesystem::temp_directory_path() /
       (
-        "g_ext_warp_bitmap_" +
+        "g_ext_warp_bitmap_a1_" +
         std::to_string(timestamp) +
         "_" +
         std::to_string(file_id) +
@@ -205,13 +494,12 @@ public:
       nlohmann::json children =
         nlohmann::json::array();
 
-      for (const Edge& edge : edges) {
-        if (edge.parent == node) {
-          // g_ext.cu interprets string children as child
-          // e-node names and then looks up their eclasses.
-          children.push_back(
-            node_name(edge.child));
-        }
+      for (const uint32_t child :
+           children_by_parent[node]) {
+        // g_ext.cu interprets string children as child e-node
+        // names and then resolves their eclasses.
+        children.push_back(
+          node_name(child));
       }
 
       nodes[node_name(node)] = {
@@ -222,12 +510,8 @@ public:
       };
     }
 
-    // Make every unique eclass alive so pruning preserves the
-    // zero-padded node ordering:
-    //
-    //   n000 -> e-node ID 0
-    //   n001 -> e-node ID 1
-    //   ...
+    // Keep every one-node eclass alive and preserve the
+    // zero-padded numeric e-node ordering after pruning.
     nlohmann::json roots =
       nlohmann::json::array();
 
@@ -288,51 +572,174 @@ private:
   std::filesystem::path path_;
 };
 
-std::vector<uint32_t>
-make_selected_state(
-  const std::initializer_list<uint32_t>
-    unselected_nodes)
+
+StrategyGraphCase make_strategy_graph_case(
+  const uint32_t bitmap_bits)
 {
-  std::vector<uint32_t> selected_state(
-    kNodeCount,
-    1u);
+  std::unordered_set<uint32_t>
+    excluded{
+      0u,
+      1u
+    };
 
-  for (const uint32_t node :
-       unselected_nodes) {
-    if (node >= kNodeCount) {
-      throw std::invalid_argument(
-        "Unselected test node is outside node range");
+  const NodePair full_collision =
+    find_full_probe_collision(
+      bitmap_bits,
+      excluded);
+
+  excluded.insert(
+    full_collision.parent);
+
+  excluded.insert(
+    full_collision.child);
+
+  const NodePair first_probe_collision =
+    find_partial_probe_collision(
+      bitmap_bits,
+      PartialProbeMatch::First,
+      excluded);
+
+  excluded.insert(
+    first_probe_collision.parent);
+
+  excluded.insert(
+    first_probe_collision.child);
+
+  const NodePair second_probe_collision =
+    find_partial_probe_collision(
+      bitmap_bits,
+      PartialProbeMatch::Second,
+      excluded);
+
+  excluded.insert(
+    second_probe_collision.parent);
+
+  excluded.insert(
+    second_probe_collision.child);
+
+  const uint32_t maximum_data_node =
+    std::max({
+      full_collision.parent,
+      full_collision.child,
+      first_probe_collision.parent,
+      first_probe_collision.child,
+      second_probe_collision.parent,
+      second_probe_collision.child
+    });
+
+  const uint32_t full_candidate =
+    maximum_data_node + 1u;
+
+  const uint32_t first_candidate =
+    maximum_data_node + 2u;
+
+  const uint32_t second_candidate =
+    maximum_data_node + 3u;
+
+  StrategyGraphCase result;
+
+  result.bitmap_bits =
+    bitmap_bits;
+
+  result.full_collision =
+    full_collision;
+
+  result.first_probe_only_collision =
+    first_probe_collision;
+
+  result.second_probe_only_collision =
+    second_probe_collision;
+
+  result.full_collision_candidate =
+    full_candidate;
+
+  result.first_probe_candidate =
+    first_candidate;
+
+  result.second_probe_candidate =
+    second_candidate;
+
+  result.node_count =
+    second_candidate + 1u;
+
+  result.edges = {
+    {
+      full_collision.parent,
+      full_candidate
+    },
+    {
+      full_candidate,
+      full_collision.child
+    },
+    {
+      first_probe_collision.parent,
+      first_candidate
+    },
+    {
+      first_candidate,
+      first_probe_collision.child
+    },
+    {
+      second_probe_collision.parent,
+      second_candidate
+    },
+    {
+      second_candidate,
+      second_probe_collision.child
     }
+  };
 
-    selected_state[node] =
-      0u;
-  }
-
-  return selected_state;
+  return result;
 }
 
-std::vector<int>
-make_level_state(
-  const std::initializer_list<uint32_t>
-    unselected_nodes)
+
+CandidateState make_candidate_state(
+  const uint32_t node_count,
+  const uint32_t candidate,
+  const uint32_t parent,
+  const uint32_t child)
 {
-  std::vector<int> level(
-    kNodeCount,
-    0);
-
-  for (const uint32_t node :
-       unselected_nodes) {
-    if (node >= kNodeCount) {
-      throw std::invalid_argument(
-        "Unselected test node is outside node range");
-    }
-
-    level[node] =
-      -1;
+  if (candidate >= node_count ||
+      parent >= node_count ||
+      child >= node_count) {
+    throw std::invalid_argument(
+      "Candidate-state node is outside graph range");
   }
 
-  return level;
+  if (candidate == parent ||
+      candidate == child ||
+      parent == child) {
+    throw std::invalid_argument(
+      "Candidate, parent, and child must be distinct");
+  }
+
+  CandidateState result;
+
+  result.selected_state.assign(
+    node_count,
+    0u);
+
+  result.level.assign(
+    node_count,
+    -1);
+
+  result.selected_state[parent] =
+    1u;
+
+  result.selected_state[child] =
+    1u;
+
+  result.level[parent] =
+    static_cast<int>(
+      kCandidateParentLevel);
+
+  result.level[child] =
+    static_cast<int>(
+      kCandidateChildLevel);
+
+  return result;
 }
+
 
 void check_result_equal(
   const G_EXT::GpuInsertionResult& lhs,
@@ -351,35 +758,86 @@ void check_result_equal(
     rhs.u0);
 }
 
+
+void check_candidate_accepted(
+  const G_EXT::GpuInsertionResult& result,
+  const uint32_t candidate)
+{
+  DOCTEST_REQUIRE(
+    candidate <
+    result.selected_state.size());
+
+  DOCTEST_REQUIRE(
+    candidate <
+    result.level.size());
+
+  DOCTEST_CHECK(
+    result.selected_state[candidate] ==
+    2u);
+
+  DOCTEST_CHECK(
+    result.level[candidate] ==
+    kExpectedCandidateLevel);
+
+  DOCTEST_CHECK(
+    result.u0 ==
+    1u);
+}
+
+
+void check_candidate_rejected(
+  const G_EXT::GpuInsertionResult& result,
+  const uint32_t candidate)
+{
+  DOCTEST_REQUIRE(
+    candidate <
+    result.selected_state.size());
+
+  DOCTEST_REQUIRE(
+    candidate <
+    result.level.size());
+
+  DOCTEST_CHECK(
+    result.selected_state[candidate] ==
+    0u);
+
+  DOCTEST_CHECK(
+    result.level[candidate] ==
+    -1);
+
+  DOCTEST_CHECK(
+    result.u0 ==
+    0u);
+}
+
 }  // namespace
 
+
 DOCTEST_TEST_CASE(
-  "Warp bitmap accepts exact, register, and "
-  "shared-memory bitmap sizes")
+  "Warp bitmap accepts every supported runtime size")
 {
+  constexpr uint32_t node_count =
+    8u;
+
   const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
+    node_count,
+    {});
 
   G_EXT extension;
-  extension.read(graph.path());
 
-  const auto selected_state =
-    make_selected_state({});
+  extension.read(
+    graph.path());
 
-  const auto level =
-    make_level_state({});
+  const std::vector<uint32_t>
+    selected_state(
+      node_count,
+      1u);
 
-  // Supported configurations:
-  //
-  //   0:
-  //     Exact Warp
-  //
-  //   32, 64:
-  //     Register Warp Bitmap
-  //
-  //   128...2048:
-  //     Per-warp shared-memory bitmap
+  const std::vector<int>
+    level(
+      node_count,
+      0);
+
   for (const uint32_t bitmap_bits :
        {
          0u,
@@ -391,7 +849,8 @@ DOCTEST_TEST_CASE(
          1024u,
          2048u
        }) {
-    DOCTEST_CAPTURE(bitmap_bits);
+    DOCTEST_CAPTURE(
+      bitmap_bits);
 
     DOCTEST_CHECK_NOTHROW(
       extension
@@ -403,11 +862,6 @@ DOCTEST_TEST_CASE(
           bitmap_bits));
   }
 
-  // Unsupported:
-  //
-  //   below 32
-  //   not a power of two
-  //   above 2048
   for (const uint32_t bitmap_bits :
        {
          1u,
@@ -416,7 +870,8 @@ DOCTEST_TEST_CASE(
          192u,
          4096u
        }) {
-    DOCTEST_CAPTURE(bitmap_bits);
+    DOCTEST_CAPTURE(
+      bitmap_bits);
 
     DOCTEST_CHECK_THROWS_AS(
       extension
@@ -430,878 +885,497 @@ DOCTEST_TEST_CASE(
   }
 }
 
+
 DOCTEST_TEST_CASE(
-  "Warp Bitmap-32 rejects a 32-bit collision that "
-  "Warp Bitmap-64 distinguishes")
+  "Every nonzero Warp bitmap uses the same Strategy-A1 "
+  "two-probe policy as Block")
 {
-  const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
+  for (const uint32_t bitmap_bits :
+       kSupportedBitmapBits) {
+    DOCTEST_CAPTURE(
+      bitmap_bits);
 
-  G_EXT extension;
-  extension.read(graph.path());
+    const StrategyGraphCase test_case =
+      make_strategy_graph_case(
+        bitmap_bits);
 
-  auto selected_state =
-    make_selected_state({0u});
+    const TemporaryGraphFile graph(
+      test_case.node_count,
+      test_case.edges);
 
-  auto level =
-    make_level_state({0u});
+    G_EXT extension;
 
-  level[4u] =
-    1;
+    extension.read(
+      graph.path());
 
-  level[36u] =
-    3;
+    // ==========================================================
+    // Full two-probe collision
+    //
+    // Exact overlap sees different e-node IDs and accepts.
+    //
+    // Strategy A1 sees both probe positions and rejects.
+    // ==========================================================
+    {
+      const CandidateState input =
+        make_candidate_state(
+          test_case.node_count,
+          test_case.full_collision_candidate,
+          test_case.full_collision.parent,
+          test_case.full_collision.child);
 
-  const auto exact =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        0u);
+      const ProbeBits parent_probe =
+        strategy_a1_probe_bits(
+          test_case.full_collision.parent,
+          bitmap_bits);
 
-  const auto bitmap32 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        32u);
+      const ProbeBits child_probe =
+        strategy_a1_probe_bits(
+          test_case.full_collision.child,
+          bitmap_bits);
 
-  const auto bitmap64 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        64u);
+      DOCTEST_REQUIRE(
+        test_case.full_collision.parent !=
+        test_case.full_collision.child);
 
-  DOCTEST_REQUIRE(
-    exact.selected_state.size() ==
-    kNodeCount);
+      DOCTEST_REQUIRE(
+        probe_pairs_equal(
+          parent_probe,
+          child_probe));
 
-  DOCTEST_REQUIRE(
-    bitmap32.selected_state.size() ==
-    kNodeCount);
+      const auto exact =
+        extension
+          .unittest_gpu_insert_warp_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            0u);
 
-  DOCTEST_REQUIRE(
-    bitmap64.selected_state.size() ==
-    kNodeCount);
+      const auto warp_bitmap =
+        extension
+          .unittest_gpu_insert_warp_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
 
-  DOCTEST_CHECK(
-    exact.selected_state[0u] ==
-    2u);
+      const auto block_bitmap =
+        extension
+          .unittest_gpu_insert_block_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
 
-  DOCTEST_CHECK(
-    exact.level[0u] ==
-    2);
+      check_candidate_accepted(
+        exact,
+        test_case.full_collision_candidate);
 
-  DOCTEST_CHECK(
-    exact.u0 ==
-    1u);
+      check_candidate_rejected(
+        warp_bitmap,
+        test_case.full_collision_candidate);
 
-  DOCTEST_CHECK(
-    bitmap32.selected_state[0u] ==
-    0u);
+      check_candidate_rejected(
+        block_bitmap,
+        test_case.full_collision_candidate);
 
-  DOCTEST_CHECK(
-    bitmap32.level[0u] ==
-    -1);
+      check_result_equal(
+        warp_bitmap,
+        block_bitmap);
+    }
 
-  DOCTEST_CHECK(
-    bitmap32.u0 ==
-    0u);
+    // ==========================================================
+    // Only the lower-half probe collides.
+    //
+    // Strategy A1 requires both probes, so the candidate must
+    // remain accepted.
+    // ==========================================================
+    {
+      const CandidateState input =
+        make_candidate_state(
+          test_case.node_count,
+          test_case.first_probe_candidate,
+          test_case
+            .first_probe_only_collision
+            .parent,
+          test_case
+            .first_probe_only_collision
+            .child);
 
-  DOCTEST_CHECK(
-    bitmap64.selected_state[0u] ==
-    2u);
+      const ProbeBits parent_probe =
+        strategy_a1_probe_bits(
+          test_case
+            .first_probe_only_collision
+            .parent,
+          bitmap_bits);
 
-  DOCTEST_CHECK(
-    bitmap64.level[0u] ==
-    2);
+      const ProbeBits child_probe =
+        strategy_a1_probe_bits(
+          test_case
+            .first_probe_only_collision
+            .child,
+          bitmap_bits);
 
-  DOCTEST_CHECK(
-    bitmap64.u0 ==
-    1u);
+      DOCTEST_REQUIRE(
+        parent_probe.first ==
+        child_probe.first);
+
+      DOCTEST_REQUIRE(
+        parent_probe.second !=
+        child_probe.second);
+
+      const auto warp_bitmap =
+        extension
+          .unittest_gpu_insert_warp_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
+
+      const auto block_bitmap =
+        extension
+          .unittest_gpu_insert_block_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
+
+      check_candidate_accepted(
+        warp_bitmap,
+        test_case.first_probe_candidate);
+
+      check_candidate_accepted(
+        block_bitmap,
+        test_case.first_probe_candidate);
+
+      check_result_equal(
+        warp_bitmap,
+        block_bitmap);
+    }
+
+    // ==========================================================
+    // Only the upper-half probe collides.
+    //
+    // This must also remain accepted.
+    // ==========================================================
+    {
+      const CandidateState input =
+        make_candidate_state(
+          test_case.node_count,
+          test_case.second_probe_candidate,
+          test_case
+            .second_probe_only_collision
+            .parent,
+          test_case
+            .second_probe_only_collision
+            .child);
+
+      const ProbeBits parent_probe =
+        strategy_a1_probe_bits(
+          test_case
+            .second_probe_only_collision
+            .parent,
+          bitmap_bits);
+
+      const ProbeBits child_probe =
+        strategy_a1_probe_bits(
+          test_case
+            .second_probe_only_collision
+            .child,
+          bitmap_bits);
+
+      DOCTEST_REQUIRE(
+        parent_probe.first !=
+        child_probe.first);
+
+      DOCTEST_REQUIRE(
+        parent_probe.second ==
+        child_probe.second);
+
+      const auto warp_bitmap =
+        extension
+          .unittest_gpu_insert_warp_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
+
+      const auto block_bitmap =
+        extension
+          .unittest_gpu_insert_block_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
+
+      check_candidate_accepted(
+        warp_bitmap,
+        test_case.second_probe_candidate);
+
+      check_candidate_accepted(
+        block_bitmap,
+        test_case.second_probe_candidate);
+
+      check_result_equal(
+        warp_bitmap,
+        block_bitmap);
+    }
+  }
 }
 
-DOCTEST_TEST_CASE(
-  "Warp Bitmap-64 conservatively rejects a 64-bit collision")
-{
-  const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
-
-  G_EXT extension;
-  extension.read(graph.path());
-
-  auto selected_state =
-    make_selected_state({2u});
-
-  auto level =
-    make_level_state({2u});
-
-  level[7u] =
-    1;
-
-  level[71u] =
-    3;
-
-  const auto exact =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        0u);
-
-  const auto bitmap32 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        32u);
-
-  const auto bitmap64 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        64u);
-
-  DOCTEST_CHECK(
-    exact.selected_state[2u] ==
-    2u);
-
-  DOCTEST_CHECK(
-    exact.level[2u] ==
-    2);
-
-  DOCTEST_CHECK(
-    exact.u0 ==
-    1u);
-
-  DOCTEST_CHECK(
-    bitmap32.selected_state[2u] ==
-    0u);
-
-  DOCTEST_CHECK(
-    bitmap32.level[2u] ==
-    -1);
-
-  DOCTEST_CHECK(
-    bitmap32.u0 ==
-    0u);
-
-  DOCTEST_CHECK(
-    bitmap64.selected_state[2u] ==
-    0u);
-
-  DOCTEST_CHECK(
-    bitmap64.level[2u] ==
-    -1);
-
-  DOCTEST_CHECK(
-    bitmap64.u0 ==
-    0u);
-}
 
 DOCTEST_TEST_CASE(
-  "Warp shared-memory bitmaps conservatively reject "
-  "their matching power-of-two collisions")
+  "Unselected and invalid-level parents do not populate "
+  "Strategy-A1 Warp bitmaps")
 {
-  struct CollisionCase
-  {
-    uint32_t bitmap_bits;
-    uint32_t candidate;
-    uint32_t parent;
-    uint32_t child;
-  };
+  for (const uint32_t bitmap_bits :
+       kSupportedBitmapBits) {
+    DOCTEST_CAPTURE(
+      bitmap_bits);
 
-  // Every parent-child pair differs by exactly the corresponding
-  // bitmap size:
-  //
-  //   child = parent + bitmap_bits
-  //
-  // Therefore:
-  //
-  //   parent != child
-  //   parent & (bitmap_bits - 1)
-  //     ==
-  //   child & (bitmap_bits - 1)
-  const std::vector<CollisionCase>
-    collision_cases{
-      {
-        128u,
+    std::unordered_set<uint32_t>
+      excluded{
         0u,
-        20u,
-        148u
+        1u
+      };
+
+    const NodePair collision =
+      find_full_probe_collision(
+        bitmap_bits,
+        excluded);
+
+    excluded.insert(
+      collision.parent);
+
+    excluded.insert(
+      collision.child);
+
+    const ProbeBits child_probe =
+      strategy_a1_probe_bits(
+        collision.child,
+        bitmap_bits);
+
+    const uint32_t valid_parent =
+      find_noncolliding_node(
+        bitmap_bits,
+        child_probe,
+        excluded);
+
+    const uint32_t candidate =
+      std::max({
+        collision.parent,
+        collision.child,
+        valid_parent
+      }) + 1u;
+
+    const uint32_t node_count =
+      candidate + 1u;
+
+    const std::vector<Edge> edges{
+      {
+        collision.parent,
+        candidate
       },
       {
-        256u,
-        1u,
-        21u,
-        277u
+        valid_parent,
+        candidate
       },
       {
-        512u,
-        2u,
-        22u,
-        534u
-      },
-      {
-        1024u,
-        3u,
-        23u,
-        1047u
-      },
-      {
-        2048u,
-        4u,
-        24u,
-        2072u
+        candidate,
+        collision.child
       }
     };
 
-  constexpr uint32_t node_count =
-    2080u;
-
-  std::vector<Edge> edges;
-
-  for (const CollisionCase& collision_case :
-       collision_cases) {
-    edges.push_back({
-      collision_case.parent,
-      collision_case.candidate
-    });
-
-    edges.push_back({
-      collision_case.candidate,
-      collision_case.child
-    });
-  }
-
-  const TemporaryGraphFile graph(
-    node_count,
-    edges);
-
-  G_EXT extension;
-  extension.read(graph.path());
-
-  for (const CollisionCase& collision_case :
-       collision_cases) {
-    const uint32_t bitmap_bits =
-      collision_case.bitmap_bits;
-
-    const uint32_t candidate =
-      collision_case.candidate;
-
-    const uint32_t parent =
-      collision_case.parent;
-
-    const uint32_t child =
-      collision_case.child;
-
-    DOCTEST_CAPTURE(bitmap_bits);
-    DOCTEST_CAPTURE(candidate);
-    DOCTEST_CAPTURE(parent);
-    DOCTEST_CAPTURE(child);
-
-    std::vector<uint32_t> selected_state(
+    const TemporaryGraphFile graph(
       node_count,
-      1u);
+      edges);
 
-    std::vector<int> level(
-      node_count,
-      0);
+    G_EXT extension;
 
-    selected_state[candidate] =
-      0u;
+    extension.read(
+      graph.path());
 
-    level[candidate] =
-      -1;
+    // ----------------------------------------------------------
+    // The colliding parent is unselected.
+    // ----------------------------------------------------------
+    {
+      CandidateState input;
 
-    level[parent] =
-      1;
-
-    level[child] =
-      3;
-
-    // Exact overlap detection sees two different e-node IDs,
-    // so the candidate must be accepted.
-    const auto exact =
-      extension
-        .unittest_gpu_insert_warp_direct_once(
-          selected_state,
-          level,
-          true,
-          64u,
-          0u);
-
-    // The corresponding shared-memory bitmap sees the same
-    // hashed bit, so it conservatively rejects the candidate.
-    const auto bitmap =
-      extension
-        .unittest_gpu_insert_warp_direct_once(
-          selected_state,
-          level,
-          true,
-          64u,
-          bitmap_bits);
-
-    DOCTEST_CHECK(
-      exact.selected_state[candidate] ==
-      2u);
-
-    DOCTEST_CHECK(
-      exact.level[candidate] ==
-      2);
-
-    DOCTEST_CHECK(
-      exact.u0 ==
-      1u);
-
-    DOCTEST_CHECK(
-      bitmap.selected_state[candidate] ==
-      0u);
-
-    DOCTEST_CHECK(
-      bitmap.level[candidate] ==
-      -1);
-
-    DOCTEST_CHECK(
-      bitmap.u0 ==
-      0u);
-  }
-}
-
-DOCTEST_TEST_CASE(
-  "Unselected parents do not populate Warp bitmaps")
-{
-  const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
-
-  G_EXT extension;
-  extension.read(graph.path());
-
-  // Candidate 3 and parent 68 are both unselected.
-  //
-  // Parent 68 has no selected parent, so it cannot be inserted
-  // by this top-down insertion phase.
-  auto selected_state =
-    make_selected_state({
-      3u,
-      68u
-    });
-
-  auto level =
-    make_level_state({
-      3u,
-      68u
-    });
-
-  level[8u] =
-    1;
-
-  level[4u] =
-    3;
-
-  const auto bitmap32 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        32u);
-
-  const auto bitmap64 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        64u);
-
-  DOCTEST_CHECK(
-    bitmap32.selected_state[3u] ==
-    2u);
-
-  DOCTEST_CHECK(
-    bitmap32.level[3u] ==
-    2);
-
-  DOCTEST_CHECK(
-    bitmap32.selected_state[68u] ==
-    0u);
-
-  DOCTEST_CHECK(
-    bitmap32.u0 ==
-    1u);
-
-  DOCTEST_CHECK(
-    bitmap64.selected_state[3u] ==
-    2u);
-
-  DOCTEST_CHECK(
-    bitmap64.level[3u] ==
-    2);
-
-  DOCTEST_CHECK(
-    bitmap64.selected_state[68u] ==
-    0u);
-
-  DOCTEST_CHECK(
-    bitmap64.u0 ==
-    1u);
-}
-
-DOCTEST_TEST_CASE(
-  "Selected parents with invalid levels do not populate "
-  "Warp bitmaps")
-{
-  const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
-
-  G_EXT extension;
-  extension.read(graph.path());
-
-  auto selected_state =
-    make_selected_state({9u});
-
-  auto level =
-    make_level_state({9u});
-
-  level[10u] =
-    1;
-
-  // Parent 69 is selected, but its invalid level excludes it
-  // from both the level summary and the bitmap.
-  level[69u] =
-    -1;
-
-  level[5u] =
-    3;
-
-  const auto bitmap32 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        32u);
-
-  const auto bitmap64 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        64u);
-
-  DOCTEST_CHECK(
-    bitmap32.selected_state[9u] ==
-    2u);
-
-  DOCTEST_CHECK(
-    bitmap32.level[9u] ==
-    2);
-
-  DOCTEST_CHECK(
-    bitmap32.u0 ==
-    1u);
-
-  DOCTEST_CHECK(
-    bitmap64.selected_state[9u] ==
-    2u);
-
-  DOCTEST_CHECK(
-    bitmap64.level[9u] ==
-    2);
-
-  DOCTEST_CHECK(
-    bitmap64.u0 ==
-    1u);
-}
-
-DOCTEST_TEST_CASE(
-  "A true selected parent-child overlap is rejected by "
-  "all Warp implementations")
-{
-  const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
-
-  G_EXT extension;
-  extension.read(graph.path());
-
-  auto selected_state =
-    make_selected_state({11u});
-
-  auto level =
-    make_level_state({11u});
-
-  level[12u] =
-    2;
-
-  const auto exact =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
+      input.selected_state.assign(
+        node_count,
         0u);
 
-  const auto bitmap32 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        32u);
+      input.level.assign(
+        node_count,
+        -1);
 
-  const auto bitmap64 =
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        64u);
+      input.selected_state[valid_parent] =
+        1u;
 
-  DOCTEST_CHECK(
-    exact.selected_state[11u] ==
-    0u);
+      input.selected_state[collision.child] =
+        1u;
 
-  DOCTEST_CHECK(
-    bitmap32.selected_state[11u] ==
-    0u);
+      input.level[valid_parent] =
+        static_cast<int>(
+          kCandidateParentLevel);
 
-  DOCTEST_CHECK(
-    bitmap64.selected_state[11u] ==
-    0u);
+      input.level[collision.child] =
+        static_cast<int>(
+          kCandidateChildLevel);
 
-  DOCTEST_CHECK(
-    exact.u0 ==
-    0u);
+      const auto warp_result =
+        extension
+          .unittest_gpu_insert_warp_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
 
-  DOCTEST_CHECK(
-    bitmap32.u0 ==
-    0u);
+      const auto block_result =
+        extension
+          .unittest_gpu_insert_block_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
 
-  DOCTEST_CHECK(
-    bitmap64.u0 ==
-    0u);
-}
+      check_candidate_accepted(
+        warp_result,
+        candidate);
 
-DOCTEST_TEST_CASE(
-  "Warp-local bitmaps do not leak between warps in one block")
-{
-  const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
+      check_candidate_accepted(
+        block_result,
+        candidate);
 
-  G_EXT extension;
-  extension.read(graph.path());
-
-  auto selected_state =
-    make_selected_state({
-      0u,
-      1u
-    });
-
-  auto level =
-    make_level_state({
-      0u,
-      1u
-    });
-
-  // Candidate 0:
-  //   32-bit collision -> reject.
-  level[4u] =
-    1;
-
-  level[36u] =
-    3;
-
-  // Candidate 1:
-  //   no collision -> accept.
-  level[5u] =
-    1;
-
-  level[6u] =
-    3;
-
-  DOCTEST_SUBCASE(
-    "Two warps in one 64-thread block")
-  {
-    const auto result =
-      extension
-        .unittest_gpu_insert_warp_direct_once(
-          selected_state,
-          level,
-          true,
-          64u,
-          32u);
-
-    DOCTEST_CHECK(
-      result.selected_state[0u] ==
-      0u);
-
-    DOCTEST_CHECK(
-      result.selected_state[1u] ==
-      2u);
-
-    DOCTEST_CHECK(
-      result.level[1u] ==
-      2);
-
-    DOCTEST_CHECK(
-      result.u0 ==
-      1u);
-  }
-
-  DOCTEST_SUBCASE(
-    "Four warps in one 128-thread block")
-  {
-    const auto result =
-      extension
-        .unittest_gpu_insert_warp_direct_once(
-          selected_state,
-          level,
-          true,
-          128u,
-          32u);
-
-    DOCTEST_CHECK(
-      result.selected_state[0u] ==
-      0u);
-
-    DOCTEST_CHECK(
-      result.selected_state[1u] ==
-      2u);
-
-    DOCTEST_CHECK(
-      result.level[1u] ==
-      2);
-
-    DOCTEST_CHECK(
-      result.u0 ==
-      1u);
-  }
-}
-
-DOCTEST_TEST_CASE(
-  "Shared Warp bitmaps above 64 bits do not leak "
-  "between warps in one CUDA block")
-{
-  // Candidate 0:
-  //
-  //   parent = 4
-  //   child  = 4100
-  //
-  //   4 != 4100
-  //   4 & 2047 == 4100 & 2047
-  //
-  // Therefore Bitmap-2048 rejects candidate 0.
-  //
-  // Candidate 1:
-  //
-  //   parents = 100...1099
-  //   child   = 2052
-  //
-  // None of candidate 1's own parents hashes to bit 4.
-  // Candidate 1 must therefore be accepted.
-  //
-  // However:
-  //
-  //   2052 & 2047 == 4
-  //
-  // If candidate 0 and candidate 1 accidentally share the same
-  // bitmap segment, candidate 0's parent 4 can incorrectly reject
-  // candidate 1.
-  constexpr uint32_t node_count =
-    4110u;
-
-  std::vector<Edge> edges{
-    {
-      4u,
-      0u
-    },
-    {
-      0u,
-      4100u
-    },
-    {
-      1u,
-      2052u
+      check_result_equal(
+        warp_result,
+        block_result);
     }
-  };
 
-  // Give candidate 1 a long parent scan.
-  //
-  // This also ensures candidate 0 has enough time to publish its
-  // own bit before candidate 1 probes its child bit if the two
-  // warps incorrectly alias the same shared-memory region.
-  for (uint32_t parent = 100u;
-       parent < 1100u;
-       ++parent) {
-    edges.push_back({
-      parent,
-      1u
-    });
-  }
+    // ----------------------------------------------------------
+    // The colliding parent is selected but has level -1.
+    // ----------------------------------------------------------
+    {
+      CandidateState input;
 
-  const TemporaryGraphFile graph(
-    node_count,
-    edges);
+      input.selected_state.assign(
+        node_count,
+        0u);
 
-  G_EXT extension;
-  extension.read(graph.path());
+      input.level.assign(
+        node_count,
+        -1);
 
-  std::vector<uint32_t> selected_state(
-    node_count,
-    1u);
+      input.selected_state[valid_parent] =
+        1u;
 
-  std::vector<int> level(
-    node_count,
-    0);
+      input.selected_state[collision.parent] =
+        1u;
 
-  selected_state[0u] =
-    0u;
+      input.selected_state[collision.child] =
+        1u;
 
-  selected_state[1u] =
-    0u;
+      input.level[valid_parent] =
+        static_cast<int>(
+          kCandidateParentLevel);
 
-  level[0u] =
-    -1;
+      // collision.parent intentionally remains level -1.
 
-  level[1u] =
-    -1;
+      input.level[collision.child] =
+        static_cast<int>(
+          kCandidateChildLevel);
 
-  // Candidate 0's parent and child.
-  level[4u] =
-    1;
+      const auto warp_result =
+        extension
+          .unittest_gpu_insert_warp_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
 
-  level[4100u] =
-    3;
+      const auto block_result =
+        extension
+          .unittest_gpu_insert_block_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            64u,
+            bitmap_bits);
 
-  // Candidate 1's selected parents.
-  for (uint32_t parent = 100u;
-       parent < 1100u;
-       ++parent) {
-    level[parent] =
-      1;
-  }
+      check_candidate_accepted(
+        warp_result,
+        candidate);
 
-  // Candidate 1's selected child.
-  level[2052u] =
-    3;
+      check_candidate_accepted(
+        block_result,
+        candidate);
 
-  for (const uint32_t threads_per_block :
-       {
-         64u,
-         128u
-       }) {
-    DOCTEST_CAPTURE(threads_per_block);
-
-    const auto result =
-      extension
-        .unittest_gpu_insert_warp_direct_once(
-          selected_state,
-          level,
-          true,
-          threads_per_block,
-          2048u);
-
-    // Candidate 0 has a local Bitmap-2048 collision.
-    DOCTEST_CHECK(
-      result.selected_state[0u] ==
-      0u);
-
-    DOCTEST_CHECK(
-      result.level[0u] ==
-      -1);
-
-    // Candidate 1 has no collision inside its own bitmap.
-    //
-    // It must not observe candidate 0's parent bitmap.
-    DOCTEST_CHECK(
-      result.selected_state[1u] ==
-      2u);
-
-    DOCTEST_CHECK(
-      result.level[1u] ==
-      2);
-
-    DOCTEST_CHECK(
-      result.u0 ==
-      1u);
+      check_result_equal(
+        warp_result,
+        block_result);
+    }
   }
 }
 
+
 DOCTEST_TEST_CASE(
-  "Warp Bitmap Batch and Direct match for one active candidate")
+  "Warp Bitmap Batch and Direct use identical Strategy-A1 "
+  "behavior")
 {
-  const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
-
-  G_EXT extension;
-  extension.read(graph.path());
-
-  auto selected_state =
-    make_selected_state({13u});
-
-  auto level =
-    make_level_state({13u});
-
-  level[14u] =
-    1;
-
-  level[15u] =
-    3;
-
   for (const uint32_t bitmap_bits :
-       {
-         32u,
-         64u,
-         128u,
-         256u,
-         512u,
-         1024u,
-         2048u
-       }) {
-    DOCTEST_CAPTURE(bitmap_bits);
+       kSupportedBitmapBits) {
+    DOCTEST_CAPTURE(
+      bitmap_bits);
+
+    const StrategyGraphCase test_case =
+      make_strategy_graph_case(
+        bitmap_bits);
+
+    const TemporaryGraphFile graph(
+      test_case.node_count,
+      test_case.edges);
+
+    G_EXT extension;
+
+    extension.read(
+      graph.path());
+
+    // Use a one-probe-only collision. Strategy A1 must accept
+    // it, making this test sensitive to both the hash policy and
+    // the complete candidate publication result.
+    const CandidateState input =
+      make_candidate_state(
+        test_case.node_count,
+        test_case.first_probe_candidate,
+        test_case
+          .first_probe_only_collision
+          .parent,
+        test_case
+          .first_probe_only_collision
+          .child);
 
     for (const bool is_top_down_insertion :
          {
            true,
            false
          }) {
-      DOCTEST_CAPTURE(is_top_down_insertion);
+      DOCTEST_CAPTURE(
+        is_top_down_insertion);
 
       const auto batch =
         extension
           .unittest_gpu_insert_warp_batch_once(
-            selected_state,
-            level,
+            input.selected_state,
+            input.level,
             is_top_down_insertion,
             64u,
             bitmap_bits);
@@ -1309,8 +1383,8 @@ DOCTEST_TEST_CASE(
       const auto direct =
         extension
           .unittest_gpu_insert_warp_direct_once(
-            selected_state,
-            level,
+            input.selected_state,
+            input.level,
             is_top_down_insertion,
             64u,
             bitmap_bits);
@@ -1319,57 +1393,235 @@ DOCTEST_TEST_CASE(
         batch,
         direct);
 
+      check_candidate_accepted(
+        batch,
+        test_case.first_probe_candidate);
+    }
+  }
+}
+
+
+DOCTEST_TEST_CASE(
+  "Warp-local Strategy-A1 bitmaps do not leak between "
+  "warps in one CUDA block")
+{
+  // Cover both register and shared-memory implementations.
+  for (const uint32_t bitmap_bits :
+       {
+         32u,
+         64u,
+         128u,
+         2048u
+       }) {
+    DOCTEST_CAPTURE(
+      bitmap_bits);
+
+    std::unordered_set<uint32_t>
+      excluded{
+        0u,
+        1u
+      };
+
+    const NodePair collision =
+      find_full_probe_collision(
+        bitmap_bits,
+        excluded);
+
+    excluded.insert(
+      collision.parent);
+
+    excluded.insert(
+      collision.child);
+
+    const ProbeBits target_probe =
+      strategy_a1_probe_bits(
+        collision.parent,
+        bitmap_bits);
+
+    // Candidate 1 receives a deliberately long parent scan.
+    //
+    // None of these parents sets either of the target child
+    // probe positions. Therefore candidate 1's own bitmap cannot
+    // reject its child.
+    const std::vector<uint32_t>
+      safe_parents =
+        find_nodes_avoiding_probe_positions(
+          bitmap_bits,
+          target_probe,
+          512u,
+          excluded);
+
+    uint32_t maximum_node =
+      std::max(
+        collision.parent,
+        collision.child);
+
+    for (const uint32_t parent :
+         safe_parents) {
+      maximum_node =
+        std::max(
+          maximum_node,
+          parent);
+    }
+
+    const uint32_t node_count =
+      maximum_node + 1u;
+
+    std::vector<Edge> edges{
+      // Candidate 0 has a local full Strategy-A1 collision.
+      {
+        collision.parent,
+        0u
+      },
+      {
+        0u,
+        collision.child
+      },
+
+      // Candidate 1 probes the same child probe pair but its own
+      // parents deliberately avoid both target positions.
+      {
+        1u,
+        collision.child
+      }
+    };
+
+    for (const uint32_t parent :
+         safe_parents) {
+      edges.push_back({
+        parent,
+        1u
+      });
+    }
+
+    const TemporaryGraphFile graph(
+      node_count,
+      edges);
+
+    G_EXT extension;
+
+    extension.read(
+      graph.path());
+
+    CandidateState input;
+
+    input.selected_state.assign(
+      node_count,
+      0u);
+
+    input.level.assign(
+      node_count,
+      -1);
+
+    input.selected_state[collision.parent] =
+      1u;
+
+    input.level[collision.parent] =
+      static_cast<int>(
+        kCandidateParentLevel);
+
+    input.selected_state[collision.child] =
+      1u;
+
+    input.level[collision.child] =
+      static_cast<int>(
+        kCandidateChildLevel);
+
+    for (const uint32_t parent :
+         safe_parents) {
+      input.selected_state[parent] =
+        1u;
+
+      input.level[parent] =
+        static_cast<int>(
+          kCandidateParentLevel);
+    }
+
+    for (const uint32_t threads_per_block :
+         {
+           64u,
+           128u
+         }) {
+      DOCTEST_CAPTURE(
+        threads_per_block);
+
+      const auto result =
+        extension
+          .unittest_gpu_insert_warp_direct_once(
+            input.selected_state,
+            input.level,
+            true,
+            threads_per_block,
+            bitmap_bits);
+
+      // Candidate 0 sees its own complete probe collision.
       DOCTEST_CHECK(
-        batch.selected_state[13u] ==
+        result.selected_state[0u] ==
+        0u);
+
+      DOCTEST_CHECK(
+        result.level[0u] ==
+        -1);
+
+      // Candidate 1 has no complete collision in its own
+      // register/shared-memory bitmap.
+      //
+      // It must not observe candidate 0's two probe bits.
+      DOCTEST_CHECK(
+        result.selected_state[1u] ==
         2u);
 
       DOCTEST_CHECK(
-        batch.level[13u] ==
-        2);
+        result.level[1u] ==
+        kExpectedCandidateLevel);
 
       DOCTEST_CHECK(
-        batch.u0 ==
+        result.u0 ==
         1u);
     }
   }
 }
 
+
 DOCTEST_TEST_CASE(
-  "The original four-argument Warp API still selects "
-  "the Exact Warp implementation")
+  "BITMAP_BITS zero remains Exact Warp without Strategy-A1 "
+  "hash rejection")
 {
+  const StrategyGraphCase test_case =
+    make_strategy_graph_case(
+      32u);
+
   const TemporaryGraphFile graph(
-    kNodeCount,
-    make_test_edges());
+    test_case.node_count,
+    test_case.edges);
 
   G_EXT extension;
-  extension.read(graph.path());
 
-  auto selected_state =
-    make_selected_state({0u});
+  extension.read(
+    graph.path());
 
-  auto level =
-    make_level_state({0u});
+  const CandidateState input =
+    make_candidate_state(
+      test_case.node_count,
+      test_case.full_collision_candidate,
+      test_case.full_collision.parent,
+      test_case.full_collision.child);
 
-  level[4u] =
-    1;
-
-  level[36u] =
-    3;
-
+  // Both e-node IDs produce the same Strategy-A1 probes, but
+  // Exact Warp compares the actual IDs and must accept them.
   const auto implicit_exact =
     extension
       .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
+        input.selected_state,
+        input.level,
         true,
         64u);
 
   const auto explicit_exact =
     extension
       .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
+        input.selected_state,
+        input.level,
         true,
         64u,
         0u);
@@ -1378,15 +1630,7 @@ DOCTEST_TEST_CASE(
     implicit_exact,
     explicit_exact);
 
-  DOCTEST_CHECK(
-    implicit_exact.selected_state[0u] ==
-    2u);
-
-  DOCTEST_CHECK(
-    implicit_exact.level[0u] ==
-    2);
-
-  DOCTEST_CHECK(
-    implicit_exact.u0 ==
-    1u);
+  check_candidate_accepted(
+    implicit_exact,
+    test_case.full_collision_candidate);
 }

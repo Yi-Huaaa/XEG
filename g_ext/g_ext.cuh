@@ -650,17 +650,24 @@ private:
   // Warp-cooperative transposed-batch insertion using one
   // fixed 32-bit register bitmap per warp.
   //
-  // Only selected parents with valid levels populate the bitmap.
-  // Only selected children with valid levels probe it.
+  // All nonzero Warp bitmap implementations use the same
+  // Strategy-A1 hash and probe policy as the Block bitmap
+  // implementation:
   //
-  // A bitmap hit is conservatively treated as overlap without
-  // exact verification.
+  //   1. mix the e-node ID
+  //   2. set one bit in the lower half
+  //   3. set one bit in the upper half
+  //
+  // A selected child is treated as an approximate overlap only
+  // when both Strategy-A1 probe bits are present.
+  //
+  // Bitmap-32 stores both probes in one uint32_t register.
   void _gpu_dag_insert_warp_bitmap32_batch(
     bool is_top_down_insertion,
     uint32_t threads_per_block);
 
-  // Warp-cooperative direct insertion using one fixed 32-bit
-  // register bitmap per warp.
+  // Warp-cooperative direct insertion using the same fixed
+  // 32-bit register bitmap and Strategy-A1 probe policy.
   void _gpu_dag_insert_warp_bitmap32_direct(
     bool is_top_down_insertion,
     uint32_t threads_per_block);
@@ -668,12 +675,16 @@ private:
   // Warp-cooperative transposed-batch insertion using one
   // fixed 64-bit register bitmap represented by two uint32_t
   // words per warp.
+  //
+  // The lower Strategy-A1 probe is stored in the first register
+  // word. The upper Strategy-A1 probe is stored in the second
+  // register word.
   void _gpu_dag_insert_warp_bitmap64_batch(
     bool is_top_down_insertion,
     uint32_t threads_per_block);
 
-  // Warp-cooperative direct insertion using one fixed 64-bit
-  // register bitmap represented by two uint32_t words per warp.
+  // Warp-cooperative direct insertion using the same fixed
+  // 64-bit register bitmap and Strategy-A1 probe policy.
   void _gpu_dag_insert_warp_bitmap64_direct(
     bool is_top_down_insertion,
     uint32_t threads_per_block);
@@ -685,11 +696,13 @@ private:
   //
   //   128, 256, 512, 1024, 2048 bits
   //
-  // Warp Bitmap-32 and Bitmap-64 remain register-based and
-  // continue using their existing isolated implementations.
+  // Every nonzero Warp bitmap size uses the same Strategy-A1
+  // hash and two-probe policy as the Block bitmap
+  // implementation.
   //
-  // Multiple warps may share one CUDA block. Every warp owns a
-  // disjoint bitmap segment in dynamic shared memory.
+  // Warp Bitmap-32 and Bitmap-64 remain register-based.
+  // Warp Bitmap-128...2048 use one disjoint dynamic
+  // shared-memory bitmap segment per warp.
   void _gpu_dag_insert_warp_bitmap_shared_batch(
     bool is_top_down_insertion,
     uint32_t threads_per_block,
@@ -697,10 +710,12 @@ private:
     uint32_t bitmap_words);
 
   // Warp-cooperative direct insertion using one runtime-sized
-  // shared-memory bitmap per warp.
+  // shared-memory bitmap per warp and the common Strategy-A1
+  // hash and two-probe policy.
   //
   // One warp evaluates one candidate e-node. Multiple candidate
-  // warps may share one CUDA block.
+  // warps may share one CUDA block, but every warp owns a
+  // disjoint shared-memory bitmap segment.
   void _gpu_dag_insert_warp_bitmap_shared_direct(
     bool is_top_down_insertion,
     uint32_t threads_per_block,
@@ -942,15 +957,17 @@ private:
   //
   // Warp:
   //   0
-  //     -> existing Exact Warp implementation
+  //     -> Exact Warp implementation without hashing
   //
   //   32, 64
-  //     -> existing register-based Warp Bitmap
-  //        implementations
+  //     -> register-based Warp Bitmap implementations
   //
   //   128, 256, 512, 1024, 2048
   //     -> one runtime-sized shared-memory bitmap per warp
   //
+  //   Every nonzero Warp bitmap size uses the same Strategy-A1
+  //   mixed two-probe hash policy as the Block bitmap
+  //   implementation.
   // Block:
   //   0    -> existing Exact Block implementation
   //   32..2048 power-of-two
@@ -967,11 +984,17 @@ private:
 
   // Valid only when _dag_bitmap_bits > 0.
   //
-  // Warp Bitmap-32/64 implementations use fixed masks
-  // internally.
+  // Warp Bitmap-32/64 implementations use their fixed masks
+  // internally:
+  //
+  //   32 bits -> 31
+  //   64 bits -> 63
   //
   // Warp Shared-Bitmap-128...2048 and Block Bitmap
   // implementations receive this runtime mask.
+  //
+  // Every nonzero bitmap implementation passes the applicable
+  // mask to the common Strategy-A1 probe generator.
   //
   // Examples:
   //
@@ -985,7 +1008,8 @@ private:
   //   words = bits / 32
   //
   // Warp Bitmap-32/64 fixed-size register kernels do not require
-  // this value.
+  // this runtime word count because their register layout is
+  // known at compile time.
   //
   // Warp Shared-Bitmap-128...2048 and Block Bitmap kernels use
   // this value to size dynamic shared memory.

@@ -4754,12 +4754,41 @@ void G_EXT::_gpu_dag_insert_block_direct(
 // No new global allocation, kernel, launcher, runtime branch,
 // or synchronization barrier is introduced.
 // ============================================================
+
+// ============================================================
+// Common Strategy-A1 bitmap hash and shared-memory operations
+//
+// Every nonzero Block and Warp bitmap implementation uses the
+// same hash and probe-position generator.
+//
+// Storage remains implementation-specific:
+//
+//   Warp Bitmap-32:
+//     one uint32_t register
+//
+//   Warp Bitmap-64:
+//     two uint32_t registers
+//
+//   Warp Bitmap-128...2048:
+//     one shared-memory bitmap segment per warp
+//
+//   Block Bitmap-32...2048:
+//     one shared-memory bitmap per CUDA block
+//
+// The common Strategy-A1 policy is:
+//
+//   1. mix the 32-bit e-node ID
+//   2. choose one bit in the lower half
+//   3. choose one bit in the upper half
+//   4. report an approximate overlap only when both bits hit
+// ============================================================
+
 // Mix one 32-bit e-node ID before extracting bitmap positions.
 //
-// The arithmetic is intentionally uint32_t, so multiplication
-// wraps modulo 2^32.
+// Arithmetic is intentionally uint32_t, so multiplication wraps
+// modulo 2^32.
 __device__ __forceinline__
-uint32_t gpu_dag_block_bitmap_mix32(
+uint32_t gpu_dag_bitmap_mix32(
   uint32_t value)
 {
   value ^=
@@ -4781,7 +4810,7 @@ uint32_t gpu_dag_block_bitmap_mix32(
 }
 
 
-// Strategy A1 assigns exactly two bits to one e-node:
+// Strategy A1 assigns exactly two physical bitmap positions:
 //
 //   first:
 //     one bit in the lower half
@@ -4789,9 +4818,9 @@ uint32_t gpu_dag_block_bitmap_mix32(
 //   second:
 //     one bit in the upper half
 //
-// Keeping the two probes in disjoint halves guarantees that
-// they are two different physical bitmap positions.
-struct GpuDagBlockBitmapA1ProbeBits
+// Because the two probes belong to disjoint halves, they are
+// always two different physical bitmap positions.
+struct GpuDagBitmapA1ProbeBits
 {
   uint32_t first;
   uint32_t second;
@@ -4799,8 +4828,8 @@ struct GpuDagBlockBitmapA1ProbeBits
 
 
 __device__ __forceinline__
-GpuDagBlockBitmapA1ProbeBits
-gpu_dag_block_bitmap_a1_probe_bits(
+GpuDagBitmapA1ProbeBits
+gpu_dag_bitmap_a1_probe_bits(
   const uint32_t node,
   const uint32_t bitmap_mask)
 {
@@ -4809,7 +4838,7 @@ gpu_dag_block_bitmap_a1_probe_bits(
   //   bitmap_mask = bitmap_bits - 1
   //
   // Therefore the runtime bitmap size can be recovered without
-  // changing any existing function signature.
+  // adding another kernel argument.
   const uint32_t bitmap_bits =
     bitmap_mask + 1u;
 
@@ -4820,10 +4849,10 @@ gpu_dag_block_bitmap_a1_probe_bits(
     half_bits - 1u;
 
   const uint32_t mixed =
-    gpu_dag_block_bitmap_mix32(
+    gpu_dag_bitmap_mix32(
       node);
 
-  GpuDagBlockBitmapA1ProbeBits result;
+  GpuDagBitmapA1ProbeBits result;
 
   // Lower-half position:
   //
@@ -4844,14 +4873,23 @@ gpu_dag_block_bitmap_a1_probe_bits(
 }
 
 
+// Insert one Strategy-A1 probe pair into a uint32_t-word bitmap.
+//
+// This helper is shared by:
+//
+//   Block shared-memory bitmap
+//   Warp shared-memory bitmap
+//
+// Multiple cooperating threads may update the same word, so
+// both updates use atomicOr().
 __device__ __forceinline__
-void gpu_dag_block_bitmap_insert(
+void gpu_dag_bitmap_shared_insert(
   uint32_t* bitmap,
   const uint32_t node,
   const uint32_t bitmap_mask)
 {
-  const GpuDagBlockBitmapA1ProbeBits probe =
-    gpu_dag_block_bitmap_a1_probe_bits(
+  const GpuDagBitmapA1ProbeBits probe =
+    gpu_dag_bitmap_a1_probe_bits(
       node,
       bitmap_mask);
 
@@ -4867,12 +4905,6 @@ void gpu_dag_block_bitmap_insert(
   const uint32_t second_word_mask =
     1u << (probe.second & 31u);
 
-  // Multiple parent threads may update the same shared-memory
-  // word, so both A1 bit updates remain atomic.
-  //
-  // For BITMAP_BITS=32, the two bits are in different 16-bit
-  // halves but may reside in the same uint32_t word. Two
-  // atomicOr operations are still correct.
   atomicOr(
     &bitmap[first_word],
     first_word_mask);
@@ -4883,14 +4915,19 @@ void gpu_dag_block_bitmap_insert(
 }
 
 
+// Probe one Strategy-A1 pair in a uint32_t-word bitmap.
+//
+// A candidate is conservatively rejected only when both probes
+// hit. The two bits may still have been populated by different
+// parents, so this remains an approximate overlap test.
 __device__ __forceinline__
-bool gpu_dag_block_bitmap_contains(
+bool gpu_dag_bitmap_shared_contains(
   const uint32_t* bitmap,
   const uint32_t node,
   const uint32_t bitmap_mask)
 {
-  const GpuDagBlockBitmapA1ProbeBits probe =
-    gpu_dag_block_bitmap_a1_probe_bits(
+  const GpuDagBitmapA1ProbeBits probe =
+    gpu_dag_bitmap_a1_probe_bits(
       node,
       bitmap_mask);
 
@@ -4914,350 +4951,10 @@ bool gpu_dag_block_bitmap_contains(
     (bitmap[second_word] &
      second_word_mask) != 0u;
 
-  // Strategy A1 rejects only when both probes hit.
-  //
-  // This remains conservative:
-  // the two bits may have been set by two different parents.
   return
     first_hit &&
     second_hit;
 }
-
-// __device__ __forceinline__
-// void gpu_dag_process_block_bitmap_candidate(
-//   const uint32_t u,
-//   const bool is_top_down_insertion,
-//   uint32_t* selected_state,
-//   const uint32_t* forward_adj,
-//   const uint32_t* forward_adj_ptr,
-//   const uint32_t* inverse_adj,
-//   const uint32_t* inverse_adj_ptr,
-//   int* level,
-//   uint32_t* u0,
-//   GpuDagBlockThreadScratch* scratch,
-//   uint32_t* candidate_active,
-//   uint32_t* parent_bitmap,
-//   const uint32_t bitmap_mask,
-//   const uint32_t bitmap_words)
-// {
-//   const uint32_t lane =
-//     threadIdx.x;
-
-//   // ----------------------------------------------------------
-//   // Candidate activity and bitmap initialization
-//   //
-//   // Thread 0 snapshots candidate activity.
-//   //
-//   // At the same time, all threads cooperatively clear the
-//   // runtime-sized bitmap.
-//   //
-//   // The following __syncthreads() publishes both:
-//   //
-//   //   candidate_active
-//   //   cleared parent_bitmap
-//   //
-//   // Therefore bitmap initialization does not require its own
-//   // additional barrier.
-//   // ----------------------------------------------------------
-//   if (lane == 0u) {
-//     *candidate_active =
-//       atomicAdd(
-//         &selected_state[u],
-//         0u) == 0u
-//         ? 1u
-//         : 0u;
-//   }
-
-//   for (uint32_t word = lane;
-//        word < bitmap_words;
-//        word += blockDim.x) {
-//     parent_bitmap[word] =
-//       0u;
-//   }
-
-//   __syncthreads();
-
-//   // Uniform return because all threads read the same shared
-//   // candidate_active value.
-//   if (*candidate_active == 0u) {
-//     return;
-//   }
-
-//   const uint32_t parent_begin =
-//     inverse_adj_ptr[u];
-
-//   const uint32_t parent_end =
-//     inverse_adj_ptr[u + 1u];
-
-//   const uint32_t child_begin =
-//     forward_adj_ptr[u];
-
-//   const uint32_t child_end =
-//     forward_adj_ptr[u + 1u];
-
-//   GpuDagBlockThreadScratch local{
-//     -1,
-//     INT_MAX,
-//     0u
-//   };
-
-//   // ----------------------------------------------------------
-//   // Cooperative selected-parent scan
-//   //
-//   // Match the exact Block evaluator's participating set:
-//   //
-//   //   selected_state[parent] != 0
-//   //   level[parent] >= 0
-//   //
-//   // Only a parent satisfying both conditions is:
-//   //
-//   //   1. counted as a selected parent
-//   //   2. used to update max_parent_level
-//   //   3. inserted into the approximate overlap bitmap
-//   //
-//   // Unselected parents and parents with invalid levels must not
-//   // populate the bitmap. Otherwise they can create artificial
-//   // false-positive overlap rejections unrelated to the exact
-//   // selected parent-child sets.
-//   // ----------------------------------------------------------
-//   for (uint32_t position =
-//          parent_begin + lane;
-//        position < parent_end;
-//        position += blockDim.x) {
-//     const uint32_t parent =
-//       inverse_adj[position];
-
-//     const uint32_t parent_state =
-//       atomicAdd(
-//         &selected_state[parent],
-//         0u);
-
-//     if (parent_state == 0u) {
-//       continue;
-//     }
-
-//     const int parent_level =
-//       atomicAdd(
-//         &level[parent],
-//         0);
-
-//     if (parent_level < 0) {
-//       continue;
-//     }
-
-//     // Only selected parents with valid levels participate in
-//     // Strategy-A1 approximate overlap detection.
-//     //
-//     // gpu_dag_block_bitmap_insert() mixes this parent ID and
-//     // sets one bit in each half of the bitmap.
-//     //
-//     // This call must remain after both checks above. Moving it
-//     // before either check allows inactive or invalid parents to
-//     // pollute the bitmap and reject otherwise legal candidates.
-//     gpu_dag_block_bitmap_insert(
-//       parent_bitmap,
-//       parent,
-//       bitmap_mask);
-
-//     local.flags |=
-//       kGpuDagBlockHasSelectedParent;
-
-//     if (parent_level >
-//         local.max_parent_level) {
-//       local.max_parent_level =
-//         parent_level;
-//     }
-//   }
-
-//   // Every parent bitmap update must complete before any child
-//   // thread probes the bitmap.
-//   //
-//   // This is the one additional block-wide barrier required by
-//   // the Bitmap evaluator.
-//   __syncthreads();
-
-//   // ----------------------------------------------------------
-//   // Cooperative child scan
-//   //
-//   // Preserve the existing selected-child semantics:
-//   //
-//   //   selected_state[child] != 0
-//   //   level[child] >= 0
-//   //
-//   // Only such children contribute to:
-//   //
-//   //   has_selected_child
-//   //   min_child_level
-//   //   overlap detection
-//   // ----------------------------------------------------------
-//   for (uint32_t position =
-//          child_begin + lane;
-//        position < child_end;
-//        position += blockDim.x) {
-//     const uint32_t child =
-//       forward_adj[position];
-
-//     const uint32_t child_state =
-//       atomicAdd(
-//         &selected_state[child],
-//         0u);
-
-//     if (child_state == 0u) {
-//       continue;
-//     }
-
-//     const int child_level =
-//       atomicAdd(
-//         &level[child],
-//         0);
-
-//     if (child_level < 0) {
-//       continue;
-//     }
-
-//     local.flags |=
-//       kGpuDagBlockHasSelectedChild;
-
-//     if (child_level <
-//         local.min_child_level) {
-//       local.min_child_level =
-//         child_level;
-//     }
-
-//     // Strategy-A1 approximate overlap detection.
-//     //
-//     // The child ID is mixed using the same function as the
-//     // parents. The candidate is rejected only when both the
-//     // lower-half and upper-half probes hit.
-//     //
-//     // A two-probe hit may be:
-//     //
-//     //   true overlap
-//     //   two-bit hash collision
-//     //   two bits populated by different parents
-//     //
-//     // No exact verification is performed.
-//     if (gpu_dag_block_bitmap_contains(
-//           parent_bitmap,
-//           child,
-//           bitmap_mask)) {
-//       local.flags |=
-//         kGpuDagBlockHasSelectedOverlap;
-//     }
-//   }
-
-//   // ----------------------------------------------------------
-//   // The remainder is intentionally copied from the existing
-//   // exact Block evaluator.
-//   //
-//   // Do not factor this into a shared helper during the first
-//   // implementation, because that would modify the Exact path.
-//   // ----------------------------------------------------------
-//   scratch[lane] =
-//     local;
-
-//   __syncthreads();
-
-//   for (uint32_t stride =
-//          blockDim.x / 2u;
-//        stride > 0u;
-//        stride >>= 1u) {
-//     if (lane < stride) {
-//       const GpuDagBlockThreadScratch other =
-//         scratch[lane + stride];
-
-//       if (other.max_parent_level >
-//           scratch[lane].max_parent_level) {
-//         scratch[lane].max_parent_level =
-//           other.max_parent_level;
-//       }
-
-//       if (other.min_child_level <
-//           scratch[lane].min_child_level) {
-//         scratch[lane].min_child_level =
-//           other.min_child_level;
-//       }
-
-//       scratch[lane].flags |=
-//         other.flags;
-//     }
-
-//     __syncthreads();
-//   }
-
-//   if (lane == 0u) {
-//     const GpuDagBlockThreadScratch summary =
-//       scratch[0];
-
-//     const bool has_selected_parent =
-//       (summary.flags &
-//        kGpuDagBlockHasSelectedParent) != 0u;
-
-//     const bool has_selected_child =
-//       (summary.flags &
-//        kGpuDagBlockHasSelectedChild) != 0u;
-
-//     const bool has_selected_overlap =
-//       (summary.flags &
-//        kGpuDagBlockHasSelectedOverlap) != 0u;
-
-//     bool valid =
-//       !has_selected_overlap &&
-//       summary.max_parent_level <
-//         summary.min_child_level;
-
-//     int proposed_level =
-//       -1;
-
-//     if (valid &&
-//         is_top_down_insertion) {
-//       valid =
-//         has_selected_parent;
-
-//       if (valid) {
-//         proposed_level =
-//           summary.max_parent_level + 1;
-//       }
-//     }
-//     else if (valid) {
-//       valid =
-//         has_selected_child;
-
-//       if (valid) {
-//         proposed_level =
-//           summary.min_child_level - 1;
-//       }
-//     }
-
-//     valid =
-//       valid &&
-//       proposed_level >= 0;
-
-//     if (valid) {
-//       // Preserve the existing live optimistic publication
-//       // order.
-//       //
-//       // Do not add __threadfence().
-//       level[u] =
-//         proposed_level;
-
-//       if (atomicCAS(
-//             &selected_state[u],
-//             0u,
-//             2u) == 0u) {
-//         atomicAdd(
-//           u0,
-//           1u);
-//       }
-//     }
-//   }
-
-//   // Required by Block-Batch before the same CUDA block reuses
-//   // its scratch and bitmap storage for the next candidate.
-//   __syncthreads();
-// }
-
-// 20270730 hua test start
 
 template <typename T>
 __device__ __forceinline__
@@ -5422,13 +5119,13 @@ void gpu_dag_process_block_bitmap_candidate(
     // Only selected parents with valid levels participate in
     // Strategy-A1 approximate overlap detection.
     //
-    // gpu_dag_block_bitmap_insert() mixes this parent ID and
+    // gpu_dag_bitmap_shared_insert() mixes this parent ID and
     // sets one bit in each half of the bitmap.
     //
     // This call must remain after both checks above. Moving it
     // before either check allows inactive or invalid parents to
     // pollute the bitmap and reject otherwise legal candidates.
-    gpu_dag_block_bitmap_insert(
+    gpu_dag_bitmap_shared_insert(
       parent_bitmap,
       parent,
       bitmap_mask);
@@ -5525,7 +5222,7 @@ void gpu_dag_process_block_bitmap_candidate(
     //   two bits populated by different parents
     //
     // No exact verification is performed.
-    if (gpu_dag_block_bitmap_contains(
+    if (gpu_dag_bitmap_shared_contains(
           parent_bitmap,
           child,
           bitmap_mask)) {
@@ -5658,8 +5355,6 @@ void gpu_dag_process_block_bitmap_candidate(
   // its scratch and bitmap storage for the next candidate.
   __syncthreads();
 }
-// 20270730 hua test end
-
 
 __global__ void _gpu_dag_insert_block_bitmap_batch_kl(
   const uint32_t num_endes,
@@ -6542,8 +6237,8 @@ void G_EXT::_gpu_dag_insert_warp_direct(
 //
 // probe the bitmap.
 //
-// A bitmap hit is conservatively treated as overlap without
-// exact verification.
+// A two-probe Strategy-A1 hit is conservatively treated as
+// overlap without exact verification.
 // ============================================================
 
 __device__ __forceinline__
@@ -6570,6 +6265,13 @@ uint32_t gpu_dag_warp_or_reduce_and_broadcast(
     0);
 }
 
+constexpr uint32_t
+  kGpuDagWarpBitmap32Mask =
+    31u;
+
+constexpr uint32_t
+  kGpuDagWarpBitmap64Mask =
+    63u;
 
 // ============================================================
 // Warp Bitmap-32 candidate evaluator
@@ -6684,11 +6386,21 @@ void gpu_dag_process_warp_bitmap32_candidate(
         parent_level;
     }
 
-    const uint32_t bit =
-      parent & 31u;
+    const GpuDagBitmapA1ProbeBits probe =
+      gpu_dag_bitmap_a1_probe_bits(
+        parent,
+        kGpuDagWarpBitmap32Mask);
+
+    // Bitmap-32 stores both Strategy-A1 probes in the same
+    // uint32_t register:
+    //
+    //   first  -> bits 0...15
+    //   second -> bits 16...31
+    local_parent_bitmap |=
+      1u << probe.first;
 
     local_parent_bitmap |=
-      1u << bit;
+      1u << probe.second;
   }
 
   // Combine all 32 lane-local fragments, then broadcast the
@@ -6737,14 +6449,28 @@ void gpu_dag_process_warp_bitmap32_candidate(
         child_level;
     }
 
-    const uint32_t bit =
-      child & 31u;
+    const GpuDagBitmapA1ProbeBits probe =
+      gpu_dag_bitmap_a1_probe_bits(
+        child,
+        kGpuDagWarpBitmap32Mask);
 
-    const uint32_t child_mask =
-      1u << bit;
+    const uint32_t first_mask =
+      1u << probe.first;
 
-    if ((parent_bitmap &
-         child_mask) != 0u) {
+    const uint32_t second_mask =
+      1u << probe.second;
+
+    const bool first_hit =
+      (parent_bitmap &
+       first_mask) != 0u;
+
+    const bool second_hit =
+      (parent_bitmap &
+       second_mask) != 0u;
+
+    // Strategy A1 reports overlap only when both probes hit.
+    if (first_hit &&
+        second_hit) {
       local_flags |=
         kGpuDagWarpHasSelectedOverlap;
     }
@@ -6973,20 +6699,20 @@ void gpu_dag_process_warp_bitmap64_candidate(
         parent_level;
     }
 
-    const uint32_t bit =
-      parent & 63u;
+    const GpuDagBitmapA1ProbeBits probe =
+      gpu_dag_bitmap_a1_probe_bits(
+        parent,
+        kGpuDagWarpBitmap64Mask);
 
-    const uint32_t word_mask =
-      1u << (bit & 31u);
+    // For Bitmap-64, Strategy A1 guarantees:
+    //
+    //   first  -> lower half [0, 32)
+    //   second -> upper half [32, 64)
+    local_parent_bitmap_low |=
+      1u << probe.first;
 
-    if (bit < 32u) {
-      local_parent_bitmap_low |=
-        word_mask;
-    }
-    else {
-      local_parent_bitmap_high |=
-        word_mask;
-    }
+    local_parent_bitmap_high |=
+      1u << (probe.second - 32u);
   }
 
   const uint32_t parent_bitmap_low =
@@ -7034,20 +6760,27 @@ void gpu_dag_process_warp_bitmap64_candidate(
         child_level;
     }
 
-    const uint32_t bit =
-      child & 63u;
+    const GpuDagBitmapA1ProbeBits probe =
+      gpu_dag_bitmap_a1_probe_bits(
+        child,
+        kGpuDagWarpBitmap64Mask);
 
-    const uint32_t word_mask =
-      1u << (bit & 31u);
+    const uint32_t first_mask =
+      1u << probe.first;
 
-    const bool bitmap_hit =
-      bit < 32u
-        ? (parent_bitmap_low &
-           word_mask) != 0u
-        : (parent_bitmap_high &
-           word_mask) != 0u;
+    const uint32_t second_mask =
+      1u << (probe.second - 32u);
 
-    if (bitmap_hit) {
+    const bool first_hit =
+      (parent_bitmap_low &
+       first_mask) != 0u;
+
+    const bool second_hit =
+      (parent_bitmap_high &
+       second_mask) != 0u;
+
+    if (first_hit &&
+        second_hit) {
       local_flags |=
         kGpuDagWarpHasSelectedOverlap;
     }
@@ -7627,59 +7360,19 @@ void G_EXT::_gpu_dag_insert_warp_bitmap64_direct(
 // is used because different warps operate on independent bitmap
 // segments and may process different candidates.
 //
-// The hash policy extends the existing Warp Bitmap-32/64
-// behavior:
+// Every nonzero Warp bitmap size uses the same Strategy-A1
+// policy as the Block bitmap implementation:
 //
-//   bit = node & bitmap_mask
+//   1. mix the e-node ID
+//   2. set one bit in the lower half
+//   3. set one bit in the upper half
 //
-// One bitmap hit is conservatively treated as overlap without
-// exact verification.
+// A selected child is conservatively treated as an overlap only
+// when both corresponding probe bits are present.
+//
+// No exact verification is performed after a two-probe hit.
 // ============================================================
 
-__device__ __forceinline__
-void gpu_dag_warp_shared_bitmap_insert(
-  uint32_t* bitmap,
-  const uint32_t node,
-  const uint32_t bitmap_mask)
-{
-  const uint32_t bit =
-    node &
-    bitmap_mask;
-
-  const uint32_t word =
-    bit >> 5u;
-
-  const uint32_t word_mask =
-    1u << (bit & 31u);
-
-  // Different lanes in the same warp may update the same
-  // shared-memory word.
-  atomicOr(
-    &bitmap[word],
-    word_mask);
-}
-
-
-__device__ __forceinline__
-bool gpu_dag_warp_shared_bitmap_contains(
-  const uint32_t* bitmap,
-  const uint32_t node,
-  const uint32_t bitmap_mask)
-{
-  const uint32_t bit =
-    node &
-    bitmap_mask;
-
-  const uint32_t word =
-    bit >> 5u;
-
-  const uint32_t word_mask =
-    1u << (bit & 31u);
-
-  return
-    (bitmap[word] &
-     word_mask) != 0u;
-}
 
 __device__ __forceinline__
 void gpu_dag_process_warp_bitmap_shared_candidate(
@@ -7808,7 +7501,7 @@ void gpu_dag_process_warp_bitmap_shared_candidate(
 
     // Only selected parents with valid levels populate the
     // approximate overlap bitmap.
-    gpu_dag_warp_shared_bitmap_insert(
+    gpu_dag_bitmap_shared_insert(
       parent_bitmap,
       parent,
       bitmap_mask);
@@ -7856,7 +7549,7 @@ void gpu_dag_process_warp_bitmap_shared_candidate(
         child_level;
     }
 
-    if (gpu_dag_warp_shared_bitmap_contains(
+    if (gpu_dag_bitmap_shared_contains(
           parent_bitmap,
           child,
           bitmap_mask)) {
