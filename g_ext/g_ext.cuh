@@ -541,12 +541,17 @@ private:
   //   Use the existing exact Warp implementation.
   //
   // 32:
-  //   Use the register-based Warp Bitmap-32 implementation.
+  //   Use the existing register-based Warp Bitmap-32
+  //   implementation.
   //
   // 64:
-  //   Use the register-based Warp Bitmap-64 implementation.
+  //   Use the existing register-based Warp Bitmap-64
+  //   implementation.
   //
-  // No other bitmap size is supported by Warp kernels.
+  // 128, 256, 512, 1024, 2048:
+  //   Use one runtime-sized shared-memory bitmap per warp.
+  //
+  // Every nonzero bitmap size must be a power of two.
   void _validate_warp_bitmap_bits(
     uint32_t bitmap_bits) const;
 
@@ -672,6 +677,35 @@ private:
   void _gpu_dag_insert_warp_bitmap64_direct(
     bool is_top_down_insertion,
     uint32_t threads_per_block);
+
+  // Warp-cooperative transposed-batch insertion using one
+  // runtime-sized shared-memory bitmap per warp.
+  //
+  // This path is used only for:
+  //
+  //   128, 256, 512, 1024, 2048 bits
+  //
+  // Warp Bitmap-32 and Bitmap-64 remain register-based and
+  // continue using their existing isolated implementations.
+  //
+  // Multiple warps may share one CUDA block. Every warp owns a
+  // disjoint bitmap segment in dynamic shared memory.
+  void _gpu_dag_insert_warp_bitmap_shared_batch(
+    bool is_top_down_insertion,
+    uint32_t threads_per_block,
+    uint32_t bitmap_mask,
+    uint32_t bitmap_words);
+
+  // Warp-cooperative direct insertion using one runtime-sized
+  // shared-memory bitmap per warp.
+  //
+  // One warp evaluates one candidate e-node. Multiple candidate
+  // warps may share one CUDA block.
+  void _gpu_dag_insert_warp_bitmap_shared_direct(
+    bool is_top_down_insertion,
+    uint32_t threads_per_block,
+    uint32_t bitmap_mask,
+    uint32_t bitmap_words);
 
   // Block-cooperative transposed-batch insertion.
   //
@@ -907,9 +941,15 @@ private:
   //   0 only.
   //
   // Warp:
-  //   0  -> existing Exact Warp implementation
-  //   32 -> register-based Warp Bitmap-32
-  //   64 -> register-based Warp Bitmap-64
+  //   0
+  //     -> existing Exact Warp implementation
+  //
+  //   32, 64
+  //     -> existing register-based Warp Bitmap
+  //        implementations
+  //
+  //   128, 256, 512, 1024, 2048
+  //     -> one runtime-sized shared-memory bitmap per warp
   //
   // Block:
   //   0    -> existing Exact Block implementation
@@ -927,9 +967,11 @@ private:
 
   // Valid only when _dag_bitmap_bits > 0.
   //
-  // Warp Bitmap-32/64 implementations use fixed compile-time
-  // masks internally. Block bitmap implementations receive this
-  // runtime mask.
+  // Warp Bitmap-32/64 implementations use fixed masks
+  // internally.
+  //
+  // Warp Shared-Bitmap-128...2048 and Block Bitmap
+  // implementations receive this runtime mask.
   //
   // Examples:
   //
@@ -942,8 +984,11 @@ private:
   //
   //   words = bits / 32
   //
-  // Warp fixed-size kernels do not require this value, but it is
-  // still reset consistently by run() and unit-test wrappers.
+  // Warp Bitmap-32/64 fixed-size register kernels do not require
+  // this value.
+  //
+  // Warp Shared-Bitmap-128...2048 and Block Bitmap kernels use
+  // this value to size dynamic shared memory.
   uint32_t _dag_bitmap_words = 0u;
 
   // Print function

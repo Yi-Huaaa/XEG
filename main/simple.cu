@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
       << "  2: Block\n\n"
       << "BITMAP_BITS:\n"
       << "  Thread: 0\n"
-      << "  Warp:   0, 32, 64\n"
+      << "  Warp:   0, 32, 64, 128, 256, 512, 1024, 2048\n"
       << "  Block:  0, 32, 64, 128, 256, 512, 1024, 2048\n"
       << "\n"
       << "  0 uses exact overlap detection.\n"
@@ -93,15 +93,21 @@ int main(int argc, char *argv[]) {
       // two fixed-size register bitmap implementations.
       valid_bitmap_bits =
         bitmap_bits == 0u ||
-        bitmap_bits == 32u ||
-        bitmap_bits == 64u;
+        (
+          bitmap_bits >= 32u &&
+          bitmap_bits <= 2048u &&
+          (
+            bitmap_bits &
+            (bitmap_bits - 1u)
+          ) == 0u
+        );
 
       if (!valid_bitmap_bits) {
         std::cerr
-          << "Invalid BITMAP_BITS for Warp DAG kernel: "
+          << "Invalid BITMAP_BITS for Block DAG kernel: "
           << bitmap_bits << "\n"
           << "Valid values are:\n"
-          << "  0, 32, 64\n";
+          << "  0, 32, 64, 128, 256, 512, 1024, 2048\n";
 
         return 1;
       }

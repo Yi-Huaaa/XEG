@@ -24,6 +24,14 @@ namespace {
 
 constexpr uint32_t kNodeCount = 80u;
 
+// TemporaryGraphFile stores nodes in a JSON object whose keys
+// are iterated lexicographically.
+//
+// Use the full decimal width of uint32_t so lexicographic order
+// remains identical to numeric node-ID order, including tests
+// with more than 999 nodes.
+constexpr int kTestNodeIdWidth = 10;
+
 struct Edge
 {
   uint32_t parent;
@@ -38,7 +46,7 @@ std::string node_name(
   stream
     << "n"
     << std::setfill('0')
-    << std::setw(3)
+    << std::setw(kTestNodeIdWidth)
     << node;
 
   return stream.str();
@@ -52,7 +60,7 @@ std::string eclass_name(
   stream
     << "e"
     << std::setfill('0')
-    << std::setw(3)
+    << std::setw(kTestNodeIdWidth)
     << node;
 
   return stream.str();
@@ -330,20 +338,24 @@ void check_result_equal(
   const G_EXT::GpuInsertionResult& lhs,
   const G_EXT::GpuInsertionResult& rhs)
 {
-  CHECK(lhs.selected_state ==
-        rhs.selected_state);
+  DOCTEST_CHECK(
+    lhs.selected_state ==
+    rhs.selected_state);
 
-  CHECK(lhs.level ==
-        rhs.level);
+  DOCTEST_CHECK(
+    lhs.level ==
+    rhs.level);
 
-  CHECK(lhs.u0 ==
-        rhs.u0);
+  DOCTEST_CHECK(
+    lhs.u0 ==
+    rhs.u0);
 }
 
 }  // namespace
 
-TEST_CASE(
-  "Warp bitmap accepts only 0, 32, and 64 bits")
+DOCTEST_TEST_CASE(
+  "Warp bitmap accepts exact, register, and "
+  "shared-memory bitmap sizes")
 {
   const TemporaryGraphFile graph(
     kNodeCount,
@@ -358,55 +370,67 @@ TEST_CASE(
   const auto level =
     make_level_state({});
 
-  CHECK_NOTHROW(
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        0u));
+  // Supported configurations:
+  //
+  //   0:
+  //     Exact Warp
+  //
+  //   32, 64:
+  //     Register Warp Bitmap
+  //
+  //   128...2048:
+  //     Per-warp shared-memory bitmap
+  for (const uint32_t bitmap_bits :
+       {
+         0u,
+         32u,
+         64u,
+         128u,
+         256u,
+         512u,
+         1024u,
+         2048u
+       }) {
+    DOCTEST_CAPTURE(bitmap_bits);
 
-  CHECK_NOTHROW(
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        32u));
+    DOCTEST_CHECK_NOTHROW(
+      extension
+        .unittest_gpu_insert_warp_direct_once(
+          selected_state,
+          level,
+          true,
+          64u,
+          bitmap_bits));
+  }
 
-  CHECK_NOTHROW(
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        64u));
+  // Unsupported:
+  //
+  //   below 32
+  //   not a power of two
+  //   above 2048
+  for (const uint32_t bitmap_bits :
+       {
+         1u,
+         16u,
+         96u,
+         192u,
+         4096u
+       }) {
+    DOCTEST_CAPTURE(bitmap_bits);
 
-  CHECK_THROWS_AS(
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        16u),
-    std::invalid_argument);
-
-  CHECK_THROWS_AS(
-    extension
-      .unittest_gpu_insert_warp_direct_once(
-        selected_state,
-        level,
-        true,
-        64u,
-        128u),
-    std::invalid_argument);
+    DOCTEST_CHECK_THROWS_AS(
+      extension
+        .unittest_gpu_insert_warp_direct_once(
+          selected_state,
+          level,
+          true,
+          64u,
+          bitmap_bits),
+      std::invalid_argument);
+  }
 }
 
-TEST_CASE(
+DOCTEST_TEST_CASE(
   "Warp Bitmap-32 rejects a 32-bit collision that "
   "Warp Bitmap-64 distinguishes")
 {
@@ -456,44 +480,56 @@ TEST_CASE(
         64u,
         64u);
 
-  REQUIRE(exact.selected_state.size() ==
-          kNodeCount);
+  DOCTEST_REQUIRE(
+    exact.selected_state.size() ==
+    kNodeCount);
 
-  REQUIRE(bitmap32.selected_state.size() ==
-          kNodeCount);
+  DOCTEST_REQUIRE(
+    bitmap32.selected_state.size() ==
+    kNodeCount);
 
-  REQUIRE(bitmap64.selected_state.size() ==
-          kNodeCount);
+  DOCTEST_REQUIRE(
+    bitmap64.selected_state.size() ==
+    kNodeCount);
 
-  CHECK(exact.selected_state[0u] ==
-        2u);
+  DOCTEST_CHECK(
+    exact.selected_state[0u] ==
+    2u);
 
-  CHECK(exact.level[0u] ==
-        2);
+  DOCTEST_CHECK(
+    exact.level[0u] ==
+    2);
 
-  CHECK(exact.u0 ==
-        1u);
+  DOCTEST_CHECK(
+    exact.u0 ==
+    1u);
 
-  CHECK(bitmap32.selected_state[0u] ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap32.selected_state[0u] ==
+    0u);
 
-  CHECK(bitmap32.level[0u] ==
-        -1);
+  DOCTEST_CHECK(
+    bitmap32.level[0u] ==
+    -1);
 
-  CHECK(bitmap32.u0 ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap32.u0 ==
+    0u);
 
-  CHECK(bitmap64.selected_state[0u] ==
-        2u);
+  DOCTEST_CHECK(
+    bitmap64.selected_state[0u] ==
+    2u);
 
-  CHECK(bitmap64.level[0u] ==
-        2);
+  DOCTEST_CHECK(
+    bitmap64.level[0u] ==
+    2);
 
-  CHECK(bitmap64.u0 ==
-        1u);
+  DOCTEST_CHECK(
+    bitmap64.u0 ==
+    1u);
 }
 
-TEST_CASE(
+DOCTEST_TEST_CASE(
   "Warp Bitmap-64 conservatively rejects a 64-bit collision")
 {
   const TemporaryGraphFile graph(
@@ -542,35 +578,213 @@ TEST_CASE(
         64u,
         64u);
 
-  CHECK(exact.selected_state[2u] ==
-        2u);
+  DOCTEST_CHECK(
+    exact.selected_state[2u] ==
+    2u);
 
-  CHECK(exact.level[2u] ==
-        2);
+  DOCTEST_CHECK(
+    exact.level[2u] ==
+    2);
 
-  CHECK(exact.u0 ==
-        1u);
+  DOCTEST_CHECK(
+    exact.u0 ==
+    1u);
 
-  CHECK(bitmap32.selected_state[2u] ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap32.selected_state[2u] ==
+    0u);
 
-  CHECK(bitmap32.level[2u] ==
-        -1);
+  DOCTEST_CHECK(
+    bitmap32.level[2u] ==
+    -1);
 
-  CHECK(bitmap32.u0 ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap32.u0 ==
+    0u);
 
-  CHECK(bitmap64.selected_state[2u] ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap64.selected_state[2u] ==
+    0u);
 
-  CHECK(bitmap64.level[2u] ==
-        -1);
+  DOCTEST_CHECK(
+    bitmap64.level[2u] ==
+    -1);
 
-  CHECK(bitmap64.u0 ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap64.u0 ==
+    0u);
 }
 
-TEST_CASE(
+DOCTEST_TEST_CASE(
+  "Warp shared-memory bitmaps conservatively reject "
+  "their matching power-of-two collisions")
+{
+  struct CollisionCase
+  {
+    uint32_t bitmap_bits;
+    uint32_t candidate;
+    uint32_t parent;
+    uint32_t child;
+  };
+
+  // Every parent-child pair differs by exactly the corresponding
+  // bitmap size:
+  //
+  //   child = parent + bitmap_bits
+  //
+  // Therefore:
+  //
+  //   parent != child
+  //   parent & (bitmap_bits - 1)
+  //     ==
+  //   child & (bitmap_bits - 1)
+  const std::vector<CollisionCase>
+    collision_cases{
+      {
+        128u,
+        0u,
+        20u,
+        148u
+      },
+      {
+        256u,
+        1u,
+        21u,
+        277u
+      },
+      {
+        512u,
+        2u,
+        22u,
+        534u
+      },
+      {
+        1024u,
+        3u,
+        23u,
+        1047u
+      },
+      {
+        2048u,
+        4u,
+        24u,
+        2072u
+      }
+    };
+
+  constexpr uint32_t node_count =
+    2080u;
+
+  std::vector<Edge> edges;
+
+  for (const CollisionCase& collision_case :
+       collision_cases) {
+    edges.push_back({
+      collision_case.parent,
+      collision_case.candidate
+    });
+
+    edges.push_back({
+      collision_case.candidate,
+      collision_case.child
+    });
+  }
+
+  const TemporaryGraphFile graph(
+    node_count,
+    edges);
+
+  G_EXT extension;
+  extension.read(graph.path());
+
+  for (const CollisionCase& collision_case :
+       collision_cases) {
+    const uint32_t bitmap_bits =
+      collision_case.bitmap_bits;
+
+    const uint32_t candidate =
+      collision_case.candidate;
+
+    const uint32_t parent =
+      collision_case.parent;
+
+    const uint32_t child =
+      collision_case.child;
+
+    DOCTEST_CAPTURE(bitmap_bits);
+    DOCTEST_CAPTURE(candidate);
+    DOCTEST_CAPTURE(parent);
+    DOCTEST_CAPTURE(child);
+
+    std::vector<uint32_t> selected_state(
+      node_count,
+      1u);
+
+    std::vector<int> level(
+      node_count,
+      0);
+
+    selected_state[candidate] =
+      0u;
+
+    level[candidate] =
+      -1;
+
+    level[parent] =
+      1;
+
+    level[child] =
+      3;
+
+    // Exact overlap detection sees two different e-node IDs,
+    // so the candidate must be accepted.
+    const auto exact =
+      extension
+        .unittest_gpu_insert_warp_direct_once(
+          selected_state,
+          level,
+          true,
+          64u,
+          0u);
+
+    // The corresponding shared-memory bitmap sees the same
+    // hashed bit, so it conservatively rejects the candidate.
+    const auto bitmap =
+      extension
+        .unittest_gpu_insert_warp_direct_once(
+          selected_state,
+          level,
+          true,
+          64u,
+          bitmap_bits);
+
+    DOCTEST_CHECK(
+      exact.selected_state[candidate] ==
+      2u);
+
+    DOCTEST_CHECK(
+      exact.level[candidate] ==
+      2);
+
+    DOCTEST_CHECK(
+      exact.u0 ==
+      1u);
+
+    DOCTEST_CHECK(
+      bitmap.selected_state[candidate] ==
+      0u);
+
+    DOCTEST_CHECK(
+      bitmap.level[candidate] ==
+      -1);
+
+    DOCTEST_CHECK(
+      bitmap.u0 ==
+      0u);
+  }
+}
+
+DOCTEST_TEST_CASE(
   "Unselected parents do not populate Warp bitmaps")
 {
   const TemporaryGraphFile graph(
@@ -620,32 +834,40 @@ TEST_CASE(
         64u,
         64u);
 
-  CHECK(bitmap32.selected_state[3u] ==
-        2u);
+  DOCTEST_CHECK(
+    bitmap32.selected_state[3u] ==
+    2u);
 
-  CHECK(bitmap32.level[3u] ==
-        2);
+  DOCTEST_CHECK(
+    bitmap32.level[3u] ==
+    2);
 
-  CHECK(bitmap32.selected_state[68u] ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap32.selected_state[68u] ==
+    0u);
 
-  CHECK(bitmap32.u0 ==
-        1u);
+  DOCTEST_CHECK(
+    bitmap32.u0 ==
+    1u);
 
-  CHECK(bitmap64.selected_state[3u] ==
-        2u);
+  DOCTEST_CHECK(
+    bitmap64.selected_state[3u] ==
+    2u);
 
-  CHECK(bitmap64.level[3u] ==
-        2);
+  DOCTEST_CHECK(
+    bitmap64.level[3u] ==
+    2);
 
-  CHECK(bitmap64.selected_state[68u] ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap64.selected_state[68u] ==
+    0u);
 
-  CHECK(bitmap64.u0 ==
-        1u);
+  DOCTEST_CHECK(
+    bitmap64.u0 ==
+    1u);
 }
 
-TEST_CASE(
+DOCTEST_TEST_CASE(
   "Selected parents with invalid levels do not populate "
   "Warp bitmaps")
 {
@@ -691,26 +913,32 @@ TEST_CASE(
         64u,
         64u);
 
-  CHECK(bitmap32.selected_state[9u] ==
-        2u);
+  DOCTEST_CHECK(
+    bitmap32.selected_state[9u] ==
+    2u);
 
-  CHECK(bitmap32.level[9u] ==
-        2);
+  DOCTEST_CHECK(
+    bitmap32.level[9u] ==
+    2);
 
-  CHECK(bitmap32.u0 ==
-        1u);
+  DOCTEST_CHECK(
+    bitmap32.u0 ==
+    1u);
 
-  CHECK(bitmap64.selected_state[9u] ==
-        2u);
+  DOCTEST_CHECK(
+    bitmap64.selected_state[9u] ==
+    2u);
 
-  CHECK(bitmap64.level[9u] ==
-        2);
+  DOCTEST_CHECK(
+    bitmap64.level[9u] ==
+    2);
 
-  CHECK(bitmap64.u0 ==
-        1u);
+  DOCTEST_CHECK(
+    bitmap64.u0 ==
+    1u);
 }
 
-TEST_CASE(
+DOCTEST_TEST_CASE(
   "A true selected parent-child overlap is rejected by "
   "all Warp implementations")
 {
@@ -757,26 +985,32 @@ TEST_CASE(
         64u,
         64u);
 
-  CHECK(exact.selected_state[11u] ==
-        0u);
+  DOCTEST_CHECK(
+    exact.selected_state[11u] ==
+    0u);
 
-  CHECK(bitmap32.selected_state[11u] ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap32.selected_state[11u] ==
+    0u);
 
-  CHECK(bitmap64.selected_state[11u] ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap64.selected_state[11u] ==
+    0u);
 
-  CHECK(exact.u0 ==
-        0u);
+  DOCTEST_CHECK(
+    exact.u0 ==
+    0u);
 
-  CHECK(bitmap32.u0 ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap32.u0 ==
+    0u);
 
-  CHECK(bitmap64.u0 ==
-        0u);
+  DOCTEST_CHECK(
+    bitmap64.u0 ==
+    0u);
 }
 
-TEST_CASE(
+DOCTEST_TEST_CASE(
   "Warp-local bitmaps do not leak between warps in one block")
 {
   const TemporaryGraphFile graph(
@@ -814,7 +1048,7 @@ TEST_CASE(
   level[6u] =
     3;
 
-  SUBCASE(
+  DOCTEST_SUBCASE(
     "Two warps in one 64-thread block")
   {
     const auto result =
@@ -826,20 +1060,24 @@ TEST_CASE(
           64u,
           32u);
 
-    CHECK(result.selected_state[0u] ==
-          0u);
+    DOCTEST_CHECK(
+      result.selected_state[0u] ==
+      0u);
 
-    CHECK(result.selected_state[1u] ==
-          2u);
+    DOCTEST_CHECK(
+      result.selected_state[1u] ==
+      2u);
 
-    CHECK(result.level[1u] ==
-          2);
+    DOCTEST_CHECK(
+      result.level[1u] ==
+      2);
 
-    CHECK(result.u0 ==
-          1u);
+    DOCTEST_CHECK(
+      result.u0 ==
+      1u);
   }
 
-  SUBCASE(
+  DOCTEST_SUBCASE(
     "Four warps in one 128-thread block")
   {
     const auto result =
@@ -851,21 +1089,174 @@ TEST_CASE(
           128u,
           32u);
 
-    CHECK(result.selected_state[0u] ==
-          0u);
+    DOCTEST_CHECK(
+      result.selected_state[0u] ==
+      0u);
 
-    CHECK(result.selected_state[1u] ==
-          2u);
+    DOCTEST_CHECK(
+      result.selected_state[1u] ==
+      2u);
 
-    CHECK(result.level[1u] ==
-          2);
+    DOCTEST_CHECK(
+      result.level[1u] ==
+      2);
 
-    CHECK(result.u0 ==
-          1u);
+    DOCTEST_CHECK(
+      result.u0 ==
+      1u);
   }
 }
 
-TEST_CASE(
+DOCTEST_TEST_CASE(
+  "Shared Warp bitmaps above 64 bits do not leak "
+  "between warps in one CUDA block")
+{
+  // Candidate 0:
+  //
+  //   parent = 4
+  //   child  = 4100
+  //
+  //   4 != 4100
+  //   4 & 2047 == 4100 & 2047
+  //
+  // Therefore Bitmap-2048 rejects candidate 0.
+  //
+  // Candidate 1:
+  //
+  //   parents = 100...1099
+  //   child   = 2052
+  //
+  // None of candidate 1's own parents hashes to bit 4.
+  // Candidate 1 must therefore be accepted.
+  //
+  // However:
+  //
+  //   2052 & 2047 == 4
+  //
+  // If candidate 0 and candidate 1 accidentally share the same
+  // bitmap segment, candidate 0's parent 4 can incorrectly reject
+  // candidate 1.
+  constexpr uint32_t node_count =
+    4110u;
+
+  std::vector<Edge> edges{
+    {
+      4u,
+      0u
+    },
+    {
+      0u,
+      4100u
+    },
+    {
+      1u,
+      2052u
+    }
+  };
+
+  // Give candidate 1 a long parent scan.
+  //
+  // This also ensures candidate 0 has enough time to publish its
+  // own bit before candidate 1 probes its child bit if the two
+  // warps incorrectly alias the same shared-memory region.
+  for (uint32_t parent = 100u;
+       parent < 1100u;
+       ++parent) {
+    edges.push_back({
+      parent,
+      1u
+    });
+  }
+
+  const TemporaryGraphFile graph(
+    node_count,
+    edges);
+
+  G_EXT extension;
+  extension.read(graph.path());
+
+  std::vector<uint32_t> selected_state(
+    node_count,
+    1u);
+
+  std::vector<int> level(
+    node_count,
+    0);
+
+  selected_state[0u] =
+    0u;
+
+  selected_state[1u] =
+    0u;
+
+  level[0u] =
+    -1;
+
+  level[1u] =
+    -1;
+
+  // Candidate 0's parent and child.
+  level[4u] =
+    1;
+
+  level[4100u] =
+    3;
+
+  // Candidate 1's selected parents.
+  for (uint32_t parent = 100u;
+       parent < 1100u;
+       ++parent) {
+    level[parent] =
+      1;
+  }
+
+  // Candidate 1's selected child.
+  level[2052u] =
+    3;
+
+  for (const uint32_t threads_per_block :
+       {
+         64u,
+         128u
+       }) {
+    DOCTEST_CAPTURE(threads_per_block);
+
+    const auto result =
+      extension
+        .unittest_gpu_insert_warp_direct_once(
+          selected_state,
+          level,
+          true,
+          threads_per_block,
+          2048u);
+
+    // Candidate 0 has a local Bitmap-2048 collision.
+    DOCTEST_CHECK(
+      result.selected_state[0u] ==
+      0u);
+
+    DOCTEST_CHECK(
+      result.level[0u] ==
+      -1);
+
+    // Candidate 1 has no collision inside its own bitmap.
+    //
+    // It must not observe candidate 0's parent bitmap.
+    DOCTEST_CHECK(
+      result.selected_state[1u] ==
+      2u);
+
+    DOCTEST_CHECK(
+      result.level[1u] ==
+      2);
+
+    DOCTEST_CHECK(
+      result.u0 ==
+      1u);
+  }
+}
+
+DOCTEST_TEST_CASE(
   "Warp Bitmap Batch and Direct match for one active candidate")
 {
   const TemporaryGraphFile graph(
@@ -888,86 +1279,62 @@ TEST_CASE(
     3;
 
   for (const uint32_t bitmap_bits :
-       {32u, 64u}) {
-    SUBCASE(
-      bitmap_bits == 32u
-        ? "Bitmap-32"
-        : "Bitmap-64")
-    {
-      SUBCASE(
-        "Top-down")
-      {
-        const auto batch =
-          extension
-            .unittest_gpu_insert_warp_batch_once(
-              selected_state,
-              level,
-              true,
-              64u,
-              bitmap_bits);
+       {
+         32u,
+         64u,
+         128u,
+         256u,
+         512u,
+         1024u,
+         2048u
+       }) {
+    DOCTEST_CAPTURE(bitmap_bits);
 
-        const auto direct =
-          extension
-            .unittest_gpu_insert_warp_direct_once(
-              selected_state,
-              level,
-              true,
-              64u,
-              bitmap_bits);
+    for (const bool is_top_down_insertion :
+         {
+           true,
+           false
+         }) {
+      DOCTEST_CAPTURE(is_top_down_insertion);
 
-        check_result_equal(
-          batch,
-          direct);
+      const auto batch =
+        extension
+          .unittest_gpu_insert_warp_batch_once(
+            selected_state,
+            level,
+            is_top_down_insertion,
+            64u,
+            bitmap_bits);
 
-        CHECK(batch.selected_state[13u] ==
-              2u);
+      const auto direct =
+        extension
+          .unittest_gpu_insert_warp_direct_once(
+            selected_state,
+            level,
+            is_top_down_insertion,
+            64u,
+            bitmap_bits);
 
-        CHECK(batch.level[13u] ==
-              2);
+      check_result_equal(
+        batch,
+        direct);
 
-        CHECK(batch.u0 ==
-              1u);
-      }
+      DOCTEST_CHECK(
+        batch.selected_state[13u] ==
+        2u);
 
-      SUBCASE(
-        "Bottom-up")
-      {
-        const auto batch =
-          extension
-            .unittest_gpu_insert_warp_batch_once(
-              selected_state,
-              level,
-              false,
-              64u,
-              bitmap_bits);
+      DOCTEST_CHECK(
+        batch.level[13u] ==
+        2);
 
-        const auto direct =
-          extension
-            .unittest_gpu_insert_warp_direct_once(
-              selected_state,
-              level,
-              false,
-              64u,
-              bitmap_bits);
-
-        check_result_equal(
-          batch,
-          direct);
-
-        CHECK(batch.selected_state[13u] ==
-              2u);
-
-        CHECK(batch.level[13u] ==
-              2);
-
-        CHECK(batch.u0 ==
-              1u);
-      }
+      DOCTEST_CHECK(
+        batch.u0 ==
+        1u);
     }
   }
 }
 
-TEST_CASE(
+DOCTEST_TEST_CASE(
   "The original four-argument Warp API still selects "
   "the Exact Warp implementation")
 {
@@ -1011,12 +1378,15 @@ TEST_CASE(
     implicit_exact,
     explicit_exact);
 
-  CHECK(implicit_exact.selected_state[0u] ==
-        2u);
+  DOCTEST_CHECK(
+    implicit_exact.selected_state[0u] ==
+    2u);
 
-  CHECK(implicit_exact.level[0u] ==
-        2);
+  DOCTEST_CHECK(
+    implicit_exact.level[0u] ==
+    2);
 
-  CHECK(implicit_exact.u0 ==
-        1u);
+  DOCTEST_CHECK(
+    implicit_exact.u0 ==
+    1u);
 }

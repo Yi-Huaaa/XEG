@@ -319,12 +319,20 @@ void G_EXT::_validate_warp_threads_per_block(
 void G_EXT::_validate_warp_bitmap_bits(
   const uint32_t bitmap_bits) const
 {
-  if (bitmap_bits != 0u &&
-      bitmap_bits != 32u &&
-      bitmap_bits != 64u) {
+  if (bitmap_bits == 0u) {
+    return;
+  }
+
+  const bool is_power_of_two =
+    (bitmap_bits &
+     (bitmap_bits - 1u)) == 0u;
+
+  if (bitmap_bits < 32u ||
+      bitmap_bits > 2048u ||
+      !is_power_of_two) {
     throw std::invalid_argument(
       "Warp DAG bitmap size must be one of: "
-      "0, 32, 64");
+      "0, 32, 64, 128, 256, 512, 1024, 2048");
   }
 }
 
@@ -6495,25 +6503,30 @@ void G_EXT::_gpu_dag_insert_warp_direct(
 }
 
 // ============================================================
-// Warp-cooperative Bitmap GPU DAG insertion
+// Warp-cooperative Register Bitmap GPU DAG insertion
 //
-// This implementation is intentionally separate from the
-// existing Exact Warp implementation.
+// This section contains only the existing fixed-size register
+// implementations.
 //
 // BITMAP_BITS == 0:
 //   Existing Exact Warp evaluator, kernels, and launchers.
 //
 // BITMAP_BITS == 32:
-//   Register-based Warp Bitmap-32 implementation.
+//   Existing register-based Warp Bitmap-32 implementation.
 //
 // BITMAP_BITS == 64:
-//   Register-based Warp Bitmap-64 implementation.
+//   Existing register-based Warp Bitmap-64 implementation.
 //
-// Each warp owns its bitmap entirely in registers. Different
-// warps in the same CUDA block do not share bitmap state.
+// BITMAP_BITS >= 128:
+//   Implemented separately by the runtime-sized per-warp
+//   shared-memory path below.
+//
+// For Bitmap-32 and Bitmap-64, each warp owns its bitmap
+// entirely in registers. Different warps in the same CUDA block
+// do not share bitmap state.
 //
 // No shared memory, atomicOr(), dynamic shared memory, or
-// __syncthreads() is used.
+// __syncthreads() is used by these fixed-size register paths.
 //
 // Only parents satisfying:
 //
@@ -7593,6 +7606,701 @@ void G_EXT::_gpu_dag_insert_warp_bitmap64_direct(
     "_gpu_dag_insert_warp_bitmap64_direct_kl failed");
 }
 
+// ============================================================
+// Warp-cooperative Shared-Memory Bitmap GPU DAG insertion
+//
+// This path is used only for:
+//
+//   BITMAP_BITS = 128, 256, 512, 1024, 2048
+//
+// The existing Warp Bitmap-32 and Bitmap-64 paths remain
+// register-based and are not modified.
+//
+// Dynamic shared-memory layout:
+//
+//   uint32_t warp_parent_bitmaps
+//     [warps_per_block][bitmap_words]
+//
+// Every warp receives one disjoint bitmap segment.
+//
+// Warps synchronize only with __syncwarp(). No __syncthreads()
+// is used because different warps operate on independent bitmap
+// segments and may process different candidates.
+//
+// The hash policy extends the existing Warp Bitmap-32/64
+// behavior:
+//
+//   bit = node & bitmap_mask
+//
+// One bitmap hit is conservatively treated as overlap without
+// exact verification.
+// ============================================================
+
+__device__ __forceinline__
+void gpu_dag_warp_shared_bitmap_insert(
+  uint32_t* bitmap,
+  const uint32_t node,
+  const uint32_t bitmap_mask)
+{
+  const uint32_t bit =
+    node &
+    bitmap_mask;
+
+  const uint32_t word =
+    bit >> 5u;
+
+  const uint32_t word_mask =
+    1u << (bit & 31u);
+
+  // Different lanes in the same warp may update the same
+  // shared-memory word.
+  atomicOr(
+    &bitmap[word],
+    word_mask);
+}
+
+
+__device__ __forceinline__
+bool gpu_dag_warp_shared_bitmap_contains(
+  const uint32_t* bitmap,
+  const uint32_t node,
+  const uint32_t bitmap_mask)
+{
+  const uint32_t bit =
+    node &
+    bitmap_mask;
+
+  const uint32_t word =
+    bit >> 5u;
+
+  const uint32_t word_mask =
+    1u << (bit & 31u);
+
+  return
+    (bitmap[word] &
+     word_mask) != 0u;
+}
+
+__device__ __forceinline__
+void gpu_dag_process_warp_bitmap_shared_candidate(
+  const uint32_t u,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0,
+  uint32_t* parent_bitmap,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  const uint32_t lane =
+    threadIdx.x &
+    (kGpuDagWarpSize - 1u);
+
+  // ----------------------------------------------------------
+  // Warp-uniform candidate activity check
+  // ----------------------------------------------------------
+  uint32_t candidate_active =
+    0u;
+
+  if (lane == 0u) {
+    candidate_active =
+      atomicAdd(
+        &selected_state[u],
+        0u) == 0u
+        ? 1u
+        : 0u;
+  }
+
+  candidate_active =
+    __shfl_sync(
+      kGpuDagWarpFullMask,
+      candidate_active,
+      0);
+
+  // Every lane observes the same broadcast value.
+  if (candidate_active == 0u) {
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // Clear only this warp's private bitmap segment.
+  //
+  // 128 bits:
+  //   4 uint32_t words
+  //
+  // 2048 bits:
+  //   64 uint32_t words
+  //
+  // With 32 lanes, each lane clears at most two words.
+  // ----------------------------------------------------------
+  for (uint32_t word = lane;
+       word < bitmap_words;
+       word += kGpuDagWarpSize) {
+    parent_bitmap[word] =
+      0u;
+  }
+
+  // Publish the cleared shared-memory words to this warp.
+  __syncwarp(
+    kGpuDagWarpFullMask);
+
+  const uint32_t parent_begin =
+    inverse_adj_ptr[u];
+
+  const uint32_t parent_end =
+    inverse_adj_ptr[u + 1u];
+
+  const uint32_t child_begin =
+    forward_adj_ptr[u];
+
+  const uint32_t child_end =
+    forward_adj_ptr[u + 1u];
+
+  int local_max_parent_level =
+    -1;
+
+  int local_min_child_level =
+    INT_MAX;
+
+  uint32_t local_flags =
+    0u;
+
+  // ----------------------------------------------------------
+  // Cooperative selected-parent scan
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         parent_begin + lane;
+       position < parent_end;
+       position += kGpuDagWarpSize) {
+    const uint32_t parent =
+      inverse_adj[position];
+
+    const uint32_t parent_state =
+      atomicAdd(
+        &selected_state[parent],
+        0u);
+
+    if (parent_state == 0u) {
+      continue;
+    }
+
+    const int parent_level =
+      atomicAdd(
+        &level[parent],
+        0);
+
+    if (parent_level < 0) {
+      continue;
+    }
+
+    local_flags |=
+      kGpuDagWarpHasSelectedParent;
+
+    if (parent_level >
+        local_max_parent_level) {
+      local_max_parent_level =
+        parent_level;
+    }
+
+    // Only selected parents with valid levels populate the
+    // approximate overlap bitmap.
+    gpu_dag_warp_shared_bitmap_insert(
+      parent_bitmap,
+      parent,
+      bitmap_mask);
+  }
+
+  // Every shared-memory atomicOr must finish before any lane
+  // begins probing selected children.
+  __syncwarp(
+    kGpuDagWarpFullMask);
+
+  // ----------------------------------------------------------
+  // Cooperative selected-child scan
+  // ----------------------------------------------------------
+  for (uint32_t position =
+         child_begin + lane;
+       position < child_end;
+       position += kGpuDagWarpSize) {
+    const uint32_t child =
+      forward_adj[position];
+
+    const uint32_t child_state =
+      atomicAdd(
+        &selected_state[child],
+        0u);
+
+    if (child_state == 0u) {
+      continue;
+    }
+
+    const int child_level =
+      atomicAdd(
+        &level[child],
+        0);
+
+    if (child_level < 0) {
+      continue;
+    }
+
+    local_flags |=
+      kGpuDagWarpHasSelectedChild;
+
+    if (child_level <
+        local_min_child_level) {
+      local_min_child_level =
+        child_level;
+    }
+
+    if (gpu_dag_warp_shared_bitmap_contains(
+          parent_bitmap,
+          child,
+          bitmap_mask)) {
+      local_flags |=
+        kGpuDagWarpHasSelectedOverlap;
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Register-based warp reduction
+  //
+  // Match the existing Exact Warp and Warp Bitmap-32/64
+  // implementations.
+  // ----------------------------------------------------------
+  for (uint32_t offset =
+         kGpuDagWarpSize / 2u;
+       offset > 0u;
+       offset >>= 1u) {
+    const int other_max_parent_level =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_max_parent_level,
+        offset);
+
+    const int other_min_child_level =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_min_child_level,
+        offset);
+
+    const uint32_t other_flags =
+      __shfl_down_sync(
+        kGpuDagWarpFullMask,
+        local_flags,
+        offset);
+
+    if (other_max_parent_level >
+        local_max_parent_level) {
+      local_max_parent_level =
+        other_max_parent_level;
+    }
+
+    if (other_min_child_level <
+        local_min_child_level) {
+      local_min_child_level =
+        other_min_child_level;
+    }
+
+    local_flags |=
+      other_flags;
+  }
+
+  // ----------------------------------------------------------
+  // Lane 0 decides whether the candidate is legal.
+  // ----------------------------------------------------------
+  if (lane == 0u) {
+    const bool has_selected_parent =
+      (local_flags &
+       kGpuDagWarpHasSelectedParent) != 0u;
+
+    const bool has_selected_child =
+      (local_flags &
+       kGpuDagWarpHasSelectedChild) != 0u;
+
+    const bool has_selected_overlap =
+      (local_flags &
+       kGpuDagWarpHasSelectedOverlap) != 0u;
+
+    bool valid =
+      !has_selected_overlap &&
+      local_max_parent_level <
+        local_min_child_level;
+
+    int proposed_level =
+      -1;
+
+    if (valid &&
+        is_top_down_insertion) {
+      valid =
+        has_selected_parent;
+
+      if (valid) {
+        proposed_level =
+          local_max_parent_level + 1;
+      }
+    }
+    else if (valid) {
+      valid =
+        has_selected_child;
+
+      if (valid) {
+        proposed_level =
+          local_min_child_level - 1;
+      }
+    }
+
+    valid =
+      valid &&
+      proposed_level >= 0;
+
+    if (valid) {
+      // Preserve the existing live optimistic publication
+      // order:
+      //
+      //   1. level
+      //   2. tentative state 2
+      //
+      // Do not add __threadfence().
+      level[u] =
+        proposed_level;
+
+      if (atomicCAS(
+            &selected_state[u],
+            0u,
+            2u) == 0u) {
+        atomicAdd(
+          u0,
+          1u);
+      }
+    }
+  }
+
+  // Warp-Batch may reuse this warp's bitmap segment for its
+  // next candidate.
+  __syncwarp(
+    kGpuDagWarpFullMask);
+}
+
+__global__
+void _gpu_dag_insert_warp_bitmap_shared_batch_kl(
+  const uint32_t num_endes,
+  const uint32_t num_batches,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  const uint32_t warp_in_block =
+    threadIdx.x /
+    kGpuDagWarpSize;
+
+  const uint32_t warps_per_block =
+    blockDim.x /
+    kGpuDagWarpSize;
+
+  const uint32_t global_warp =
+    blockIdx.x * warps_per_block +
+    warp_in_block;
+
+  const uint32_t candidate_lanes =
+    (num_endes +
+     num_batches - 1u) /
+    num_batches;
+
+  // Uniform for all 32 lanes in this warp.
+  if (global_warp >=
+      candidate_lanes) {
+    return;
+  }
+
+  extern __shared__
+    uint32_t warp_parent_bitmaps[];
+
+  // Every warp receives a disjoint bitmap segment.
+  uint32_t* parent_bitmap =
+    warp_parent_bitmaps +
+    warp_in_block * bitmap_words;
+
+  // Preserve the current Warp Bitmap transposed mapping:
+  //
+  //   u = global_warp * num_batches + batch_index
+  for (uint32_t batch_index = 0u;
+       batch_index < num_batches;
+       ++batch_index) {
+    const uint32_t u =
+      global_warp * num_batches +
+      batch_index;
+
+    // Uniform for all lanes in this warp.
+    if (u >= num_endes) {
+      continue;
+    }
+
+    gpu_dag_process_warp_bitmap_shared_candidate(
+      u,
+      is_top_down_insertion,
+      selected_state,
+      forward_adj,
+      forward_adj_ptr,
+      inverse_adj,
+      inverse_adj_ptr,
+      level,
+      u0,
+      parent_bitmap,
+      bitmap_mask,
+      bitmap_words);
+  }
+}
+
+__global__
+void _gpu_dag_insert_warp_bitmap_shared_direct_kl(
+  const uint32_t num_endes,
+  const bool is_top_down_insertion,
+  uint32_t* selected_state,
+  const uint32_t* forward_adj,
+  const uint32_t* forward_adj_ptr,
+  const uint32_t* inverse_adj,
+  const uint32_t* inverse_adj_ptr,
+  int* level,
+  uint32_t* u0,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  const uint32_t warp_in_block =
+    threadIdx.x /
+    kGpuDagWarpSize;
+
+  const uint32_t warps_per_block =
+    blockDim.x /
+    kGpuDagWarpSize;
+
+  const uint32_t global_warp =
+    blockIdx.x * warps_per_block +
+    warp_in_block;
+
+  const uint32_t u =
+    global_warp;
+
+  // Uniform for all 32 lanes in this warp.
+  if (u >= num_endes) {
+    return;
+  }
+
+  extern __shared__
+    uint32_t warp_parent_bitmaps[];
+
+  // Every warp receives a disjoint bitmap segment.
+  uint32_t* parent_bitmap =
+    warp_parent_bitmaps +
+    warp_in_block * bitmap_words;
+
+  gpu_dag_process_warp_bitmap_shared_candidate(
+    u,
+    is_top_down_insertion,
+    selected_state,
+    forward_adj,
+    forward_adj_ptr,
+    inverse_adj,
+    inverse_adj_ptr,
+    level,
+    u0,
+    parent_bitmap,
+    bitmap_mask,
+    bitmap_words);
+}
+
+void G_EXT::_gpu_dag_insert_warp_bitmap_shared_batch(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_block,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap_shared_batch "
+      "requires initialized GPU DAG buffers");
+  }
+
+  // Shared Warp Bitmap is used only for:
+  //
+  //   128 bits  -> 4 words
+  //   ...
+  //   2048 bits -> 64 words
+  if (bitmap_words < 4u ||
+      bitmap_words > 64u) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap_shared_batch "
+      "received an invalid bitmap word count");
+  }
+
+  const uint32_t bitmap_bits =
+    bitmap_mask + 1u;
+
+  if (bitmap_bits !=
+      bitmap_words * 32u) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap_shared_batch "
+      "received inconsistent bitmap parameters");
+  }
+
+  // Match the current Bitmap Warp Batch mapping.
+  const uint32_t num_batches =
+    (_num_ende +
+     kGpuDagBitmapBatchSize - 1u) /
+    kGpuDagBitmapBatchSize;
+
+  const uint32_t candidate_lanes =
+    (_num_ende +
+     num_batches - 1u) /
+    num_batches;
+
+  const uint32_t warps_per_block =
+    threads_per_block /
+    kGpuDagWarpSize;
+
+  const uint32_t blocks =
+    (candidate_lanes +
+     warps_per_block - 1u) /
+    warps_per_block;
+
+  // One bitmap per warp:
+  //
+  //   shared_bytes =
+  //     warps_per_block *
+  //     bitmap_words *
+  //     sizeof(uint32_t)
+  //
+  // Maximum:
+  //
+  //   1024 threads/block = 32 warps
+  //   2048 bits          = 64 words
+  //
+  //   32 * 64 * 4 = 8192 bytes
+  const size_t shared_bytes =
+    static_cast<size_t>(
+      warps_per_block) *
+    static_cast<size_t>(
+      bitmap_words) *
+    sizeof(uint32_t);
+
+  _gpu_dag_insert_warp_bitmap_shared_batch_kl
+    <<<blocks,
+       threads_per_block,
+       shared_bytes>>>(
+      _num_ende,
+      num_batches,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0,
+      bitmap_mask,
+      bitmap_words);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_warp_bitmap_shared_batch_kl "
+    "failed");
+}
+
+void G_EXT::_gpu_dag_insert_warp_bitmap_shared_direct(
+  const bool is_top_down_insertion,
+  const uint32_t threads_per_block,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
+{
+  if (_num_ende == 0u) {
+    return;
+  }
+
+  if (_dvc_picked_endes == nullptr ||
+      _dvc_global_adj_1D == nullptr ||
+      _dvc_global_adj_1D_ptr == nullptr ||
+      _dvc_global_inv_adj_1D == nullptr ||
+      _dvc_global_inv_adj_1D_ptr == nullptr ||
+      _dvc_level == nullptr ||
+      _dvc_dag_u0 == nullptr) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap_shared_direct "
+      "requires initialized GPU DAG buffers");
+  }
+
+  if (bitmap_words < 4u ||
+      bitmap_words > 64u) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap_shared_direct "
+      "received an invalid bitmap word count");
+  }
+
+  const uint32_t bitmap_bits =
+    bitmap_mask + 1u;
+
+  if (bitmap_bits !=
+      bitmap_words * 32u) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap_shared_direct "
+      "received inconsistent bitmap parameters");
+  }
+
+  const uint32_t warps_per_block =
+    threads_per_block /
+    kGpuDagWarpSize;
+
+  const uint32_t blocks =
+    (_num_ende +
+     warps_per_block - 1u) /
+    warps_per_block;
+
+  const size_t shared_bytes =
+    static_cast<size_t>(
+      warps_per_block) *
+    static_cast<size_t>(
+      bitmap_words) *
+    sizeof(uint32_t);
+
+  _gpu_dag_insert_warp_bitmap_shared_direct_kl
+    <<<blocks,
+       threads_per_block,
+       shared_bytes>>>(
+      _num_ende,
+      is_top_down_insertion,
+      _dvc_picked_endes,
+      _dvc_global_adj_1D,
+      _dvc_global_adj_1D_ptr,
+      _dvc_global_inv_adj_1D,
+      _dvc_global_inv_adj_1D_ptr,
+      _dvc_level,
+      _dvc_dag_u0,
+      bitmap_mask,
+      bitmap_words);
+
+  cudaCheckErrors(
+    "_gpu_dag_insert_warp_bitmap_shared_direct_kl "
+    "failed");
+}
+
 void G_EXT::_gpu_dag_insert_configured(
   const bool use_direct_mode,
   const bool is_top_down_insertion)
@@ -7628,7 +8336,8 @@ void G_EXT::_gpu_dag_insert_configured(
           return;
 
         case 32u:
-          // Register-based Warp Bitmap-32 implementation.
+          // Existing register-based Warp Bitmap-32
+          // implementation.
           if (use_direct_mode) {
             _gpu_dag_insert_warp_bitmap32_direct(
               is_top_down_insertion,
@@ -7643,7 +8352,8 @@ void G_EXT::_gpu_dag_insert_configured(
           return;
 
         case 64u:
-          // Register-based Warp Bitmap-64 implementation.
+          // Existing register-based Warp Bitmap-64
+          // implementation.
           if (use_direct_mode) {
             _gpu_dag_insert_warp_bitmap64_direct(
               is_top_down_insertion,
@@ -7653,6 +8363,30 @@ void G_EXT::_gpu_dag_insert_configured(
             _gpu_dag_insert_warp_bitmap64_batch(
               is_top_down_insertion,
               _dag_threads_per_candidate);
+          }
+
+          return;
+
+        case 128u:
+        case 256u:
+        case 512u:
+        case 1024u:
+        case 2048u:
+          // Runtime-sized per-warp shared-memory bitmap
+          // implementation.
+          if (use_direct_mode) {
+            _gpu_dag_insert_warp_bitmap_shared_direct(
+              is_top_down_insertion,
+              _dag_threads_per_candidate,
+              _dag_bitmap_mask,
+              _dag_bitmap_words);
+          }
+          else {
+            _gpu_dag_insert_warp_bitmap_shared_batch(
+              is_top_down_insertion,
+              _dag_threads_per_candidate,
+              _dag_bitmap_mask,
+              _dag_bitmap_words);
           }
 
           return;
