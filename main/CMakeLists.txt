@@ -1,42 +1,90 @@
 # File location: gpu_extraction/main
 # CMakeLists.txt in the main directory
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build/main)
+set(
+  CMAKE_RUNTIME_OUTPUT_DIRECTORY
+  ${PROJECT_SOURCE_DIR}/build/main
+)
 
-add_executable(simple 
-    ${g_ext_MAIN_DIR}/simple.cu
+# -----------------------------------------------------------------------------
+# Executables
+# -----------------------------------------------------------------------------
+
+# Existing production/example executable.
+#
+# Keep this source and target unchanged.
+add_executable(
+  simple
+  ${g_ext_MAIN_DIR}/simple.cu
+)
+
+# Output-degree ablation executable.
+#
+# This file contains host C++ only. CUDA kernels remain inside
+# the existing g_ext library, so this source can remain .cpp.
+add_executable(
+  output_degree_ablation
+  ${g_ext_MAIN_DIR}/output_degree_ablation.cpp
 )
 
 
 find_package(Threads REQUIRED)
 
-list(APPEND g_ext_examples
+
+list(
+  APPEND
+  g_ext_examples
   simple
+  output_degree_ablation
 )
 
+
 # -----------------------------------------------------------------------------
-# Path Settings
+# Path and library settings
 # -----------------------------------------------------------------------------
-foreach(example IN LISTS g_ext_examples) 
-  # Link g_ext libraries
-  target_include_directories(${example} PRIVATE ${PROJECT_SOURCE_DIR})
-  target_link_libraries(simple PRIVATE g_ext)
 
-  # Link g_ext libraries
-  # target_link_libraries(${example} PUBLIC Threads::Threads PRIVATE g_ext)
+foreach(example IN LISTS g_ext_examples)
 
-  # Link cuBLAS library
-  target_link_libraries(${example} PRIVATE ${CUBLAS_LIBRARIES})
+  target_include_directories(
+    ${example}
+    PRIVATE
+    ${PROJECT_SOURCE_DIR}
+  )
 
-  # Include cuBLAS include directories
-  target_include_directories(${example} PRIVATE ${CUBLAS_INCLUDE_DIRS})
+  # Important:
+  # Use ${example}, not the previously hard-coded "simple".
+  # Otherwise output_degree_ablation would not link against g_ext.
+  target_link_libraries(
+    ${example}
+    PRIVATE
+    g_ext
+  )
+
+  # Link cuBLAS library.
+  target_link_libraries(
+    ${example}
+    PRIVATE
+    ${CUBLAS_LIBRARIES}
+  )
+
+  # Include cuBLAS/CUDA include directories.
+  target_include_directories(
+    ${example}
+    PRIVATE
+    ${CUBLAS_INCLUDE_DIRS}
+  )
+
 endforeach()
 
 
 # -----------------------------------------------------------------------------
-# Set compiler flags for the "main" target
+# Compiler flags for the existing CUDA "simple" target
 # -----------------------------------------------------------------------------
-target_compile_options(simple PRIVATE
+
+# Preserve the original simple target flags exactly.
+target_compile_options(
+  simple
+  PRIVATE
   -Wall
   -Wextra
   -Wfatal-errors
@@ -46,3 +94,21 @@ target_compile_options(simple PRIVATE
 )
 
 
+# -----------------------------------------------------------------------------
+# Compiler flags for the host-only ablation executable
+# -----------------------------------------------------------------------------
+
+# output_degree_ablation.cpp is compiled by the normal C++
+# compiler rather than NVCC.
+#
+# Do not pass -lineinfo here because -lineinfo is a CUDA/NVCC
+# option and may be rejected by GCC or Clang.
+target_compile_options(
+  output_degree_ablation
+  PRIVATE
+  -Wall
+  -Wextra
+  -Wfatal-errors
+  -Wshadow
+  -O3
+)

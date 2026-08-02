@@ -172,21 +172,22 @@ int main(int argc, char *argv[]) {
   duration_read = end - start;
   std::cout << "Read Time: " << g_ext.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
-  // g_ext.run(
-  //   true,
-  //   360,
-  //   dag_kernel,
-  //   num_thread_dag_constr,
-  //   bitmap_bits);  
-
-  // Run XEG-T exp 
-  g_ext.run_xeg_t_exp(
+  g_ext.run(
+    true,
     360,
     dag_kernel,
     num_thread_dag_constr,
-    bitmap_bits,
-    333u);
+    bitmap_bits);  
+
+  // // Run XEG-T exp 
+  // g_ext.run_xeg_t_exp(
+  //   360,
+  //   dag_kernel,
+  //   num_thread_dag_constr,
+  //   bitmap_bits,
+  //   333u);
 
 
   return 0;
 }
+

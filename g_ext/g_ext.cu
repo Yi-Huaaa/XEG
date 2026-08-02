@@ -197,11 +197,28 @@ static_assert(
 // not limited by this parameter.
 // ============================================================
 constexpr uint32_t
-  kGpuDagBitmapMaxDirectIterations = 5u;
+  kGpuDagBitmapMaxDirectIterations = 5u; // default setting = 5
 
 static_assert(
   kGpuDagBitmapMaxDirectIterations > 0u,
   "Bitmap direct iteration limit must be positive");
+
+// ============================================================
+// Output-degree ablation random-search stopping rule
+//
+// A successful edge insertion resets this counter to zero.
+// An invalid or duplicate source-target sample increments it.
+//
+// Reaching this limit means the random search has stalled. It
+// does not mathematically prove that every legal pair has been
+// exhausted.
+// ============================================================
+constexpr uint32_t
+  kOutputDegreeExpMaxConsecutiveFailures = 100u;
+
+static_assert(
+  kOutputDegreeExpMaxConsecutiveFailures > 0u,
+  "Output-degree failure limit must be positive");
 
 template <typename T>
 void cuda_malloc_array(T*& ptr, size_t count)
@@ -516,14 +533,14 @@ void G_EXT::_run_impl(
 
   // if (ILP_solver) {
   //   _cpsat_solver(
-  //     ILP_time_limit, 
-  //     _ecls_its_ende_newG, 
-  //     _ende_child, 
-  //     _ende_child_ptr, 
-  //     _root_eclass_id, 
+  //     ILP_time_limit,
+  //     _ecls_its_ende_newG,
+  //     _ende_child,
+  //     _ende_child_ptr,
+  //     _root_eclass_id,
   //     _ende_cost,
-  //     best_ende_of_ecls, 
-  //     picked_endes_tmp); 
+  //     best_ende_of_ecls,
+  //     picked_endes_tmp);      
   // }
 
   // GPU version starts
@@ -1240,6 +1257,781 @@ void G_EXT::_prune_dead_nodes(
 
 }
 
+void G_EXT::_rebuild_derived_graph_data_for_output_degree_exp()
+{
+  if (_ende_child_ptr.size() !=
+      static_cast<size_t>(_num_ende) + 1u) {
+    throw std::logic_error(
+      "Output-degree experiment found an invalid "
+      "e-node child-pointer array");
+  }
+
+  if (_ecls_its_ende.size() !=
+      static_cast<size_t>(_num_ecls)) {
+    throw std::logic_error(
+      "Output-degree experiment found invalid "
+      "e-class membership data");
+  }
+
+  // Re-expand:
+  //
+  //   e-node -> child e-class
+  //
+  // into:
+  //
+  //   e-node -> every e-node in the child e-class
+  //
+  // This intentionally matches the existing production
+  // construction in _prune_dead_nodes().
+  std::vector<std::vector<uint32_t>>
+    raw_adj(_num_ende);
+
+  std::vector<std::vector<uint32_t>>
+    raw_inv_adj(_num_ende);
+
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    const uint32_t child_begin =
+      _ende_child_ptr[ende];
+
+    const uint32_t child_end =
+      _ende_child_ptr[ende + 1u];
+
+    for (uint32_t position = child_begin;
+         position < child_end;
+         ++position) {
+      const uint32_t child_eclass =
+        _ende_child[position];
+
+      if (child_eclass >= _num_ecls) {
+        throw std::logic_error(
+          "Output-degree experiment generated an "
+          "out-of-range child e-class");
+      }
+
+      for (uint32_t child_ende :
+           _ecls_its_ende[child_eclass]) {
+        // Preserve the production self-loop filtering
+        // behavior for the expanded e-node graph.
+        if (ende == child_ende) {
+          continue;
+        }
+
+        raw_adj[ende].push_back(
+          child_ende);
+
+        raw_inv_adj[child_ende].push_back(
+          ende);
+      }
+    }
+  }
+
+  // Remove every CSR array built by the original read before
+  // constructing the augmented versions.
+  _global_adj.clear();
+  _global_inv_adj.clear();
+
+  _global_adj_1D.clear();
+  _global_adj_1D_ptr.clear();
+
+  _global_inv_adj_1D.clear();
+  _global_inv_adj_1D_ptr.clear();
+
+  _global_adj_1D_ptr.reserve(
+    static_cast<size_t>(_num_ende) + 1u);
+
+  _global_inv_adj_1D_ptr.reserve(
+    static_cast<size_t>(_num_ende) + 1u);
+
+  // Forward CSR.
+  _global_adj_1D_ptr.push_back(0u);
+
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    auto& neighbors =
+      raw_adj[ende];
+
+    std::sort(
+      neighbors.begin(),
+      neighbors.end());
+
+    neighbors.erase(
+      std::unique(
+        neighbors.begin(),
+        neighbors.end()),
+      neighbors.end());
+
+    _global_adj_1D.insert(
+      _global_adj_1D.end(),
+      neighbors.begin(),
+      neighbors.end());
+
+    if (_global_adj_1D.size() >
+        std::numeric_limits<uint32_t>::max()) {
+      throw std::overflow_error(
+        "Output-degree forward CSR exceeds uint32_t");
+    }
+
+    _global_adj_1D_ptr.push_back(
+      static_cast<uint32_t>(
+        _global_adj_1D.size()));
+  }
+
+  // Inverse CSR.
+  _global_inv_adj_1D_ptr.push_back(0u);
+
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    auto& neighbors =
+      raw_inv_adj[ende];
+
+    std::sort(
+      neighbors.begin(),
+      neighbors.end());
+
+    neighbors.erase(
+      std::unique(
+        neighbors.begin(),
+        neighbors.end()),
+      neighbors.end());
+
+    _global_inv_adj_1D.insert(
+      _global_inv_adj_1D.end(),
+      neighbors.begin(),
+      neighbors.end());
+
+    if (_global_inv_adj_1D.size() >
+        std::numeric_limits<uint32_t>::max()) {
+      throw std::overflow_error(
+        "Output-degree inverse CSR exceeds uint32_t");
+    }
+
+    _global_inv_adj_1D_ptr.push_back(
+      static_cast<uint32_t>(
+        _global_inv_adj_1D.size()));
+  }
+
+  // The edge masks are pointer-indexed, so their sizes must
+  // match the newly constructed CSR arrays.
+  _picked_adj.assign(
+    _global_adj_1D.size(),
+    false);
+
+  _picked_inv_adj.assign(
+    _global_inv_adj_1D.size(),
+    false);
+
+  _tmp_picked_adj.assign(
+    _global_adj_1D.size(),
+    false);
+
+  _tmp_picked_inv_adj.assign(
+    _global_inv_adj_1D.size(),
+    false);
+
+  // These arrays are reconstructed by tree/DAG construction,
+  // but reset them here so no original-read state remains.
+  _indegree.assign(
+    _num_ende,
+    0u);
+
+  _inv_indegree.assign(
+    _num_ende,
+    0u);
+
+  _new_inserted.assign(
+    _num_ende,
+    false);
+
+  _in_subgraph.assign(
+    _num_ende,
+    false);
+
+  _ecls_its_ende_newG.clear();
+  _ecls_its_ende_newG_GPU.clear();
+
+  _max_level =
+    -1;
+
+  // Recompute global leaf e-nodes from the augmented expanded
+  // graph.
+  //
+  // Because only original non-leaf e-nodes are modified, the
+  // leaf set should normally remain unchanged. Recomputing it
+  // avoids relying on that assumption.
+  _leaves.clear();
+
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    const uint32_t out_degree =
+      _global_adj_1D_ptr[ende + 1u] -
+      _global_adj_1D_ptr[ende];
+
+    if (out_degree == 0u) {
+      _leaves.push_back(
+        ende);
+    }
+  }
+
+  // The following structures remain unchanged because the
+  // experiment does not add/remove e-nodes or e-classes:
+  //
+  //   _ende_name
+  //   _ende_op
+  //   _ende_cost
+  //   _ende_ecls
+  //   _ecls_its_ende
+  //   _ecls_its_ende_1D
+  //   _ecls_its_ende_1D_ptr
+  //   _root_eclass_id
+  //   _all_root_ende_1D
+  //   _roots
+}
+
+void G_EXT::_augment_output_degree_for_exp(
+  const uint32_t output_degree_multiplier,
+  const uint32_t random_seed)
+{
+  if (output_degree_multiplier == 0u) {
+    throw std::invalid_argument(
+      "Output-degree multiplier must be at least 1");
+  }
+
+  if (_ende_child_ptr.size() !=
+      static_cast<size_t>(_num_ende) + 1u) {
+    throw std::logic_error(
+      "Output-degree experiment requires initialized "
+      "e-node child CSR");
+  }
+
+  if (_ende_ecls.size() !=
+      static_cast<size_t>(_num_ende)) {
+    throw std::logic_error(
+      "Output-degree experiment requires initialized "
+      "e-node-to-e-class mapping");
+  }
+
+  if (_ecls_its_ende.size() !=
+      static_cast<size_t>(_num_ecls)) {
+    throw std::logic_error(
+      "Output-degree experiment requires initialized "
+      "e-class membership");
+  }
+
+  const uint64_t original_child_reference_count =
+    static_cast<uint64_t>(
+      _ende_child.size());
+
+  if (original_child_reference_count >
+      std::numeric_limits<uint64_t>::max() /
+        output_degree_multiplier) {
+    throw std::overflow_error(
+      "Requested output-degree multiplier overflows uint64_t");
+  }
+
+  const uint64_t target_child_reference_count =
+    original_child_reference_count *
+    static_cast<uint64_t>(
+      output_degree_multiplier);
+
+  // _ende_child_ptr stores uint32_t positions, so the final
+  // number of child references must remain representable.
+  if (target_child_reference_count >
+      std::numeric_limits<uint32_t>::max()) {
+    throw std::overflow_error(
+      "Requested output-degree graph exceeds uint32_t "
+      "child-pointer capacity");
+  }
+
+  const uint64_t original_expanded_edge_count =
+    static_cast<uint64_t>(
+      _global_adj_1D.size());
+
+  uint32_t original_max_output_degree =
+    0u;
+
+  // Sources are fixed from the original post-pruning graph.
+  //
+  // A source must already be a non-leaf e-node before any
+  // artificial edge is added.
+  std::vector<uint32_t>
+    non_leaf_enodes;
+
+  non_leaf_enodes.reserve(
+    _num_ende);
+
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    const uint32_t degree =
+      _ende_child_ptr[ende + 1u] -
+      _ende_child_ptr[ende];
+
+    if (degree >
+        original_max_output_degree) {
+      original_max_output_degree =
+        degree;
+    }
+
+    if (degree > 0u) {
+      non_leaf_enodes.push_back(
+        ende);
+    }
+  }
+
+  // Use the strict leaf-e-class definition:
+  //
+  //   the e-class is non-empty
+  //   every e-node inside it has zero child e-classes
+  //
+  // Because these target e-nodes are never eligible sources,
+  // adding source -> strict-leaf-e-class edges cannot create a
+  // path back to the source.
+  std::vector<uint32_t>
+    strict_leaf_eclasses;
+
+  strict_leaf_eclasses.reserve(
+    _num_ecls);
+
+  for (uint32_t eclass = 0u;
+       eclass < _num_ecls;
+       ++eclass) {
+    const auto& member_enodes =
+      _ecls_its_ende[eclass];
+
+    // Never create a dependency on an empty e-class.
+    if (member_enodes.empty()) {
+      continue;
+    }
+
+    bool every_member_is_leaf =
+      true;
+
+    for (uint32_t ende :
+         member_enodes) {
+      const bool is_leaf =
+        _ende_child_ptr[ende] ==
+        _ende_child_ptr[ende + 1u];
+
+      if (!is_leaf) {
+        every_member_is_leaf =
+          false;
+
+        break;
+      }
+    }
+
+    if (every_member_is_leaf) {
+      strict_leaf_eclasses.push_back(
+        eclass);
+    }
+  }
+
+  // Store only newly added children.
+  //
+  // Original child ordering and duplicate operands must remain
+  // untouched. For example, an original e-node with children
+  // [C, C] may represent two operands and must not be changed
+  // into [C].
+  struct AddedChildData
+  {
+    std::vector<uint32_t> ordered_targets;
+    std::unordered_set<uint32_t> target_lookup;
+  };
+
+  std::unordered_map<uint32_t, AddedChildData>
+    added_children_by_source;
+
+  uint64_t current_child_reference_count =
+    original_child_reference_count;
+
+  uint64_t successfully_added_edges =
+    0u;
+
+  uint64_t random_attempts =
+    0u;
+
+  uint32_t consecutive_failures =
+    0u;
+
+  uint64_t rejected_same_eclass =
+    0u;
+
+  uint64_t rejected_original_child =
+    0u;
+
+  uint64_t rejected_added_child =
+    0u;
+
+  // Deterministic checksum of the successfully added edge
+  // sequence. Runs with the same input, multiplier, and seed
+  // should print the same checksum regardless of DAG kernel.
+  uint64_t augmentation_checksum =
+    1469598103934665603ull;
+
+  std::mt19937 random_generator(
+    random_seed);
+
+  if (current_child_reference_count <
+        target_child_reference_count &&
+      !non_leaf_enodes.empty() &&
+      !strict_leaf_eclasses.empty()) {
+    std::uniform_int_distribution<size_t>
+      choose_source(
+        0u,
+        non_leaf_enodes.size() - 1u);
+
+    std::uniform_int_distribution<size_t>
+      choose_target(
+        0u,
+        strict_leaf_eclasses.size() - 1u);
+
+    while (current_child_reference_count <
+             target_child_reference_count &&
+           consecutive_failures <
+             kOutputDegreeExpMaxConsecutiveFailures) {
+      ++random_attempts;
+
+      const uint32_t source_ende =
+        non_leaf_enodes[
+          choose_source(
+            random_generator)];
+
+      const uint32_t target_eclass =
+        strict_leaf_eclasses[
+          choose_target(
+            random_generator)];
+
+      bool valid_pair =
+        true;
+
+      // Defensive direct self-loop prevention:
+      //
+      // source e-node u belongs to e-class C
+      // adding u -> C would make u depend on its own e-class.
+      if (_ende_ecls[source_ende] ==
+          target_eclass) {
+        valid_pair =
+          false;
+
+        ++rejected_same_eclass;
+      }
+
+      // Do not add a target e-class that already appears in the
+      // source's original child list.
+      if (valid_pair) {
+        const uint32_t child_begin =
+          _ende_child_ptr[source_ende];
+
+        const uint32_t child_end =
+          _ende_child_ptr[source_ende + 1u];
+
+        for (uint32_t position = child_begin;
+             position < child_end;
+             ++position) {
+          if (_ende_child[position] ==
+              target_eclass) {
+            valid_pair =
+              false;
+
+            ++rejected_original_child;
+
+            break;
+          }
+        }
+      }
+
+      // Do not add the same artificial source-target edge more
+      // than once.
+      if (valid_pair) {
+        const auto source_it =
+          added_children_by_source.find(
+            source_ende);
+
+        if (source_it !=
+              added_children_by_source.end() &&
+            source_it->second.target_lookup.find(
+              target_eclass) !=
+              source_it->second.target_lookup.end()) {
+          valid_pair =
+            false;
+
+          ++rejected_added_child;
+        }
+      }
+
+      if (!valid_pair) {
+        ++consecutive_failures;
+
+        continue;
+      }
+
+      auto& added_data =
+        added_children_by_source[
+          source_ende];
+
+      added_data.ordered_targets.push_back(
+        target_eclass);
+
+      added_data.target_lookup.insert(
+        target_eclass);
+
+      ++successfully_added_edges;
+      ++current_child_reference_count;
+
+      // A success proves that random sampling is still making
+      // progress, so restart the consecutive-failure window.
+      consecutive_failures =
+        0u;
+
+      const uint64_t edge_key =
+        (
+          static_cast<uint64_t>(
+            source_ende) << 32u
+        ) |
+        static_cast<uint64_t>(
+          target_eclass);
+
+      augmentation_checksum ^=
+        edge_key;
+
+      augmentation_checksum *=
+        1099511628211ull;
+    }
+  }
+
+  const uint64_t final_child_reference_count =
+    original_child_reference_count +
+    successfully_added_edges;
+
+  if (final_child_reference_count >
+      std::numeric_limits<uint32_t>::max()) {
+    throw std::overflow_error(
+      "Augmented child-reference array exceeds uint32_t");
+  }
+
+  // Reconstruct _ende_child and _ende_child_ptr while preserving:
+  //
+  //   1. every original child
+  //   2. original child order
+  //   3. original duplicate operands
+  //   4. random insertion order of new target e-classes
+  std::vector<uint32_t>
+    augmented_ende_child;
+
+  augmented_ende_child.reserve(
+    static_cast<size_t>(
+      final_child_reference_count));
+
+  std::vector<uint32_t>
+    augmented_ende_child_ptr;
+
+  augmented_ende_child_ptr.reserve(
+    static_cast<size_t>(_num_ende) + 1u);
+
+  augmented_ende_child_ptr.push_back(
+    0u);
+
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    const uint32_t original_begin =
+      _ende_child_ptr[ende];
+
+    const uint32_t original_end =
+      _ende_child_ptr[ende + 1u];
+
+    augmented_ende_child.insert(
+      augmented_ende_child.end(),
+      _ende_child.begin() + original_begin,
+      _ende_child.begin() + original_end);
+
+    const auto added_it =
+      added_children_by_source.find(
+        ende);
+
+    if (added_it !=
+        added_children_by_source.end()) {
+      const auto& added_targets =
+        added_it->second.ordered_targets;
+
+      augmented_ende_child.insert(
+        augmented_ende_child.end(),
+        added_targets.begin(),
+        added_targets.end());
+    }
+
+    if (augmented_ende_child.size() >
+        std::numeric_limits<uint32_t>::max()) {
+      throw std::overflow_error(
+        "Augmented e-node child pointer exceeds uint32_t");
+    }
+
+    augmented_ende_child_ptr.push_back(
+      static_cast<uint32_t>(
+        augmented_ende_child.size()));
+  }
+
+  if (augmented_ende_child.size() !=
+      static_cast<size_t>(
+        final_child_reference_count)) {
+    throw std::logic_error(
+      "Augmented child-reference count is inconsistent");
+  }
+
+  _ende_child.swap(
+    augmented_ende_child);
+
+  _ende_child_ptr.swap(
+    augmented_ende_child_ptr);
+
+  // Reconstruct every data structure whose content or size
+  // depends on e-node -> child-e-class references.
+  //
+  // This is executed even for multiplier=1, allowing a 1x
+  // ablation run to validate the reconstruction path.
+  _rebuild_derived_graph_data_for_output_degree_exp();
+
+  uint32_t final_max_output_degree =
+    0u;
+
+  for (uint32_t ende = 0u;
+       ende < _num_ende;
+       ++ende) {
+    const uint32_t degree =
+      _ende_child_ptr[ende + 1u] -
+      _ende_child_ptr[ende];
+
+    if (degree >
+        final_max_output_degree) {
+      final_max_output_degree =
+        degree;
+    }
+  }
+
+  const double original_average_output_degree =
+    _num_ende == 0u
+      ? 0.0
+      : static_cast<double>(
+          original_child_reference_count) /
+        static_cast<double>(
+          _num_ende);
+
+  const double final_average_output_degree =
+    _num_ende == 0u
+      ? 0.0
+      : static_cast<double>(
+          final_child_reference_count) /
+        static_cast<double>(
+          _num_ende);
+
+  const double actual_multiplier =
+    original_child_reference_count == 0u
+      ? 0.0
+      : static_cast<double>(
+          final_child_reference_count) /
+        static_cast<double>(
+          original_child_reference_count);
+
+  const bool target_reached =
+    final_child_reference_count >=
+    target_child_reference_count;
+
+  const char* stop_reason =
+    "target-reached";
+
+  if (!target_reached) {
+    if (non_leaf_enodes.empty()) {
+      stop_reason =
+        "no-non-leaf-source";
+    }
+    else if (strict_leaf_eclasses.empty()) {
+      stop_reason =
+        "no-strict-leaf-eclass";
+    }
+    else {
+      stop_reason =
+        "100-consecutive-failures";
+    }
+  }
+
+  printf(
+    "[Output-Degree Exp] "
+    "seed=%u, "
+    "requested_multiplier=%u, "
+    "actual_multiplier=%.6f, "
+    "stop_reason=%s\n",
+    random_seed,
+    output_degree_multiplier,
+    actual_multiplier,
+    stop_reason);
+
+  printf(
+    "[Output-Degree Exp] "
+    "original_child_references=%llu, "
+    "target_child_references=%llu, "
+    "final_child_references=%llu, "
+    "added=%llu\n",
+    static_cast<unsigned long long>(
+      original_child_reference_count),
+    static_cast<unsigned long long>(
+      target_child_reference_count),
+    static_cast<unsigned long long>(
+      final_child_reference_count),
+    static_cast<unsigned long long>(
+      successfully_added_edges));
+
+  printf(
+    "[Output-Degree Exp] "
+    "non_leaf_sources=%zu, "
+    "strict_leaf_eclasses=%zu, "
+    "attempts=%llu, "
+    "final_consecutive_failures=%u\n",
+    non_leaf_enodes.size(),
+    strict_leaf_eclasses.size(),
+    static_cast<unsigned long long>(
+      random_attempts),
+    consecutive_failures);
+
+  printf(
+    "[Output-Degree Exp] "
+    "rejected_same_eclass=%llu, "
+    "rejected_original_child=%llu, "
+    "rejected_added_child=%llu\n",
+    static_cast<unsigned long long>(
+      rejected_same_eclass),
+    static_cast<unsigned long long>(
+      rejected_original_child),
+    static_cast<unsigned long long>(
+      rejected_added_child));
+
+  printf(
+    "[Output-Degree Exp] "
+    "original_avg_degree=%.6f, "
+    "final_avg_degree=%.6f, "
+    "original_max_degree=%u, "
+    "final_max_degree=%u\n",
+    original_average_output_degree,
+    final_average_output_degree,
+    original_max_output_degree,
+    final_max_output_degree);
+
+  printf(
+    "[Output-Degree Exp] "
+    "original_expanded_edges=%llu, "
+    "final_expanded_edges=%zu, "
+    "checksum=%llu\n",
+    static_cast<unsigned long long>(
+      original_expanded_edge_count),
+    _global_adj_1D.size(),
+    static_cast<unsigned long long>(
+      augmentation_checksum));
+}
+
 // =========================== TREE/DAG functions =========================== // 
 
 std::pair<double, double> G_EXT::_cpu_tree_construction(
@@ -1333,6 +2125,262 @@ std::pair<double, double> G_EXT::_cpu_tree_construction(
 
   return std::make_pair(tree_ret, dag_ret);
 }
+
+
+// 20270730 hua test start
+// static inline double atomic_load_double(
+//   double& value)
+// {
+//   double result;
+
+//   __atomic_load(
+//     &value,
+//     &result,
+//     __ATOMIC_RELAXED);
+
+//   return result;
+// }
+
+
+// static inline bool atomic_min_double(
+//   double& target,
+//   const double value)
+// {
+//   double old =
+//     atomic_load_double(target);
+
+//   while (value < old) {
+//     double desired =
+//       value;
+
+//     if (__atomic_compare_exchange(
+//           &target,
+//           &old,
+//           &desired,
+//           true,
+//           __ATOMIC_RELAXED,
+//           __ATOMIC_RELAXED)) {
+//       return true;
+//     }
+//   }
+
+//   return false;
+// }
+
+
+// std::pair<double, double>
+// G_EXT::_cpu_tree_construction(
+//   const std::vector<float>& tmp_ende_cost,
+//   std::vector<double>& cost_of_ecls,
+//   std::vector<double>& cost_of_ende,
+//   std::vector<uint32_t>& best_ende_of_ecls,
+//   std::vector<bool>& picked_endes)
+// {
+//   const double inf =
+//     std::numeric_limits<double>::infinity();
+
+//   cost_of_ecls.assign(
+//     _num_ecls,
+//     inf);
+
+//   cost_of_ende.assign(
+//     _num_ende,
+//     inf);
+
+//   best_ende_of_ecls.assign(
+//     _num_ecls,
+//     UINT32_MAX);
+
+//   // Records only costs that successfully lowered an e-class.
+//   std::vector<double> winning_cost_of_ende(
+//     _num_ende,
+//     inf);
+
+//   int iteration_updated =
+//     1;
+
+//   uint64_t relaxation_iterations =
+//     0;
+
+//   // #pragma omp parallel \
+//   //   shared(iteration_updated, relaxation_iterations)
+//   {
+//     while (true) {
+//       #pragma omp single
+//       {
+//         iteration_updated = 0;
+//         ++relaxation_iterations;
+//       }
+
+//       int local_updated =
+//         0;
+
+//       // #pragma omp for schedule(static) nowait
+//       for (uint32_t t_idx = 0;
+//            t_idx < _num_ende;
+//            ++t_idx) {
+
+//         double acc_cost =
+//           static_cast<double>(
+//             tmp_ende_cost[t_idx]);
+
+//         const uint32_t start =
+//           _ende_child_ptr[t_idx];
+
+//         const uint32_t end =
+//           _ende_child_ptr[t_idx + 1];
+
+//         for (uint32_t jj = start;
+//              jj < end;
+//              ++jj) {
+//           const uint32_t child_ecls =
+//             _ende_child[jj];
+
+//           acc_cost +=
+//             atomic_load_double(
+//               cost_of_ecls[child_ecls]);
+//         }
+
+//         // Every t_idx is owned by one thread in this sweep.
+//         cost_of_ende[t_idx] =
+//           std::min(
+//             cost_of_ende[t_idx],
+//             acc_cost);
+
+//         const uint32_t ecls =
+//           _ende_ecls[t_idx];
+
+//         if (atomic_min_double(
+//               cost_of_ecls[ecls],
+//               acc_cost)) {
+//           // This e-node actually caused the successful decrease.
+//           winning_cost_of_ende[t_idx] =
+//             acc_cost;
+
+//           local_updated = 1;
+//         }
+//       }
+
+//       if (local_updated != 0) {
+//         #pragma omp atomic update
+//         iteration_updated |= 1;
+//       }
+
+//       // #pragma omp barrier
+
+//       const bool converged =
+//         iteration_updated == 0;
+
+//       // #pragma omp barrier
+
+//       if (converged) {
+//         break;
+//       }
+//     }
+//   }
+
+//   printf(
+//     "CPU tree relaxation iterations = %llu\n",
+//     static_cast<unsigned long long>(
+//       relaxation_iterations));
+
+//   // Recover the e-node that actually produced each final cost.
+//   // #pragma omp parallel for schedule(static)
+//   for (uint32_t ecls = 0;
+//        ecls < _num_ecls;
+//        ++ecls) {
+
+//     const double final_cost =
+//       cost_of_ecls[ecls];
+
+//     if (!std::isfinite(final_cost)) {
+//       continue;
+//     }
+
+//     for (uint32_t ende :
+//          _ecls_its_ende[ecls]) {
+//       if (winning_cost_of_ende[ende] ==
+//           final_cost) {
+//         best_ende_of_ecls[ecls] =
+//           ende;
+
+//         break;
+//       }
+//     }
+//   }
+
+//   // Detect a missing winner instead of silently building an
+//   // invalid tree.
+//   for (uint32_t ecls = 0;
+//        ecls < _num_ecls;
+//        ++ecls) {
+//     if (std::isfinite(cost_of_ecls[ecls])) {
+//       MY_CHECK(
+//         best_ende_of_ecls[ecls] != UINT32_MAX,
+//         "finite e-class has no winning e-node");
+//     }
+//   }
+
+//   // Reconstruct the selected child e-node of each e-node.
+//   std::vector<std::vector<uint32_t>>
+//     ende_picked_by_ende(_num_ende);
+
+//   // #pragma omp parallel for schedule(static)
+//   for (uint32_t t_idx = 0;
+//        t_idx < _num_ende;
+//        ++t_idx) {
+
+//     const uint32_t start =
+//       _ende_child_ptr[t_idx];
+
+//     const uint32_t end =
+//       _ende_child_ptr[t_idx + 1];
+
+//     std::vector<uint32_t> picks;
+
+//     picks.reserve(
+//       end - start);
+
+//     for (uint32_t jj = start;
+//          jj < end;
+//          ++jj) {
+//       const uint32_t child_ecls =
+//         _ende_child[jj];
+
+//       picks.push_back(
+//         best_ende_of_ecls[child_ecls]);
+//     }
+
+//     ende_picked_by_ende[t_idx] =
+//       std::move(picks);
+//   }
+
+//   double tree_ret =
+//     0.0;
+
+//   for (uint32_t r = 0;
+//        r < _root_eclass_id.size();
+//        ++r) {
+//     tree_ret +=
+//       cost_of_ecls[
+//         _root_eclass_id[r]];
+//   }
+
+//   const double dag_ret =
+//     _compute_dag_cost(
+//       best_ende_of_ecls,
+//       picked_endes,
+//       ende_picked_by_ende);
+
+//   _init_picked_adj(
+//     picked_endes);
+
+//   return std::make_pair(
+//     tree_ret,
+//     dag_ret);
+// }
+// 20270730 hua test end
+
 
 double G_EXT::_compute_dag_cost(
   const std::vector<uint32_t>& best_ende_of_ecls,
@@ -1695,7 +2743,7 @@ bool G_EXT::_insertion(const bool is_td,
   // 使用 dynamic 排程，因為每個節點的 degree 不同，負載可能不均
   // #pragma omp parallel for schedule(dynamic)
   // #pragma omp parallel for schedule(static, 16)
-  #pragma omp parallel for
+  // #pragma omp parallel for
   for (uint32_t ende = 0; ende < _num_ende; ende++) {
     if (picked_endes[ende]) {
       continue;
@@ -1903,134 +2951,134 @@ void G_EXT::get_nodes_in_subgraph(
   }
 }
 
-bool G_EXT::_insertion_bitmap_mt(const bool is_td, 
-  std::vector<bool>& picked_endes,
-  std::vector<int>& level) 
-{
-  bool update = false;
-  _new_inserted.assign(_num_ende, false);
+// bool G_EXT::_insertion_bitmap_mt(const bool is_td, 
+//   std::vector<bool>& picked_endes,
+//   std::vector<int>& level) 
+// {
+//   bool update = false;
+//   _new_inserted.assign(_num_ende, false);
 
-  #pragma omp parallel for
-  for (uint32_t ende = 0; ende < _num_ende; ende++) {
-    if (picked_endes[ende]) {
-      continue;
-    }
+//   #pragma omp parallel for
+//   for (uint32_t ende = 0; ende < _num_ende; ende++) {
+//     if (picked_endes[ende]) {
+//       continue;
+//     }
 
-    bool has_par = false, has_chd = false;
-    int max_par_lvl = -1, min_chd_lvl = INT_MAX;
+//     bool has_par = false, has_chd = false;
+//     int max_par_lvl = -1, min_chd_lvl = INT_MAX;
 
-    // 每個 thread 各自的 local bitmap（跟 GPU kernel 的 shared bitmap 邏輯對應）
-    const uint32_t BITMAP_SIZE = 256;
-    uint8_t chd_flags[BITMAP_SIZE] = {0};
+//     // 每個 thread 各自的 local bitmap（跟 GPU kernel 的 shared bitmap 邏輯對應）
+//     const uint32_t BITMAP_SIZE = 256;
+//     uint8_t chd_flags[BITMAP_SIZE] = {0};
 
 
-    // ============================================================
-    // Step 1: 掃 child edges，建立 bitmap，順便找 min child level
-    // ============================================================
-    const uint32_t c_start = _global_adj_1D_ptr[ende];
-    const uint32_t c_end   = _global_adj_1D_ptr[ende+1];
-    for (uint32_t k = c_start; k < c_end; k++) {
-      uint32_t chd_ende = _global_adj_1D[k];
-      if (!picked_endes[chd_ende]) continue;
+//     // ============================================================
+//     // Step 1: 掃 child edges，建立 bitmap，順便找 min child level
+//     // ============================================================
+//     const uint32_t c_start = _global_adj_1D_ptr[ende];
+//     const uint32_t c_end   = _global_adj_1D_ptr[ende+1];
+//     for (uint32_t k = c_start; k < c_end; k++) {
+//       uint32_t chd_ende = _global_adj_1D[k];
+//       if (!picked_endes[chd_ende]) continue;
 
-      has_chd = true;
-      int chd_lvl = level[chd_ende];
-      if (min_chd_lvl > chd_lvl) {
-        min_chd_lvl = chd_lvl;
-      }
-      chd_flags[chd_ende & (BITMAP_SIZE - 1)] = 1; 
-    }
+//       has_chd = true;
+//       int chd_lvl = level[chd_ende];
+//       if (min_chd_lvl > chd_lvl) {
+//         min_chd_lvl = chd_lvl;
+//       }
+//       chd_flags[chd_ende & (BITMAP_SIZE - 1)] = 1; 
+//     }
 
-    // ============================================================
-    // Step 2: 掃 parent edges，找 max parent level，同時用 bitmap 檢查 overlap
-    // ============================================================
-    const uint32_t p_start = _global_inv_adj_1D_ptr[ende];
-    const uint32_t p_end   = _global_inv_adj_1D_ptr[ende+1];
-    bool has_overlap_b = false;
+//     // ============================================================
+//     // Step 2: 掃 parent edges，找 max parent level，同時用 bitmap 檢查 overlap
+//     // ============================================================
+//     const uint32_t p_start = _global_inv_adj_1D_ptr[ende];
+//     const uint32_t p_end   = _global_inv_adj_1D_ptr[ende+1];
+//     bool has_overlap_b = false;
 
-    for (uint32_t k = p_start; k < p_end; k++) {
-      uint32_t par_ende = _global_inv_adj_1D[k];
-      if (!picked_endes[par_ende]) continue;
+//     for (uint32_t k = p_start; k < p_end; k++) {
+//       uint32_t par_ende = _global_inv_adj_1D[k];
+//       if (!picked_endes[par_ende]) continue;
 
-      has_par = true;
-      int par_lvl = level[par_ende];
-      if (max_par_lvl < par_lvl) {
-        max_par_lvl = par_lvl;
-      }
+//       has_par = true;
+//       int par_lvl = level[par_ende];
+//       if (max_par_lvl < par_lvl) {
+//         max_par_lvl = par_lvl;
+//       }
 
-      // bitmap overlap check（跟 GPU kernel 完全對應的邏輯）
-      if (chd_flags[par_ende & (BITMAP_SIZE - 1)]) {
-        has_overlap_b = true;
-      }
-    }
+//       // bitmap overlap check（跟 GPU kernel 完全對應的邏輯）
+//       if (chd_flags[par_ende & (BITMAP_SIZE - 1)]) {
+//         has_overlap_b = true;
+//       }
+//     }
 
-    // ============================================================
-    // Step 3: 判斷有效性（跟 GPU kernel 完全一致）
-    // ============================================================
-    bool cond = (is_td) ? (has_par) : (has_chd);
-    int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
-    bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap_b) && (given_lvl >= 0);
+//     // ============================================================
+//     // Step 3: 判斷有效性（跟 GPU kernel 完全一致）
+//     // ============================================================
+//     bool cond = (is_td) ? (has_par) : (has_chd);
+//     int given_lvl = (is_td) ? (max_par_lvl + 1) : (min_chd_lvl - 1);
+//     bool valid = (cond) && (max_par_lvl < min_chd_lvl) && (!has_overlap_b) && (given_lvl >= 0);
 
-    // ===== 唯一一個 if (valid) 區塊，內部用 macro 決定要不要多做計數 =====
-    if (valid) {
-      update = true;
-      picked_endes[ende] = true;
-      level[ende] = given_lvl;
-      _new_inserted[ende] = true;
+//     // ===== 唯一一個 if (valid) 區塊，內部用 macro 決定要不要多做計數 =====
+//     if (valid) {
+//       update = true;
+//       picked_endes[ende] = true;
+//       level[ende] = given_lvl;
+//       _new_inserted[ende] = true;
 
-      #ifdef PRINT_LOG
-        printf("! valid ende = %u, max_par_lvl = %d, min_chd_lvl = %d, given_lvl = %d\n", 
-               ende, max_par_lvl, min_chd_lvl, given_lvl);
-      #endif
-    }
+//       #ifdef PRINT_LOG
+//         printf("! valid ende = %u, max_par_lvl = %d, min_chd_lvl = %d, given_lvl = %d\n", 
+//                ende, max_par_lvl, min_chd_lvl, given_lvl);
+//       #endif
+//     }
 
-  } // End of parallel for
+//   } // End of parallel for
 
-  if (update) {
-    _init_picked_adj(picked_endes);
-  }
-  return update;
-}
+//   if (update) {
+//     _init_picked_adj(picked_endes);
+//   }
+//   return update;
+// }
 
-void G_EXT::_cpu_DAG_construction_mt_bitmap(
-  std::vector<bool>& picked_endes)
-{
-  uint32_t num_iter = 0;
-  bool updated = true; 
-  std::vector<int> level;
-  level.resize(_num_ende, -1);
-  _new_inserted.assign(_num_ende, false);
+// void G_EXT::_cpu_DAG_construction_mt_bitmap(
+//   std::vector<bool>& picked_endes)
+// {
+//   uint32_t num_iter = 0;
+//   bool updated = true; 
+//   std::vector<int> level;
+//   level.resize(_num_ende, -1);
+//   _new_inserted.assign(_num_ende, false);
 
-  while(updated) {
-    _update_deg(updated, picked_endes); 
-    _bottom_up_levelize(picked_endes, level);   // 沿用既有、已驗證正確的 CPU levelization+revert
-    bool tp = _insertion_bitmap_mt(true, picked_endes, level); // 只有這裡換成 bitmap 版本
+//   while(updated) {
+//     _update_deg(updated, picked_endes); 
+//     _bottom_up_levelize(picked_endes, level);   // 沿用既有、已驗證正確的 CPU levelization+revert
+//     bool tp = _insertion_bitmap_mt(true, picked_endes, level); // 只有這裡換成 bitmap 版本
 
-    _update_deg(tp, picked_endes); 
-    _top_down_levelize(picked_endes, level);
-    bool bu = _insertion_bitmap_mt(false, picked_endes, level);
+//     _update_deg(tp, picked_endes); 
+//     _top_down_levelize(picked_endes, level);
+//     bool bu = _insertion_bitmap_mt(false, picked_endes, level);
 
-    updated = tp || bu; 
-    num_iter++;
+//     updated = tp || bu; 
+//     num_iter++;
 
-    // if (num_iter > 1000) {  // 安全閥，避免真的卡死
-    //   std::cerr << "[WARNING] CPU+bitmap version exceeded 1000 iterations, likely livelock\n";
-    //   break;
-    // }
-  }
+//     // if (num_iter > 1000) {  // 安全閥，避免真的卡死
+//     //   std::cerr << "[WARNING] CPU+bitmap version exceeded 1000 iterations, likely livelock\n";
+//     //   break;
+//     // }
+//   }
 
-  // Clear redundant enodes
-  _clear_redundant_endes(picked_endes);
+//   // Clear redundant enodes
+//   _clear_redundant_endes(picked_endes);
 
-  // Re-constructing data for second times ILP solver
-  _ecls_its_ende_newG.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
-  for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
-    for (uint32_t ende : _ecls_its_ende[ecls]) {
-      if (!_in_subgraph[ende]) continue;
-      _ecls_its_ende_newG[ecls].push_back(ende);
-    }
-  }
-}
+//   // Re-constructing data for second times ILP solver
+//   _ecls_its_ende_newG.resize(_ecls_its_ende.size(), std::vector<uint32_t>());
+//   for (uint32_t ecls = 0; ecls < _ecls_its_ende.size(); ecls++) {
+//     for (uint32_t ende : _ecls_its_ende[ecls]) {
+//       if (!_in_subgraph[ende]) continue;
+//       _ecls_its_ende_newG[ecls].push_back(ende);
+//     }
+//   }
+// }
 
 // =========================== GPU functions =========================== // 
 
@@ -8066,7 +9114,7 @@ void G_EXT::_gpu_DAG_construction(
   //
   // true:
   //   use the one-thread-per-e-node direct insertion kernel.
-  bool use_direct_mode = false;
+  bool use_direct_mode = false; // 0730 我現在再改這裡，原本是 false
 
   // BatchEarlyStop terminates immediately when the
   // low-activity condition is reached.
@@ -8292,6 +9340,7 @@ void G_EXT::_gpu_DAG_construction(
             break;
           }
 
+          // 0801 我現在再改這裡
           // BatchThenDirect:
           //
           // Switch only after one complete batch iteration.
@@ -8312,6 +9361,7 @@ void G_EXT::_gpu_DAG_construction(
               peak_survived,
               low_activity_streak);
           }
+          // 0801 我現在再改這裡
         }
       }
     }

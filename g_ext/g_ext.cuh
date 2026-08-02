@@ -25,6 +25,9 @@
 #include <cuda_runtime.h>
 #include <limits.h>
 #include <random> // for dump new json
+#include <cmath>
+
+
 
 /* ILP Solver */
 #include "ortools/sat/cp_model.h"
@@ -85,6 +88,50 @@ public:
   // Read input file
   void read(const std::string input_path) {
     _read_input(input_path); 
+  }
+
+  // Read the original e-graph and then construct the isolated
+  // output-degree ablation graph.
+  //
+  // output_degree_multiplier:
+  //   1 -> keep the original e-node-to-e-class edge count
+  //   2 -> target 2x the original edge count
+  //   8 -> target 8x the original edge count
+  //
+  // The actual multiplier may be smaller when legal
+  // source-target pairs become difficult to find.
+  //
+  // This interface must be called on a fresh G_EXT object.
+  void read_output_degree_exp(
+    const std::string& input_path,
+    const uint32_t output_degree_multiplier,
+    const uint32_t random_seed = 42u)
+  {
+    if (!_ende_name.empty()) {
+      throw std::logic_error(
+        "read_output_degree_exp requires a fresh G_EXT object");
+    }
+
+    if (output_degree_multiplier == 0u) {
+      throw std::invalid_argument(
+        "Output-degree multiplier must be at least 1");
+    }
+
+    // Reuse the complete production read and pruning path.
+    _read_input(input_path);
+
+    // _read_input() currently reports a file-open failure and
+    // returns. Prevent the ablation post-processing from running
+    // on an uninitialized object.
+    if (_ende_name.empty()) {
+      throw std::runtime_error(
+        "Output-degree experiment received an empty "
+        "or unreadable input graph");
+    }
+
+    _augment_output_degree_for_exp(
+      output_degree_multiplier,
+      random_seed);
   }
 
   // ============================================================
@@ -353,6 +400,21 @@ public:
 private:
   /* Read */
   void _read_input(const std::string input_path);
+  // Output-degree ablation only.
+  //
+  // Randomly adds e-node -> strict-leaf-e-class child
+  // references until the requested total edge multiplier is
+  // reached or 100ly adds e-node -> strict-leaf-e-class child
+  // references until the requested total consecutive random attempts fail.
+  void _augment_output_degree_for_exp(
+    uint32_t output_degree_multiplier,
+    uint32_t random_seed);
+
+  // Rebuild only the graph data derived from _ende_child and
+  // _ende_child_ptr after the ablation modifies those arrays.
+  //
+  // The production _prune_dead_nodes() path remains unchanged.
+  void _rebuild_derived_graph_data_for_output_degree_exp();  
   void _prune_dead_nodes(
     const uint32_t tmp_num_ecls,
     const uint32_t tmp_num_ende,
