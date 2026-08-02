@@ -185,15 +185,6 @@ int main(int argc, char *argv[]) {
     num_thread_dag_constr,
     bitmap_bits);  
 
-  // // Run XEG-T exp 
-  // g_ext.run_xeg_t_exp(
-  //   360,
-  //   dag_kernel,
-  //   num_thread_dag_constr,
-  //   bitmap_bits,
-  //   333u);
-
-
   return 0;
 }
 

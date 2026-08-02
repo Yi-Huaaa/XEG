@@ -129,12 +129,18 @@ Build-and-run mode reads the original graph, increases its output degree in memo
 ### Example
 
 ```bash
-./build/main/output_degree_ablation \
-  input.json \
-  1 \
-  128 \
-  64 \
-  2
+SEEDS=(42 113 2027 65537)
+for n in 1 2 4 8 16 32 64 128; do
+  echo "Scaling factor=$n"
+  for seed in "${SEEDS[@]}"; do
+    echo "seed=$seed"
+    ./build/main/output_degree_ablation \
+      --dump \
+      "$INPUT" \
+      "$n" \
+      "$seed"
+  done
+done
 ```
 
 This mode uses the default random seed defined in `output_degree_ablation.cpp`.
@@ -156,34 +162,25 @@ This value controls the execution width used during DAG construction.
 Typical values include:
 
 ```text
-1
-32
-128
-256
+1 (Thread version only)
+32 (Warp version only)
+64 (Block version only)
+128 (Block version only)
+256 (Block version only)
+512 (Block version only)
+1024 (Block version only)
 ```
 
 ### `BITMAP_BITS`
 
 ```text
-0: Exact overlap detection
-32 to 2048: Approximate bitmap overlap detection
-```
-
-Valid nonzero values are:
-
-```text
-32
-64
-128
-256
-512
-1024
-2048
+0: NO bitmap
+32, 64, 128, 256, 512, 1024, 2048: Bitmap size
 ```
 
 The Thread kernel supports only `BITMAP_BITS=0`.
 
-### `OUTPUT_DEGREE_MULTIPLIER`
+### `OUTPUT_DEGREE_MULTIPLIER` (Only utilized in `output_degree_ablation.cpp`)
 
 This value controls how much the total number of child references is increased.
 
