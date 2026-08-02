@@ -3791,9 +3791,11 @@ void G_EXT::_gpu_dag_insert_batch(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -4076,16 +4078,18 @@ void G_EXT::_gpu_dag_insert_direct(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
     throw std::logic_error(
       "_gpu_dag_insert_direct requires "
       "initialized GPU DAG buffers");
-  }
+  }  
 
   const uint32_t blocks =
     (_num_ende +
@@ -4621,9 +4625,11 @@ void G_EXT::_gpu_dag_insert_block_batch(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -4680,9 +4686,11 @@ void G_EXT::_gpu_dag_insert_block_direct(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -5480,9 +5488,11 @@ void G_EXT::_gpu_dag_insert_block_bitmap_batch(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -5559,9 +5569,11 @@ void G_EXT::_gpu_dag_insert_block_bitmap_direct(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -6098,9 +6110,11 @@ void G_EXT::_gpu_dag_insert_warp_batch(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -6160,9 +6174,11 @@ void G_EXT::_gpu_dag_insert_warp_direct(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -7123,9 +7139,11 @@ void G_EXT::_gpu_dag_insert_warp_bitmap32_batch(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -7187,9 +7205,11 @@ void G_EXT::_gpu_dag_insert_warp_bitmap32_direct(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -7238,9 +7258,11 @@ void G_EXT::_gpu_dag_insert_warp_bitmap64_batch(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -7302,9 +7324,11 @@ void G_EXT::_gpu_dag_insert_warp_bitmap64_direct(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -7823,9 +7847,11 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_batch(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -7929,9 +7955,11 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_direct(
   }
 
   if (_dvc_picked_endes == nullptr ||
-      _dvc_global_adj_1D == nullptr ||
+      (!_global_adj_1D.empty() &&
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
-      _dvc_global_inv_adj_1D == nullptr ||
+      (!_global_inv_adj_1D.empty() &&
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
