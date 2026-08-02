@@ -126,10 +126,17 @@ bool validate_bitmap_bits(
         bitmap_bits == 0u;
 
     case DagKernel::Warp:
+      if (bitmap_bits == 0u) {
+        return true;
+      }
+
       return
-        bitmap_bits == 0u ||
-        bitmap_bits == 32u ||
-        bitmap_bits == 64u;
+        bitmap_bits >= 32u &&
+        bitmap_bits <= 2048u &&
+        (
+          bitmap_bits &
+          (bitmap_bits - 1u)
+        ) == 0u;
 
     case DagKernel::Block:
       if (bitmap_bits == 0u) {
@@ -269,7 +276,9 @@ int main(
 
         case DagKernel::Warp:
           std::cerr
-            << "Valid values: 0, 32, 64\n";
+            << "Valid values: "
+            << "0, 32, 64, 128, 256, "
+            << "512, 1024, 2048\n";
           break;
 
         case DagKernel::Block:
