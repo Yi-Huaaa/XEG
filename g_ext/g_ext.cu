@@ -56,7 +56,7 @@ constexpr uint32_t kGpuReachabilityThreads = 256u;
 
 // Exact overlap insertion preserves the original 256-lane
 // transposed-batch policy.
-constexpr uint32_t kGpuDagExactBatchSize = 256u;
+constexpr uint32_t kGpuDagExactBatchSize = 256u; // default: 256; 0802
 
 // Bitmap overlap insertion uses fewer concurrent candidate
 // lanes to stabilize solution quality. This does not change
@@ -200,7 +200,7 @@ static_assert(
 // not limited by this parameter.
 // ============================================================
 constexpr uint32_t
-  kGpuDagBitmapMaxDirectIterations = 5u;
+  kGpuDagBitmapMaxDirectIterations = 5u; // default setting = 5
 
 static_assert(
   kGpuDagBitmapMaxDirectIterations > 0u,
@@ -4259,46 +4259,6 @@ void G_EXT::_gpu_dag_insert_batch(
 // The existing levelization/finalization flow later validates
 // or rolls back the tentative insertion.
 // ============================================================
-// ============================================================
-// Thread Exact Direct insertion experiment
-//
-// One CUDA thread evaluates one candidate e-node.
-//
-// Exact overlap is intentionally implemented as a Cartesian
-// product:
-//
-//   selected, level-valid parents
-//       x
-//   every child adjacency entry
-//
-// This experimental implementation avoids merge intersection
-// and binary search. Its purpose is to isolate the benefit of
-// bitmap overlap detection.
-//
-// selected_state:
-//   0 = unselected
-//   1 = stable selected
-//   2 = tentative selected
-// ============================================================
-// ============================================================
-// Thread Exact Direct insertion
-//
-// One CUDA thread evaluates one candidate e-node.
-//
-// Exact overlap uses:
-//
-//   selected, level-valid child outer loop
-//       x
-//   complete parent adjacency inner loop
-//
-// Parent information is summarized once before the Cartesian
-// overlap scan.
-//
-// selected_state:
-//   0 = unselected
-//   1 = stable selected
-//   2 = tentative selected
-// ============================================================
 __global__ void _gpu_dag_insert_direct_kl(
   const uint32_t num_endes,
   const bool is_top_down_insertion,
@@ -4318,156 +4278,152 @@ __global__ void _gpu_dag_insert_direct_kl(
     return;
   }
 
-  // Candidate state may be published by another GPU thread.
+  // selected_state is updated live by other GPU threads.
   if (atomicAdd(
         &selected_state[u],
         0u) != 0u) {
     return;
   }
 
-  const uint32_t parent_begin =
+  uint32_t parent_position =
     inverse_adj_ptr[u];
 
   const uint32_t parent_end =
     inverse_adj_ptr[u + 1u];
 
-  const uint32_t child_begin =
+  uint32_t child_position =
     forward_adj_ptr[u];
 
   const uint32_t child_end =
     forward_adj_ptr[u + 1u];
 
-  bool has_selected_parent =
-    false;
+  bool has_selected_parent = false;
+  bool has_selected_child = false;
+  bool has_selected_overlap = false;
 
-  bool has_selected_child =
-    false;
+  int max_parent_level = -1;
+  int min_child_level = INT_MAX;
 
-  bool has_selected_overlap =
-    false;
-
-  int max_parent_level =
-    -1;
-
-  int min_child_level =
-    INT_MAX;
-
-  // ----------------------------------------------------------
-  // Phase 1: selected-parent summary
+  // The forward and inverse CSR segments are sorted and unique.
   //
-  // This phase computes:
+  // Merge the two segments so parent/child processing and exact
+  // overlap detection require:
   //
-  //   has_selected_parent
-  //   max_parent_level
-  //
-  // It does not perform overlap detection.
-  // ----------------------------------------------------------
-  for (uint32_t parent_position =
-         parent_begin;
-       parent_position < parent_end;
-       ++parent_position) {
-    const uint32_t parent =
-      inverse_adj[parent_position];
+  //   O(parent_degree + child_degree)
+  while (parent_position < parent_end ||
+         child_position < child_end) {
+    const bool take_parent_only =
+      child_position >= child_end ||
+      (parent_position < parent_end &&
+       inverse_adj[parent_position] <
+         forward_adj[child_position]);
 
-    const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
+    const bool take_child_only =
+      parent_position >= parent_end ||
+      (child_position < child_end &&
+       forward_adj[child_position] <
+         inverse_adj[parent_position]);
 
-    if (parent_state == 0u) {
-      continue;
-    }
-
-    const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
-
-    if (parent_level < 0) {
-      continue;
-    }
-
-    has_selected_parent =
-      true;
-
-    if (parent_level >
-        max_parent_level) {
-      max_parent_level =
-        parent_level;
-    }
-  }
-
-  // ----------------------------------------------------------
-  // Phase 2: child-outer x parent-inner exact overlap
-  //
-  // Every selected, level-valid child performs a complete scan
-  // over the candidate's parent adjacency segment.
-  //
-  // Exact overlap exists when the same e-node ID appears in:
-  //
-  //   inverse adjacency of u
-  //   forward adjacency of u
-  //
-  // Because child has already been confirmed selected and
-  // level-valid, parent == child implies that the matching
-  // parent is also selected and level-valid: both IDs identify
-  // exactly the same e-node.
-  // ----------------------------------------------------------
-  for (uint32_t child_position =
-         child_begin;
-       child_position < child_end;
-       ++child_position) {
-    const uint32_t child =
-      forward_adj[child_position];
-
-    const uint32_t child_state =
-      atomicAdd(
-        &selected_state[child],
-        0u);
-
-    if (child_state == 0u) {
-      continue;
-    }
-
-    const int child_level =
-      atomicAdd(
-        &level[child],
-        0);
-
-    if (child_level < 0) {
-      continue;
-    }
-
-    has_selected_child =
-      true;
-
-    if (child_level <
-        min_child_level) {
-      min_child_level =
-        child_level;
-    }
-
-    // Exact Cartesian-product overlap check.
-    //
-    // Do not replace this with merge intersection, binary
-    // search, or bitmap lookup. This is the Exact baseline.
-    for (uint32_t parent_position =
-           parent_begin;
-         parent_position < parent_end;
-         ++parent_position) {
+    if (take_parent_only) {
       const uint32_t parent =
         inverse_adj[parent_position];
 
-      if (parent == child) {
-        has_selected_overlap =
-          true;
+      const uint32_t parent_state =
+        atomicAdd(
+          &selected_state[parent],
+          0u);
+
+      if (parent_state != 0u) {
+        const int parent_level =
+          atomicAdd(
+            &level[parent],
+            0);
+
+        if (parent_level >= 0) {
+          has_selected_parent = true;
+
+          if (parent_level >
+              max_parent_level) {
+            max_parent_level =
+              parent_level;
+          }
+        }
+      }
+
+      ++parent_position;
+      continue;
+    }
+
+    if (take_child_only) {
+      const uint32_t child =
+        forward_adj[child_position];
+
+      const uint32_t child_state =
+        atomicAdd(
+          &selected_state[child],
+          0u);
+
+      if (child_state != 0u) {
+        const int child_level =
+          atomicAdd(
+            &level[child],
+            0);
+
+        if (child_level >= 0) {
+          has_selected_child = true;
+
+          if (child_level <
+              min_child_level) {
+            min_child_level =
+              child_level;
+          }
+        }
+      }
+
+      ++child_position;
+      continue;
+    }
+
+    // The same selected e-node appears in both the parent and
+    // child CSR segments. Inserting u would immediately violate
+    // the local overlap condition.
+    const uint32_t neighbor =
+      inverse_adj[parent_position];
+
+    const uint32_t neighbor_state =
+      atomicAdd(
+        &selected_state[neighbor],
+        0u);
+
+    if (neighbor_state != 0u) {
+      const int neighbor_level =
+        atomicAdd(
+          &level[neighbor],
+          0);
+
+      if (neighbor_level >= 0) {
+        has_selected_parent = true;
+        has_selected_child = true;
+        has_selected_overlap = true;
+
+        if (neighbor_level >
+            max_parent_level) {
+          max_parent_level =
+            neighbor_level;
+        }
+
+        if (neighbor_level <
+            min_child_level) {
+          min_child_level =
+            neighbor_level;
+        }
       }
     }
+
+    ++parent_position;
+    ++child_position;
   }
 
-  // ----------------------------------------------------------
-  // Candidate legality
-  // ----------------------------------------------------------
   if (has_selected_overlap) {
     return;
   }
@@ -4477,8 +4433,7 @@ __global__ void _gpu_dag_insert_direct_kl(
     return;
   }
 
-  int proposed_level =
-    -1;
+  int proposed_level = -1;
 
   if (is_top_down_insertion) {
     if (!has_selected_parent) {
@@ -4501,14 +4456,13 @@ __global__ void _gpu_dag_insert_direct_kl(
     return;
   }
 
-  // Preserve the existing live optimistic publication order:
+  // Match the current batch insertion live publication
+  // behavior.
   //
-  //   1. publish proposed level
-  //   2. publish tentative state 2
-  //
-  // Do not add __threadfence() for this experiment.
-  level[u] =
-    proposed_level;
+  // No global synchronization or thread fence is introduced.
+  // Existing levelization/finalization validates the resulting
+  // tentative graph.
+  level[u] = proposed_level;
 
   if (atomicCAS(
         &selected_state[u],
@@ -4647,34 +4601,6 @@ bool gpu_dag_sorted_segment_contains(
 }
 
 
-// ============================================================
-// Block Exact candidate evaluator experiment
-//
-// One complete CUDA block evaluates one candidate.
-//
-// Selected parents are distributed across block threads.
-// Every selected, level-valid parent compares against the
-// complete child adjacency segment.
-//
-// This intentionally performs Cartesian-product exact overlap
-// detection. It does not use binary search or bitmap lookup.
-// ============================================================
-// ============================================================
-// Block Exact candidate evaluator
-//
-// One complete CUDA block evaluates one candidate.
-//
-// Phase 1:
-//   parents are distributed across block threads to compute the
-//   parent summary.
-//
-// Phase 2:
-//   children are distributed across block threads. Every
-//   selected, level-valid child scans the complete parent
-//   adjacency segment.
-//
-// This gives a child-outer x parent-inner exact overlap check.
-// ============================================================
 __device__ __forceinline__
 void gpu_dag_process_block_candidate(
   const uint32_t u,
@@ -4692,9 +4618,12 @@ void gpu_dag_process_block_candidate(
   const uint32_t lane =
     threadIdx.x;
 
-  // ----------------------------------------------------------
-  // Block-uniform candidate activity check
-  // ----------------------------------------------------------
+  // Every thread in this CUDA block evaluates the same
+  // candidate.
+  //
+  // Thread 0 snapshots whether this candidate is currently
+  // unselected. The final atomicCAS still resolves races with
+  // other candidate blocks.
   if (lane == 0u) {
     *candidate_active =
       atomicAdd(
@@ -4706,7 +4635,7 @@ void gpu_dag_process_block_candidate(
 
   __syncthreads();
 
-  // Uniform return because every thread observes the same
+  // This return is uniform because every thread reads the same
   // shared candidate_active value.
   if (*candidate_active == 0u) {
     return;
@@ -4724,6 +4653,18 @@ void gpu_dag_process_block_candidate(
   const uint32_t child_end =
     forward_adj_ptr[u + 1u];
 
+  const uint32_t parent_count =
+    parent_end - parent_begin;
+
+  const uint32_t child_count =
+    child_end - child_begin;
+
+  // Scan only the shorter side for overlap checks.
+  //
+  // Equal-size segments use the parent side.
+  const bool check_overlap_from_parents =
+    parent_count <= child_count;
+
   GpuDagBlockThreadScratch local{
     -1,
     INT_MAX,
@@ -4731,31 +4672,23 @@ void gpu_dag_process_block_candidate(
   };
 
   // ----------------------------------------------------------
-  // Phase 1: cooperative selected-parent summary
+  // Cooperative selected-parent scan
   //
-  // Parent assignment:
+  // Every thread processes:
   //
-  //   thread 0:
-  //     parent_begin + 0
-  //     parent_begin + blockDim.x
-  //     ...
+  //   parent_begin + lane
+  //   parent_begin + lane + blockDim.x
+  //   ...
   //
-  //   thread 1:
-  //     parent_begin + 1
-  //     parent_begin + blockDim.x + 1
-  //     ...
-  //
-  // This phase computes:
-  //
-  //   has_selected_parent
-  //   max_parent_level
+  // When the parent segment is shorter, overlap detection is
+  // folded directly into this scan.
   // ----------------------------------------------------------
-  for (uint32_t parent_position =
+  for (uint32_t position =
          parent_begin + lane;
-       parent_position < parent_end;
-       parent_position += blockDim.x) {
+       position < parent_end;
+       position += blockDim.x) {
     const uint32_t parent =
-      inverse_adj[parent_position];
+      inverse_adj[position];
 
     const uint32_t parent_state =
       atomicAdd(
@@ -4783,32 +4716,45 @@ void gpu_dag_process_block_candidate(
       local.max_parent_level =
         parent_level;
     }
+
+    // Only selected parents with valid levels require an
+    // overlap lookup.
+    //
+    // Because the same e-node ID has one shared state and one
+    // shared level, finding this ID in the child CSR proves an
+    // exact selected parent-child overlap.
+    if (check_overlap_from_parents &&
+        gpu_dag_sorted_segment_contains(
+          forward_adj,
+          child_begin,
+          child_end,
+          parent)) {
+      local.flags |=
+        kGpuDagBlockHasSelectedParent |
+        kGpuDagBlockHasSelectedChild |
+        kGpuDagBlockHasSelectedOverlap;
+
+      // This parent is also the same selected child.
+      if (parent_level <
+          local.min_child_level) {
+        local.min_child_level =
+          parent_level;
+      }
+    }
   }
 
   // ----------------------------------------------------------
-  // Phase 2: cooperative child-outer x parent-inner
+  // Cooperative selected-child scan
   //
-  // Child assignment:
-  //
-  //   thread 0:
-  //     child_begin + 0
-  //     child_begin + blockDim.x
-  //     ...
-  //
-  //   thread 1:
-  //     child_begin + 1
-  //     child_begin + blockDim.x + 1
-  //     ...
-  //
-  // Every selected, level-valid child performs a complete
-  // serial scan over the parent adjacency segment.
+  // When the child segment is shorter, overlap detection is
+  // folded directly into this scan.
   // ----------------------------------------------------------
-  for (uint32_t child_position =
+  for (uint32_t position =
          child_begin + lane;
-       child_position < child_end;
-       child_position += blockDim.x) {
+       position < child_end;
+       position += blockDim.x) {
     const uint32_t child =
-      forward_adj[child_position];
+      forward_adj[position];
 
     const uint32_t child_state =
       atomicAdd(
@@ -4837,38 +4783,47 @@ void gpu_dag_process_block_candidate(
         child_level;
     }
 
-    // Exact Cartesian-product overlap check.
-    //
-    // child is already selected and level-valid. Therefore,
-    // parent == child means that the matching parent represents
-    // exactly the same selected and level-valid e-node.
-    for (uint32_t parent_position =
-           parent_begin;
-         parent_position < parent_end;
-         ++parent_position) {
-      const uint32_t parent =
-        inverse_adj[parent_position];
+    // Only selected children with valid levels require an
+    // overlap lookup.
+    if (!check_overlap_from_parents &&
+        gpu_dag_sorted_segment_contains(
+          inverse_adj,
+          parent_begin,
+          parent_end,
+          child)) {
+      local.flags |=
+        kGpuDagBlockHasSelectedParent |
+        kGpuDagBlockHasSelectedChild |
+        kGpuDagBlockHasSelectedOverlap;
 
-      if (parent == child) {
-        local.flags |=
-          kGpuDagBlockHasSelectedOverlap;
+      // This child is also the same selected parent.
+      if (child_level >
+          local.max_parent_level) {
+        local.max_parent_level =
+          child_level;
       }
     }
   }
 
-  // ----------------------------------------------------------
-  // Publish per-thread summary
-  // ----------------------------------------------------------
+  // Publish this thread's local summary into dynamic shared
+  // memory.
   scratch[lane] =
     local;
 
   __syncthreads();
 
   // ----------------------------------------------------------
-  // Shared-memory reduction
+  // Power-of-two shared-memory reduction
   //
-  // _validate_block_threads_per_candidate() guarantees that
-  // blockDim.x is a power of two.
+  // The validator guarantees blockDim.x is one of:
+  //
+  //   64, 128, 256, 512, 1024
+  //
+  // Reduction combines:
+  //
+  //   maximum selected-parent level
+  //   minimum selected-child level
+  //   parent/child/overlap flags
   // ----------------------------------------------------------
   for (uint32_t stride =
          blockDim.x / 2u;
@@ -4897,9 +4852,8 @@ void gpu_dag_process_block_candidate(
     __syncthreads();
   }
 
-  // ----------------------------------------------------------
-  // Thread 0 decides candidate legality
-  // ----------------------------------------------------------
+  // Thread 0 evaluates the same candidate legality conditions
+  // used by the existing Thread insertion kernels.
   if (lane == 0u) {
     const GpuDagBlockThreadScratch summary =
       scratch[0];
@@ -4921,8 +4875,7 @@ void gpu_dag_process_block_candidate(
       summary.max_parent_level <
         summary.min_child_level;
 
-    int proposed_level =
-      -1;
+    int proposed_level = -1;
 
     if (valid &&
         is_top_down_insertion) {
@@ -4950,7 +4903,12 @@ void gpu_dag_process_block_candidate(
 
     if (valid) {
       // Preserve the existing live optimistic publication
-      // order.
+      // order:
+      //
+      //   1. publish proposed level
+      //   2. publish tentative state 2
+      //
+      // Do not add __threadfence().
       level[u] =
         proposed_level;
 
@@ -4965,8 +4923,11 @@ void gpu_dag_process_block_candidate(
     }
   }
 
-  // Block-Batch may reuse scratch for its next candidate.
-  // Harmless in Direct mode.
+  // Block-Batch reuses this dynamic shared-memory array for the
+  // next candidate owned by the same block.
+  //
+  // This is only block-local synchronization. It does not
+  // synchronize different candidate blocks.
   __syncthreads();
 }
 
@@ -5165,121 +5126,246 @@ void G_EXT::_gpu_dag_insert_block_direct(
   cudaCheckErrors(
     "_gpu_dag_insert_block_direct_kl failed");
 }
+
 // ============================================================
-// Simple modulo bitmap mapping
+// Block-cooperative Bitmap GPU DAG insertion
 //
-// This restores the bitmap mapping used by Algorithm 3:
+// This is the only Block Bitmap implementation.
 //
-//   bitmap_index = e-node ID % bitmap_bits
+// BITMAP_BITS == 0:
+//   Existing exact Block kernels remain unchanged.
 //
-// The runtime configuration guarantees that bitmap_bits is a
-// power of two:
+// BITMAP_BITS > 0:
+//   Existing Block Bitmap Batch and Direct kernels use
+//   Strategy A1 directly.
 //
-//   bitmap_mask = bitmap_bits - 1
+// Strategy A1:
 //
-// Therefore:
+//   1. Mix each selected, level-valid parent e-node ID.
+//   2. Split the bitmap into equal lower and upper halves.
+//   3. Set one mixed bit in each half.
+//   4. A selected, level-valid child reports overlap only when
+//      both corresponding bits are present.
 //
-//   node % bitmap_bits == node & bitmap_mask
+// The two probes always occupy different halves of the bitmap.
+// This reduces the probability that one ordinary modulo
+// collision rejects a candidate.
 //
-// Examples for bitmap_bits = 64:
+// A two-probe hit may still be a false positive because its two
+// bits may have been populated by different parents. Such a hit
+// is conservatively rejected without exact verification.
 //
-//   node 20  -> bit 20
-//   node 201 -> bit 9
+// One runtime-sized parent bitmap remains stored in dynamic
+// shared memory for each CUDA block.
 //
-// Each selected, level-valid parent sets exactly one bit.
-// Each selected, level-valid child probes exactly one bit.
+// Shared-memory layout:
 //
-// A hit may be either:
+//   GpuDagBlockThreadScratch scratch[blockDim.x]
+//   uint32_t parent_bitmap[bitmap_words]
 //
-//   1. a true parent-child overlap, or
-//   2. a modulo collision.
-//
-// Both cases are conservatively treated as overlap.
+// No new global allocation, kernel, launcher, runtime branch,
+// or synchronization barrier is introduced.
 // ============================================================
 
-__host__ __device__
-constexpr uint32_t gpu_dag_bitmap_index(
-  const uint32_t node,
-  const uint32_t bitmap_mask) noexcept
+// ============================================================
+// Common Strategy-A1 bitmap hash and shared-memory operations
+//
+// Every nonzero Block and Warp bitmap implementation uses the
+// same hash and probe-position generator.
+//
+// Storage remains implementation-specific:
+//
+//   Warp Bitmap-32:
+//     one uint32_t register
+//
+//   Warp Bitmap-64:
+//     two uint32_t registers
+//
+//   Warp Bitmap-128...2048:
+//     one shared-memory bitmap segment per warp
+//
+//   Block Bitmap-32...2048:
+//     one shared-memory bitmap per CUDA block
+//
+// The common Strategy-A1 policy is:
+//
+//   1. mix the 32-bit e-node ID
+//   2. choose one bit in the lower half
+//   3. choose one bit in the upper half
+//   4. report an approximate overlap only when both bits hit
+// ============================================================
+
+// Mix one 32-bit e-node ID before extracting bitmap positions.
+//
+// Arithmetic is intentionally uint32_t, so multiplication wraps
+// modulo 2^32.
+__device__ __forceinline__
+uint32_t gpu_dag_bitmap_mix32(
+  uint32_t value)
 {
-  return
-    node &
-    bitmap_mask;
+  value ^=
+    value >> 16u;
+
+  value *=
+    0x7feb352du;
+
+  value ^=
+    value >> 15u;
+
+  value *=
+    0x846ca68bu;
+
+  value ^=
+    value >> 16u;
+
+  return value;
 }
 
 
-// Compile-time regression checks for the intended mapping.
+// Strategy A1 assigns exactly two physical bitmap positions:
 //
-// bitmap_bits = 64
-// bitmap_mask = 63
-static_assert(
-  gpu_dag_bitmap_index(
-    20u,
-    63u) == 20u,
-  "Bitmap mapping for e-node 20 is incorrect");
+//   first:
+//     one bit in the lower half
+//
+//   second:
+//     one bit in the upper half
+//
+// Because the two probes belong to disjoint halves, they are
+// always two different physical bitmap positions.
+struct GpuDagBitmapA1ProbeBits
+{
+  uint32_t first;
+  uint32_t second;
+};
 
-static_assert(
-  gpu_dag_bitmap_index(
-    201u,
-    63u) == 9u,
-  "Bitmap mapping for e-node 201 is incorrect");
+
+__device__ __forceinline__
+GpuDagBitmapA1ProbeBits
+gpu_dag_bitmap_a1_probe_bits(
+  const uint32_t node,
+  const uint32_t bitmap_mask)
+{
+  // Existing host configuration stores:
+  //
+  //   bitmap_mask = bitmap_bits - 1
+  //
+  // Therefore the runtime bitmap size can be recovered without
+  // adding another kernel argument.
+  const uint32_t bitmap_bits =
+    bitmap_mask + 1u;
+
+  const uint32_t half_bits =
+    bitmap_bits >> 1u;
+
+  const uint32_t half_mask =
+    half_bits - 1u;
+
+  const uint32_t mixed =
+    gpu_dag_bitmap_mix32(
+      node);
+
+  GpuDagBitmapA1ProbeBits result;
+
+  // Lower-half position:
+  //
+  //   [0, half_bits)
+  result.first =
+    mixed &
+    half_mask;
+
+  // Upper-half position:
+  //
+  //   [half_bits, bitmap_bits)
+  result.second =
+    half_bits +
+    ((mixed >> 16u) &
+     half_mask);
+
+  return result;
+}
 
 
-// Insert one e-node ID into a uint32_t-word bitmap.
+// Insert one Strategy-A1 probe pair into a uint32_t-word bitmap.
 //
 // This helper is shared by:
 //
-//   Block Bitmap-32...2048
-//   Warp Bitmap-128...2048
+//   Block shared-memory bitmap
+//   Warp shared-memory bitmap
 //
-// Multiple threads may set different bits in the same word.
-// atomicOr() prevents one update from overwriting another.
+// Multiple cooperating threads may update the same word, so
+// both updates use atomicOr().
 __device__ __forceinline__
 void gpu_dag_bitmap_shared_insert(
   uint32_t* bitmap,
   const uint32_t node,
   const uint32_t bitmap_mask)
 {
-  const uint32_t bit =
-    gpu_dag_bitmap_index(
+  const GpuDagBitmapA1ProbeBits probe =
+    gpu_dag_bitmap_a1_probe_bits(
       node,
       bitmap_mask);
 
-  const uint32_t word =
-    bit >> 5u;
+  const uint32_t first_word =
+    probe.first >> 5u;
 
-  const uint32_t word_mask =
-    1u << (bit & 31u);
+  const uint32_t first_word_mask =
+    1u << (probe.first & 31u);
+
+  const uint32_t second_word =
+    probe.second >> 5u;
+
+  const uint32_t second_word_mask =
+    1u << (probe.second & 31u);
 
   atomicOr(
-    &bitmap[word],
-    word_mask);
+    &bitmap[first_word],
+    first_word_mask);
+
+  atomicOr(
+    &bitmap[second_word],
+    second_word_mask);
 }
 
 
-// Probe one e-node ID in a uint32_t-word bitmap.
+// Probe one Strategy-A1 pair in a uint32_t-word bitmap.
 //
-// A single bit hit is conservatively treated as overlap.
+// A candidate is conservatively rejected only when both probes
+// hit. The two bits may still have been populated by different
+// parents, so this remains an approximate overlap test.
 __device__ __forceinline__
 bool gpu_dag_bitmap_shared_contains(
   const uint32_t* bitmap,
   const uint32_t node,
   const uint32_t bitmap_mask)
 {
-  const uint32_t bit =
-    gpu_dag_bitmap_index(
+  const GpuDagBitmapA1ProbeBits probe =
+    gpu_dag_bitmap_a1_probe_bits(
       node,
       bitmap_mask);
 
-  const uint32_t word =
-    bit >> 5u;
+  const uint32_t first_word =
+    probe.first >> 5u;
 
-  const uint32_t word_mask =
-    1u << (bit & 31u);
+  const uint32_t first_word_mask =
+    1u << (probe.first & 31u);
+
+  const uint32_t second_word =
+    probe.second >> 5u;
+
+  const uint32_t second_word_mask =
+    1u << (probe.second & 31u);
+
+  const bool first_hit =
+    (bitmap[first_word] &
+     first_word_mask) != 0u;
+
+  const bool second_hit =
+    (bitmap[second_word] &
+     second_word_mask) != 0u;
 
   return
-    (bitmap[word] &
-     word_mask) != 0u;
+    first_hit &&
+    second_hit;
 }
 
 template <typename T>
@@ -5308,123 +5394,6 @@ void gpu_atomic_store_relaxed(
   ref.store(
     value,
     cuda::memory_order_relaxed);
-}
-
-// ============================================================
-// Direct-mode fixed Bitmap-512 mapping
-//
-// Algorithm-3-style mapping:
-//
-//   bitmap_bit = e-node ID % 512
-//
-// Because 512 is a power of two, NVCC should compile:
-//
-//   node % 512
-//
-// into the equivalent:
-//
-//   node & 511
-//
-// Examples:
-//
-//   node 20  -> bit 20
-//   node 201 -> bit 201
-//   node 713 -> bit 201
-//
-// The 512 bits are represented by:
-//
-//   16 uint32_t words
-// ============================================================
-
-constexpr uint32_t
-  kGpuDagBitmap512Bits =
-    512u;
-
-constexpr uint32_t
-  kGpuDagBitmap512Mask =
-    kGpuDagBitmap512Bits - 1u;
-
-constexpr uint32_t
-  kGpuDagBitmap512Words =
-    kGpuDagBitmap512Bits / 32u;
-
-static_assert(
-  kGpuDagBitmap512Words == 16u,
-  "Bitmap-512 must contain 16 uint32_t words");
-
-
-__host__ __device__
-constexpr uint32_t gpu_dag_bitmap512_bit(
-  const uint32_t node) noexcept
-{
-  return
-    node % kGpuDagBitmap512Bits;
-}
-
-
-static_assert(
-  gpu_dag_bitmap512_bit(20u) == 20u,
-  "Bitmap-512 mapping for e-node 20 is incorrect");
-
-static_assert(
-  gpu_dag_bitmap512_bit(201u) == 201u,
-  "Bitmap-512 mapping for e-node 201 is incorrect");
-
-static_assert(
-  gpu_dag_bitmap512_bit(713u) == 201u,
-  "Bitmap-512 modulo mapping is incorrect");
-
-
-// Insert one e-node ID into the fixed 512-bit bitmap.
-//
-// Multiple CUDA threads may update different bits in the same
-// uint32_t word, so atomicOr() is required.
-__device__ __forceinline__
-void gpu_dag_bitmap512_insert(
-  uint32_t* bitmap,
-  const uint32_t node)
-{
-  const uint32_t bit =
-    gpu_dag_bitmap512_bit(
-      node);
-
-  const uint32_t word =
-    bit >> 5u;
-
-  const uint32_t mask =
-    1u << (bit & 31u);
-
-  atomicOr(
-    &bitmap[word],
-    mask);
-}
-
-
-// Probe one e-node ID in the fixed 512-bit bitmap.
-//
-// A hit can mean:
-//
-//   1. true parent-child overlap
-//   2. modulo collision
-//
-// Both are conservatively treated as overlap.
-__device__ __forceinline__
-bool gpu_dag_bitmap512_contains(
-  const uint32_t* bitmap,
-  const uint32_t node)
-{
-  const uint32_t bit =
-    gpu_dag_bitmap512_bit(
-      node);
-
-  const uint32_t word =
-    bit >> 5u;
-
-  const uint32_t mask =
-    1u << (bit & 31u);
-
-  return
-    (bitmap[word] & mask) != 0u;
 }
 
 __device__ __forceinline__
@@ -5858,289 +5827,7 @@ __global__ void _gpu_dag_insert_block_bitmap_batch_kl(
       bitmap_words);
   }
 }
-// ============================================================
-// Block Bitmap-512 Direct candidate evaluator
-//
-// One CUDA block evaluates one candidate e-node.
-//
-// Overlap detection:
-//
-//   selected valid parent p:
-//     bitmap[p % 512] = 1
-//
-//   selected valid child c:
-//     overlap if bitmap[c % 512] == 1
-//
-// This function is used only by Block Bitmap-512 Direct.
-// Batch mode continues using the existing evaluator.
-// ============================================================
 
-__device__ __forceinline__
-void gpu_dag_process_block_bitmap512_direct_candidate(
-  const uint32_t u,
-  const bool is_top_down_insertion,
-  uint32_t* selected_state,
-  const uint32_t* forward_adj,
-  const uint32_t* forward_adj_ptr,
-  const uint32_t* inverse_adj,
-  const uint32_t* inverse_adj_ptr,
-  int* level,
-  uint32_t* u0,
-  GpuDagBlockThreadScratch* scratch,
-  uint32_t* candidate_active,
-  uint32_t* parent_bitmap)
-{
-  const uint32_t lane =
-    threadIdx.x;
-
-  // Keep the candidate-state behavior consistent with the
-  // existing Block Bitmap implementation.
-  if (lane == 0u) {
-    *candidate_active =
-      selected_state[u] == 0u
-        ? 1u
-        : 0u;
-  }
-
-  // Clear the fixed 16-word Bitmap-512.
-  for (uint32_t word = lane;
-       word < kGpuDagBitmap512Words;
-       word += blockDim.x) {
-    parent_bitmap[word] =
-      0u;
-  }
-
-  __syncthreads();
-
-  if (*candidate_active == 0u) {
-    return;
-  }
-
-  const uint32_t parent_begin =
-    inverse_adj_ptr[u];
-
-  const uint32_t parent_end =
-    inverse_adj_ptr[u + 1u];
-
-  const uint32_t child_begin =
-    forward_adj_ptr[u];
-
-  const uint32_t child_end =
-    forward_adj_ptr[u + 1u];
-
-  GpuDagBlockThreadScratch local{
-    -1,
-    INT_MAX,
-    0u
-  };
-
-  // ----------------------------------------------------------
-  // Parent scan
-  //
-  // Only selected parents with valid levels:
-  //
-  //   1. contribute to max_parent_level
-  //   2. set one bitmap bit at parent % 512
-  // ----------------------------------------------------------
-  for (uint32_t position =
-         parent_begin + lane;
-       position < parent_end;
-       position += blockDim.x) {
-    const uint32_t parent =
-      inverse_adj[position];
-
-    const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
-
-    if (parent_state == 0u) {
-      continue;
-    }
-
-    const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
-
-    if (parent_level < 0) {
-      continue;
-    }
-
-    local.flags |=
-      kGpuDagBlockHasSelectedParent;
-
-    if (parent_level >
-        local.max_parent_level) {
-      local.max_parent_level =
-        parent_level;
-    }
-
-    gpu_dag_bitmap512_insert(
-      parent_bitmap,
-      parent);
-  }
-
-  // Every parent insertion must finish before any thread probes
-  // the bitmap with a child ID.
-  __syncthreads();
-
-  // ----------------------------------------------------------
-  // Child scan
-  //
-  // Only selected children with valid levels:
-  //
-  //   1. contribute to min_child_level
-  //   2. probe one bit at child % 512
-  // ----------------------------------------------------------
-  for (uint32_t position =
-         child_begin + lane;
-       position < child_end;
-       position += blockDim.x) {
-    const uint32_t child =
-      forward_adj[position];
-
-    // Preserve the existing Block Bitmap child-load behavior.
-    const uint32_t child_state =
-      selected_state[child];
-
-    if (child_state == 0u) {
-      continue;
-    }
-
-    const int child_level =
-      level[child];
-
-    if (child_level < 0) {
-      continue;
-    }
-
-    local.flags |=
-      kGpuDagBlockHasSelectedChild;
-
-    if (child_level <
-        local.min_child_level) {
-      local.min_child_level =
-        child_level;
-    }
-
-    if (gpu_dag_bitmap512_contains(
-          parent_bitmap,
-          child)) {
-      local.flags |=
-        kGpuDagBlockHasSelectedOverlap;
-    }
-  }
-
-  scratch[lane] =
-    local;
-
-  __syncthreads();
-
-  // ----------------------------------------------------------
-  // Reduce block-local summaries
-  //
-  // threads_per_candidate is guaranteed to be a power of two.
-  // ----------------------------------------------------------
-  for (uint32_t stride =
-         blockDim.x / 2u;
-       stride > 0u;
-       stride >>= 1u) {
-    if (lane < stride) {
-      const GpuDagBlockThreadScratch other =
-        scratch[lane + stride];
-
-      if (other.max_parent_level >
-          scratch[lane].max_parent_level) {
-        scratch[lane].max_parent_level =
-          other.max_parent_level;
-      }
-
-      if (other.min_child_level <
-          scratch[lane].min_child_level) {
-        scratch[lane].min_child_level =
-          other.min_child_level;
-      }
-
-      scratch[lane].flags |=
-        other.flags;
-    }
-
-    __syncthreads();
-  }
-
-  // ----------------------------------------------------------
-  // Thread 0 checks candidate legality and publishes insertion
-  // ----------------------------------------------------------
-  if (lane == 0u) {
-    const GpuDagBlockThreadScratch summary =
-      scratch[0];
-
-    const bool has_selected_parent =
-      (summary.flags &
-       kGpuDagBlockHasSelectedParent) != 0u;
-
-    const bool has_selected_child =
-      (summary.flags &
-       kGpuDagBlockHasSelectedChild) != 0u;
-
-    const bool has_selected_overlap =
-      (summary.flags &
-       kGpuDagBlockHasSelectedOverlap) != 0u;
-
-    bool valid =
-      !has_selected_overlap &&
-      summary.max_parent_level <
-        summary.min_child_level;
-
-    int proposed_level =
-      -1;
-
-    if (valid &&
-        is_top_down_insertion) {
-      valid =
-        has_selected_parent;
-
-      if (valid) {
-        proposed_level =
-          summary.max_parent_level + 1;
-      }
-    }
-    else if (valid) {
-      valid =
-        has_selected_child;
-
-      if (valid) {
-        proposed_level =
-          summary.min_child_level - 1;
-      }
-    }
-
-    valid =
-      valid &&
-      proposed_level >= 0;
-
-    if (valid) {
-      // Preserve live optimistic publication order:
-      //
-      //   1. level
-      //   2. tentative selected state
-      level[u] =
-        proposed_level;
-
-      if (atomicCAS(
-            &selected_state[u],
-            0u,
-            2u) == 0u) {
-        atomicAdd(
-          u0,
-          1u);
-      }
-    }
-  }
-
-  __syncthreads();
-}
 
 __global__ void _gpu_dag_insert_block_bitmap_direct_kl(
   const uint32_t num_endes,
@@ -6151,11 +5838,10 @@ __global__ void _gpu_dag_insert_block_bitmap_direct_kl(
   const uint32_t* inverse_adj,
   const uint32_t* inverse_adj_ptr,
   int* level,
-  uint32_t* u0)
+  uint32_t* u0,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
 {
-  // Direct mode:
-  //
-  // one CUDA block evaluates one candidate e-node.
   const uint32_t u =
     blockIdx.x;
 
@@ -6166,10 +5852,6 @@ __global__ void _gpu_dag_insert_block_bitmap_direct_kl(
   extern __shared__
     unsigned char dynamic_shared_memory[];
 
-  // Shared-memory layout:
-  //
-  //   [blockDim.x Block scratch entries]
-  //   [16 uint32_t Bitmap-512 words]
   auto* scratch =
     reinterpret_cast<
       GpuDagBlockThreadScratch*>(
@@ -6181,7 +5863,7 @@ __global__ void _gpu_dag_insert_block_bitmap_direct_kl(
 
   __shared__ uint32_t candidate_active;
 
-  gpu_dag_process_block_bitmap512_direct_candidate(
+  gpu_dag_process_block_bitmap_candidate(
     u,
     is_top_down_insertion,
     selected_state,
@@ -6193,8 +5875,11 @@ __global__ void _gpu_dag_insert_block_bitmap_direct_kl(
     u0,
     scratch,
     &candidate_active,
-    parent_bitmap);
+    parent_bitmap,
+    bitmap_mask,
+    bitmap_words);
 }
+
 
 void G_EXT::_gpu_dag_insert_block_bitmap_batch(
   const bool is_top_down_insertion,
@@ -6276,6 +5961,7 @@ void G_EXT::_gpu_dag_insert_block_bitmap_batch(
     "_gpu_dag_insert_block_bitmap_batch_kl failed");
 }
 
+
 void G_EXT::_gpu_dag_insert_block_bitmap_direct(
   const bool is_top_down_insertion,
   const uint32_t threads_per_candidate,
@@ -6288,10 +5974,10 @@ void G_EXT::_gpu_dag_insert_block_bitmap_direct(
 
   if (_dvc_picked_endes == nullptr ||
       (!_global_adj_1D.empty() &&
-       _dvc_global_adj_1D == nullptr) ||
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
       (!_global_inv_adj_1D.empty() &&
-       _dvc_global_inv_adj_1D == nullptr) ||
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -6300,18 +5986,11 @@ void G_EXT::_gpu_dag_insert_block_bitmap_direct(
       "initialized GPU DAG buffers");
   }
 
-  // The Direct Bitmap experiment currently supports exactly:
-  //
-  //   BITMAP_BITS  = 512
-  //   bitmap_mask  = 511
-  //   bitmap_words = 16
-  if (bitmap_mask !=
-        kGpuDagBitmap512Mask ||
-      bitmap_words !=
-        kGpuDagBitmap512Words) {
+  if (bitmap_words == 0u ||
+      bitmap_words > 64u) {
     throw std::logic_error(
-      "_gpu_dag_insert_block_bitmap_direct currently "
-      "supports only Bitmap-512");
+      "_gpu_dag_insert_block_bitmap_direct received "
+      "an invalid bitmap word count");
   }
 
   const size_t scratch_bytes =
@@ -6321,19 +6000,13 @@ void G_EXT::_gpu_dag_insert_block_bitmap_direct(
 
   const size_t bitmap_bytes =
     static_cast<size_t>(
-      kGpuDagBitmap512Words) *
+      bitmap_words) *
     sizeof(uint32_t);
 
   const size_t shared_bytes =
     scratch_bytes +
     bitmap_bytes;
 
-  // One CUDA block evaluates one candidate e-node.
-  //
-  // Important:
-  // The kernel uses a fixed Bitmap-512 implementation.
-  // bitmap_mask and bitmap_words are therefore not kernel
-  // arguments.
   _gpu_dag_insert_block_bitmap_direct_kl
     <<<_num_ende,
        threads_per_candidate,
@@ -6346,11 +6019,14 @@ void G_EXT::_gpu_dag_insert_block_bitmap_direct(
       _dvc_global_inv_adj_1D,
       _dvc_global_inv_adj_1D_ptr,
       _dvc_level,
-      _dvc_dag_u0);
+      _dvc_dag_u0,
+      bitmap_mask,
+      bitmap_words);
 
   cudaCheckErrors(
     "_gpu_dag_insert_block_bitmap_direct_kl failed");
 }
+
 // ============================================================
 // Warp-cooperative GPU DAG insertion
 //
@@ -6388,34 +6064,6 @@ constexpr uint32_t
   kGpuDagWarpHasSelectedOverlap =
     1u << 2u;
 
-// ============================================================
-// Warp Exact candidate evaluator experiment
-//
-// One complete 32-lane warp evaluates one candidate.
-//
-// Selected parents are distributed across lanes. Each selected,
-// level-valid parent compares its e-node ID against the entire
-// child adjacency segment.
-//
-// This intentionally performs a Cartesian-product exact
-// overlap check and does not use sorted-segment binary search.
-// ============================================================
-// ============================================================
-// Warp Exact candidate evaluator
-//
-// One complete 32-lane warp evaluates one candidate.
-//
-// Phase 1:
-//   parents are distributed across lanes to compute the parent
-//   summary.
-//
-// Phase 2:
-//   children are distributed across lanes. Every selected,
-//   level-valid child scans the complete parent adjacency
-//   segment.
-//
-// This gives a child-outer x parent-inner exact overlap check.
-// ============================================================
 __device__ __forceinline__
 void gpu_dag_process_warp_candidate(
   const uint32_t u,
@@ -6434,9 +6082,13 @@ void gpu_dag_process_warp_candidate(
 
   // ----------------------------------------------------------
   // Warp-uniform candidate activity check
+  //
+  // Lane 0 snapshots the candidate state. The result is then
+  // broadcast to all 32 lanes.
+  //
+  // The final atomicCAS remains responsible for publication.
   // ----------------------------------------------------------
-  uint32_t candidate_active =
-    0u;
+  uint32_t candidate_active = 0u;
 
   if (lane == 0u) {
     candidate_active =
@@ -6453,6 +6105,8 @@ void gpu_dag_process_warp_candidate(
       candidate_active,
       0);
 
+  // This return is warp-uniform because every lane receives
+  // the same lane-0 broadcast value.
   if (candidate_active == 0u) {
     return;
   }
@@ -6469,6 +6123,19 @@ void gpu_dag_process_warp_candidate(
   const uint32_t child_end =
     forward_adj_ptr[u + 1u];
 
+  const uint32_t parent_count =
+    parent_end - parent_begin;
+
+  const uint32_t child_count =
+    child_end - child_begin;
+
+  // Match the Block evaluator exactly.
+  //
+  // Equal-sized segments check overlap from the parent side.
+  const bool check_overlap_from_parents =
+    parent_count <= child_count;
+
+  // These scalar values should normally remain in registers.
   int local_max_parent_level =
     -1;
 
@@ -6479,25 +6146,20 @@ void gpu_dag_process_warp_candidate(
     0u;
 
   // ----------------------------------------------------------
-  // Phase 1: cooperative selected-parent summary
+  // Cooperative selected-parent scan
   //
-  // Parent assignment:
+  // lane 0:
+  //   parent_begin + 0, +32, +64, ...
   //
-  //   lane 0: parent 0, 32, 64, ...
-  //   lane 1: parent 1, 33, 65, ...
-  //   ...
-  //
-  // This phase computes:
-  //
-  //   has_selected_parent
-  //   max_parent_level
+  // lane 1:
+  //   parent_begin + 1, +33, +65, ...
   // ----------------------------------------------------------
-  for (uint32_t parent_position =
+  for (uint32_t position =
          parent_begin + lane;
-       parent_position < parent_end;
-       parent_position += kGpuDagWarpSize) {
+       position < parent_end;
+       position += kGpuDagWarpSize) {
     const uint32_t parent =
-      inverse_adj[parent_position];
+      inverse_adj[position];
 
     const uint32_t parent_state =
       atomicAdd(
@@ -6525,26 +6187,37 @@ void gpu_dag_process_warp_candidate(
       local_max_parent_level =
         parent_level;
     }
+
+    // Reuse the Block implementation's exact sorted-CSR
+    // binary-search helper.
+    if (check_overlap_from_parents &&
+        gpu_dag_sorted_segment_contains(
+          forward_adj,
+          child_begin,
+          child_end,
+          parent)) {
+      local_flags |=
+        kGpuDagWarpHasSelectedParent |
+        kGpuDagWarpHasSelectedChild |
+        kGpuDagWarpHasSelectedOverlap;
+
+      if (parent_level <
+          local_min_child_level) {
+        local_min_child_level =
+          parent_level;
+      }
+    }
   }
 
   // ----------------------------------------------------------
-  // Phase 2: cooperative child-outer x parent-inner
-  //
-  // Child assignment:
-  //
-  //   lane 0: child 0, 32, 64, ...
-  //   lane 1: child 1, 33, 65, ...
-  //   ...
-  //
-  // Every selected, level-valid child performs a complete
-  // serial scan over the parent adjacency segment.
+  // Cooperative selected-child scan
   // ----------------------------------------------------------
-  for (uint32_t child_position =
+  for (uint32_t position =
          child_begin + lane;
-       child_position < child_end;
-       child_position += kGpuDagWarpSize) {
+       position < child_end;
+       position += kGpuDagWarpSize) {
     const uint32_t child =
-      forward_adj[child_position];
+      forward_adj[position];
 
     const uint32_t child_state =
       atomicAdd(
@@ -6573,21 +6246,21 @@ void gpu_dag_process_warp_candidate(
         child_level;
     }
 
-    // Exact Cartesian-product overlap check.
-    //
-    // child is already selected and level-valid. Therefore,
-    // parent == child means that the matching parent represents
-    // the same selected and level-valid e-node.
-    for (uint32_t parent_position =
-           parent_begin;
-         parent_position < parent_end;
-         ++parent_position) {
-      const uint32_t parent =
-        inverse_adj[parent_position];
+    if (!check_overlap_from_parents &&
+        gpu_dag_sorted_segment_contains(
+          inverse_adj,
+          parent_begin,
+          parent_end,
+          child)) {
+      local_flags |=
+        kGpuDagWarpHasSelectedParent |
+        kGpuDagWarpHasSelectedChild |
+        kGpuDagWarpHasSelectedOverlap;
 
-      if (parent == child) {
-        local_flags |=
-          kGpuDagWarpHasSelectedOverlap;
+      if (child_level >
+          local_max_parent_level) {
+        local_max_parent_level =
+          child_level;
       }
     }
   }
@@ -6595,11 +6268,15 @@ void gpu_dag_process_warp_candidate(
   // ----------------------------------------------------------
   // Register-based warp reduction
   //
-  // Combine:
+  // This replaces:
   //
-  //   maximum selected-parent level
-  //   minimum selected-child level
-  //   parent/child/overlap flags
+  //   scratch[lane] = local
+  //   __syncthreads()
+  //   shared-memory tree reduction
+  //
+  // with five register-shuffle stages:
+  //
+  //   16, 8, 4, 2, 1
   // ----------------------------------------------------------
   for (uint32_t offset =
          kGpuDagWarpSize / 2u;
@@ -6639,9 +6316,8 @@ void gpu_dag_process_warp_candidate(
       other_flags;
   }
 
-  // ----------------------------------------------------------
-  // Lane 0 decides candidate legality
-  // ----------------------------------------------------------
+  // After the reduction, lane 0 owns the whole candidate
+  // summary.
   if (lane == 0u) {
     const bool has_selected_parent =
       (local_flags &
@@ -6655,6 +6331,7 @@ void gpu_dag_process_warp_candidate(
       (local_flags &
        kGpuDagWarpHasSelectedOverlap) != 0u;
 
+    // Match gpu_dag_process_block_candidate exactly.
     bool valid =
       !has_selected_overlap &&
       local_max_parent_level <
@@ -6690,6 +6367,8 @@ void gpu_dag_process_warp_candidate(
     if (valid) {
       // Preserve the existing live optimistic publication
       // order.
+      //
+      // Do not add __threadfence().
       level[u] =
         proposed_level;
 
@@ -6704,8 +6383,15 @@ void gpu_dag_process_warp_candidate(
     }
   }
 
-  // Warp-Batch may reuse this warp for another candidate.
-  // Harmless in Direct mode.
+  // Warp-local synchronization only.
+  //
+  // This ensures all lanes finish this candidate before
+  // Warp-Batch starts evaluating the next candidate owned by
+  // the same warp.
+  //
+  // Never replace this with __syncthreads(), because other
+  // warps in the same CUDA block may have returned or may be
+  // processing different candidates.
   __syncwarp(
     kGpuDagWarpFullMask);
 }
@@ -7007,87 +6693,6 @@ constexpr uint32_t
   kGpuDagWarpBitmap64Mask =
     63u;
 
-
-// ============================================================
-// Legacy Strategy-A1 compatibility helper
-//
-// This helper is required only by the existing Warp
-// Bitmap-32 and Bitmap-64 implementations.
-//
-// The current Direct Bitmap-512 experiment does not call it.
-// Bitmap-512 uses exactly:
-//
-//   bit = e-node ID % 512
-// ============================================================
-
-struct GpuDagBitmapA1ProbeBits
-{
-  uint32_t first;
-  uint32_t second;
-};
-
-
-__device__ __forceinline__
-uint32_t gpu_dag_bitmap_a1_mix(
-  uint32_t value)
-{
-  // 32-bit integer finalizer used only by the legacy
-  // two-probe Bitmap-32/64 implementations.
-  value ^=
-    value >> 16u;
-
-  value *=
-    0x7feb352du;
-
-  value ^=
-    value >> 15u;
-
-  value *=
-    0x846ca68bu;
-
-  value ^=
-    value >> 16u;
-
-  return value;
-}
-
-
-__device__ __forceinline__
-GpuDagBitmapA1ProbeBits
-gpu_dag_bitmap_a1_probe_bits(
-  const uint32_t node,
-  const uint32_t bitmap_mask)
-{
-  const uint32_t bitmap_bits =
-    bitmap_mask + 1u;
-
-  const uint32_t half_bits =
-    bitmap_bits >> 1u;
-
-  const uint32_t half_mask =
-    half_bits - 1u;
-
-  const uint32_t mixed =
-    gpu_dag_bitmap_a1_mix(
-      node);
-
-  GpuDagBitmapA1ProbeBits result;
-
-  // Lower-half probe.
-  result.first =
-    mixed &
-    half_mask;
-
-  // Upper-half probe.
-  result.second =
-    half_bits +
-    (
-      (mixed >> 16u) &
-      half_mask
-    );
-
-  return result;
-}    
 // ============================================================
 // Warp Bitmap-32 candidate evaluator
 // ============================================================
@@ -8578,344 +8183,6 @@ void _gpu_dag_insert_warp_bitmap_shared_batch_kl(
   }
 }
 
-// ============================================================
-// Warp Bitmap-512 Direct candidate evaluator
-//
-// One complete 32-lane warp evaluates one candidate e-node.
-//
-// Fixed mapping:
-//
-//   bit = e-node ID % 512
-//
-// Selected, level-valid parents populate the bitmap.
-// Selected, level-valid children probe the bitmap.
-//
-// A bitmap hit may represent:
-//
-//   1. an exact parent-child overlap
-//   2. a modulo collision
-//
-// Both are conservatively treated as overlap.
-//
-// This function is used only by Warp Bitmap-512 Direct.
-// ============================================================
-
-__device__ __forceinline__
-void gpu_dag_process_warp_bitmap512_direct_candidate(
-  const uint32_t u,
-  const bool is_top_down_insertion,
-  uint32_t* selected_state,
-  const uint32_t* forward_adj,
-  const uint32_t* forward_adj_ptr,
-  const uint32_t* inverse_adj,
-  const uint32_t* inverse_adj_ptr,
-  int* level,
-  uint32_t* u0,
-  uint32_t* parent_bitmap)
-{
-  const uint32_t lane =
-    threadIdx.x &
-    (kGpuDagWarpSize - 1u);
-
-  // ----------------------------------------------------------
-  // Warp-uniform candidate activity check
-  // ----------------------------------------------------------
-  uint32_t candidate_active =
-    0u;
-
-  if (lane == 0u) {
-    candidate_active =
-      atomicAdd(
-        &selected_state[u],
-        0u) == 0u
-        ? 1u
-        : 0u;
-  }
-
-  candidate_active =
-    __shfl_sync(
-      kGpuDagWarpFullMask,
-      candidate_active,
-      0);
-
-  // This branch is uniform across all 32 lanes.
-  if (candidate_active == 0u) {
-    return;
-  }
-
-  // ----------------------------------------------------------
-  // Clear the warp-private Bitmap-512
-  //
-  // 512 bits = 16 uint32_t words.
-  //
-  // Since the warp has 32 lanes, lanes 0...15 each clear one
-  // word. Lanes 16...31 do not clear a word.
-  // ----------------------------------------------------------
-  for (uint32_t word = lane;
-       word < kGpuDagBitmap512Words;
-       word += kGpuDagWarpSize) {
-    parent_bitmap[word] =
-      0u;
-  }
-
-  __syncwarp(
-    kGpuDagWarpFullMask);
-
-  const uint32_t parent_begin =
-    inverse_adj_ptr[u];
-
-  const uint32_t parent_end =
-    inverse_adj_ptr[u + 1u];
-
-  const uint32_t child_begin =
-    forward_adj_ptr[u];
-
-  const uint32_t child_end =
-    forward_adj_ptr[u + 1u];
-
-  int local_max_parent_level =
-    -1;
-
-  int local_min_child_level =
-    INT_MAX;
-
-  uint32_t local_flags =
-    0u;
-
-  // ----------------------------------------------------------
-  // Cooperative parent scan
-  //
-  // A parent participates only when:
-  //
-  //   selected_state[parent] != 0
-  //   level[parent] >= 0
-  //
-  // Participating parent p sets:
-  //
-  //   bitmap[p % 512] = 1
-  // ----------------------------------------------------------
-  for (uint32_t position =
-         parent_begin + lane;
-       position < parent_end;
-       position += kGpuDagWarpSize) {
-    const uint32_t parent =
-      inverse_adj[position];
-
-    const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
-
-    if (parent_state == 0u) {
-      continue;
-    }
-
-    const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
-
-    if (parent_level < 0) {
-      continue;
-    }
-
-    local_flags |=
-      kGpuDagWarpHasSelectedParent;
-
-    if (parent_level >
-        local_max_parent_level) {
-      local_max_parent_level =
-        parent_level;
-    }
-
-    // Multiple lanes may update different bits in the same
-    // uint32_t word, so this helper uses atomicOr().
-    gpu_dag_bitmap512_insert(
-      parent_bitmap,
-      parent);
-  }
-
-  // Every parent atomicOr must complete before any child probes
-  // the shared-memory bitmap.
-  __syncwarp(
-    kGpuDagWarpFullMask);
-
-  // ----------------------------------------------------------
-  // Cooperative child scan
-  //
-  // A child participates only when:
-  //
-  //   selected_state[child] != 0
-  //   level[child] >= 0
-  //
-  // Participating child c probes:
-  //
-  //   bitmap[c % 512]
-  // ----------------------------------------------------------
-  for (uint32_t position =
-         child_begin + lane;
-       position < child_end;
-       position += kGpuDagWarpSize) {
-    const uint32_t child =
-      forward_adj[position];
-
-    const uint32_t child_state =
-      atomicAdd(
-        &selected_state[child],
-        0u);
-
-    if (child_state == 0u) {
-      continue;
-    }
-
-    const int child_level =
-      atomicAdd(
-        &level[child],
-        0);
-
-    if (child_level < 0) {
-      continue;
-    }
-
-    local_flags |=
-      kGpuDagWarpHasSelectedChild;
-
-    if (child_level <
-        local_min_child_level) {
-      local_min_child_level =
-        child_level;
-    }
-
-    if (gpu_dag_bitmap512_contains(
-          parent_bitmap,
-          child)) {
-      local_flags |=
-        kGpuDagWarpHasSelectedOverlap;
-    }
-  }
-
-  // ----------------------------------------------------------
-  // Warp reduction
-  //
-  // Reduce:
-  //
-  //   max selected-parent level
-  //   min selected-child level
-  //   parent/child/overlap flags
-  //
-  // The final complete result is held by lane 0.
-  // ----------------------------------------------------------
-  for (uint32_t offset =
-         kGpuDagWarpSize / 2u;
-       offset > 0u;
-       offset >>= 1u) {
-    const int other_max_parent_level =
-      __shfl_down_sync(
-        kGpuDagWarpFullMask,
-        local_max_parent_level,
-        offset);
-
-    const int other_min_child_level =
-      __shfl_down_sync(
-        kGpuDagWarpFullMask,
-        local_min_child_level,
-        offset);
-
-    const uint32_t other_flags =
-      __shfl_down_sync(
-        kGpuDagWarpFullMask,
-        local_flags,
-        offset);
-
-    if (other_max_parent_level >
-        local_max_parent_level) {
-      local_max_parent_level =
-        other_max_parent_level;
-    }
-
-    if (other_min_child_level <
-        local_min_child_level) {
-      local_min_child_level =
-        other_min_child_level;
-    }
-
-    local_flags |=
-      other_flags;
-  }
-
-  // ----------------------------------------------------------
-  // Lane 0 checks candidate legality
-  // ----------------------------------------------------------
-  if (lane == 0u) {
-    const bool has_selected_parent =
-      (local_flags &
-       kGpuDagWarpHasSelectedParent) != 0u;
-
-    const bool has_selected_child =
-      (local_flags &
-       kGpuDagWarpHasSelectedChild) != 0u;
-
-    const bool has_selected_overlap =
-      (local_flags &
-       kGpuDagWarpHasSelectedOverlap) != 0u;
-
-    bool valid =
-      !has_selected_overlap &&
-      local_max_parent_level <
-        local_min_child_level;
-
-    int proposed_level =
-      -1;
-
-    if (valid &&
-        is_top_down_insertion) {
-      valid =
-        has_selected_parent;
-
-      if (valid) {
-        proposed_level =
-          local_max_parent_level + 1;
-      }
-    }
-    else if (valid) {
-      valid =
-        has_selected_child;
-
-      if (valid) {
-        proposed_level =
-          local_min_child_level - 1;
-      }
-    }
-
-    valid =
-      valid &&
-      proposed_level >= 0;
-
-    if (valid) {
-      // Preserve current live optimistic publication order:
-      //
-      //   1. proposed level
-      //   2. tentative selected state 2
-      //
-      // Do not add __threadfence().
-      level[u] =
-        proposed_level;
-
-      if (atomicCAS(
-            &selected_state[u],
-            0u,
-            2u) == 0u) {
-        atomicAdd(
-          u0,
-          1u);
-      }
-    }
-  }
-
-  __syncwarp(
-    kGpuDagWarpFullMask);
-}
-
 __global__
 void _gpu_dag_insert_warp_bitmap_shared_direct_kl(
   const uint32_t num_endes,
@@ -8926,7 +8193,9 @@ void _gpu_dag_insert_warp_bitmap_shared_direct_kl(
   const uint32_t* inverse_adj,
   const uint32_t* inverse_adj_ptr,
   int* level,
-  uint32_t* u0)
+  uint32_t* u0,
+  const uint32_t bitmap_mask,
+  const uint32_t bitmap_words)
 {
   const uint32_t warp_in_block =
     threadIdx.x /
@@ -8940,12 +8209,10 @@ void _gpu_dag_insert_warp_bitmap_shared_direct_kl(
     blockIdx.x * warps_per_block +
     warp_in_block;
 
-  // Direct mode:
-  //
-  // one warp evaluates one candidate e-node.
   const uint32_t u =
     global_warp;
 
+  // Uniform for all 32 lanes in this warp.
   if (u >= num_endes) {
     return;
   }
@@ -8953,15 +8220,12 @@ void _gpu_dag_insert_warp_bitmap_shared_direct_kl(
   extern __shared__
     uint32_t warp_parent_bitmaps[];
 
-  // Each warp owns exactly 16 uint32_t words:
-  //
-  //   16 words * 32 bits = 512 bits
+  // Every warp receives a disjoint bitmap segment.
   uint32_t* parent_bitmap =
     warp_parent_bitmaps +
-    warp_in_block *
-      kGpuDagBitmap512Words;
+    warp_in_block * bitmap_words;
 
-  gpu_dag_process_warp_bitmap512_direct_candidate(
+  gpu_dag_process_warp_bitmap_shared_candidate(
     u,
     is_top_down_insertion,
     selected_state,
@@ -8971,7 +8235,9 @@ void _gpu_dag_insert_warp_bitmap_shared_direct_kl(
     inverse_adj_ptr,
     level,
     u0,
-    parent_bitmap);
+    parent_bitmap,
+    bitmap_mask,
+    bitmap_words);
 }
 
 void G_EXT::_gpu_dag_insert_warp_bitmap_shared_batch(
@@ -9094,10 +8360,10 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_direct(
 
   if (_dvc_picked_endes == nullptr ||
       (!_global_adj_1D.empty() &&
-       _dvc_global_adj_1D == nullptr) ||
+      _dvc_global_adj_1D == nullptr) ||
       _dvc_global_adj_1D_ptr == nullptr ||
       (!_global_inv_adj_1D.empty() &&
-       _dvc_global_inv_adj_1D == nullptr) ||
+      _dvc_global_inv_adj_1D == nullptr) ||
       _dvc_global_inv_adj_1D_ptr == nullptr ||
       _dvc_level == nullptr ||
       _dvc_dag_u0 == nullptr) {
@@ -9106,15 +8372,21 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_direct(
       "requires initialized GPU DAG buffers");
   }
 
-  // This Direct experiment intentionally supports only
-  // Bitmap-512.
-  if (bitmap_mask !=
-        kGpuDagBitmap512Mask ||
-      bitmap_words !=
-        kGpuDagBitmap512Words) {
+  if (bitmap_words < 4u ||
+      bitmap_words > 64u) {
     throw std::logic_error(
       "_gpu_dag_insert_warp_bitmap_shared_direct "
-      "currently supports only Bitmap-512");
+      "received an invalid bitmap word count");
+  }
+
+  const uint32_t bitmap_bits =
+    bitmap_mask + 1u;
+
+  if (bitmap_bits !=
+      bitmap_words * 32u) {
+    throw std::logic_error(
+      "_gpu_dag_insert_warp_bitmap_shared_direct "
+      "received inconsistent bitmap parameters");
   }
 
   const uint32_t warps_per_block =
@@ -9126,14 +8398,11 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_direct(
      warps_per_block - 1u) /
     warps_per_block;
 
-  // Every warp owns one private 512-bit bitmap:
-  //
-  //   16 uint32_t words = 64 bytes per warp
   const size_t shared_bytes =
     static_cast<size_t>(
       warps_per_block) *
     static_cast<size_t>(
-      kGpuDagBitmap512Words) *
+      bitmap_words) *
     sizeof(uint32_t);
 
   _gpu_dag_insert_warp_bitmap_shared_direct_kl
@@ -9148,7 +8417,9 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_direct(
       _dvc_global_inv_adj_1D,
       _dvc_global_inv_adj_1D_ptr,
       _dvc_level,
-      _dvc_dag_u0);
+      _dvc_dag_u0,
+      bitmap_mask,
+      bitmap_words);
 
   cudaCheckErrors(
     "_gpu_dag_insert_warp_bitmap_shared_direct_kl "
@@ -10619,647 +9890,470 @@ void G_EXT::_gpu_free_dag_buffers() noexcept
   cuda_free_and_null(_dvc_dag_new_inserted);
 }
 
-// void G_EXT::_gpu_DAG_construction(
-//   const GpuDagInsertionPolicy insertion_policy)
-// {
-//   // ============================================================
-//   // Total DAG timing
-//   //
-//   // Total runtime is always measured and printed, regardless of
-//   // kEnableGpuDagIterationLog, because it is the primary metric
-//   // used for performance optimization.
-//   // ============================================================
-//   float gpu_dag_total_time_ms = 0.0f;
-
-//   cudaEvent_t start_gpu = nullptr;
-//   cudaEvent_t stop_gpu = nullptr;
-
-//   CUDA_CHECK(cudaEventCreate(&start_gpu));
-//   CUDA_CHECK(cudaEventCreate(&stop_gpu));
-
-//   // ============================================================
-//   // Optional detailed timing
-//   //
-//   // These objects are used only when detailed GPU DAG logging
-//   // is enabled. [[maybe_unused]] is a compile-time annotation and
-//   // has no runtime overhead.
-//   // ============================================================
-//   [[maybe_unused]] float gpu_dag_core_time_ms = 0.0f;
-//   [[maybe_unused]] float gpu_filter_time_ms = 0.0f;
-
-//   [[maybe_unused]] cudaEvent_t after_core_gpu = nullptr;
-
-//   if constexpr (kEnableGpuDagIterationLog) {
-//     CUDA_CHECK(cudaEventCreate(&after_core_gpu));
-//   }
-
-//   // Start total DAG construction timing.
-//   CUDA_CHECK(cudaEventRecord(start_gpu));
-
-//   // ============================================================
-//   // Algorithm 2 initialization
-//   //
-//   // Initial top-down levelization of the GPU tree result.
-//   // States 1 and 2 are both treated as selected.
-//   // At this point only states 0 and 1 should exist.
-//   // ============================================================
-//   _gpu_dag_levelize(true);
-
-//   uint32_t host_u0 = 1u;
-
-//   // Total number of completed bottom-up + top-down outer
-//   // iterations.
-//   uint32_t outer_iteration = 0u;
-
-//   // Number of completed iterations using each insertion mode.
-//   uint32_t batch_iterations = 0u;
-//   uint32_t direct_iterations = 0u;
-
-//   // Enable the finite Direct-mode limit only for the two bitmap
-//   // implementations:
-//   //
-//   //   Warp  + BITMAP_BITS > 0
-//   //   Block + BITMAP_BITS > 0
-//   //
-//   // Exact Warp, Exact Block, and Thread insertion continue until
-//   // the original host_u0 == 0 convergence condition is reached.
-//   const bool bitmap_direct_limit_enabled =
-//     _dag_bitmap_bits > 0u &&
-//     (_dag_kernel == DagKernel::Warp ||
-//     _dag_kernel == DagKernel::Block);
-
-//   // Largest survived insertion count observed during batch
-//   // insertion.
-//   uint32_t peak_survived = 0u;
-
-//   // Number of consecutive batch iterations whose survived
-//   // insertion count is at most kGpuDagLowActivityPercent of
-//   // the historical batch peak.
-//   uint32_t low_activity_streak = 0u;
-
-//   // false:
-//   //   use the transposed-batch insertion kernel.
-//   //
-//   // true:
-//   //   use the one-thread-per-e-node direct insertion kernel.
-//   bool use_direct_mode = false;
-
-//   // BatchEarlyStop terminates immediately when the
-//   // low-activity condition is reached.
-//   bool batch_early_stop_triggered = false;
-
-//   // Records termination caused by the Bitmap Direct-mode
-//   // iteration limit.
-//   //
-//   // This flag is set only when:
-//   //
-//   //   direct_iterations has reached the configured limit
-//   //   host_u0 is still greater than zero
-//   //
-//   // If the fifth Direct iteration naturally produces host_u0 ==
-//   // zero, termination is still reported as ordinary convergence.
-//   bool bitmap_direct_limit_triggered = false;
-
-//   // BatchThenDirect records the Batch -> Direct transition.
-//   bool switched_to_direct = false;
-//   uint32_t switch_iteration = 0u;
-//   uint32_t switch_survived = 0u;
-
-//   while (host_u0 > 0u) {
-//     // Bitmap Warp/Block Direct mode executes at most
-//     // kGpuDagBitmapMaxDirectIterations complete outer
-//     // iterations.
-//     //
-//     // This check is placed at the beginning of the loop so that:
-//     //
-//     //   direct_iterations == 0 -> Direct iteration 1 may run
-//     //   direct_iterations == 4 -> Direct iteration 5 may run
-//     //   direct_iterations == 5 -> stop before iteration 6
-//     //
-//     // Exact modes never enter this branch because
-//     // bitmap_direct_limit_enabled is false.
-//     if (bitmap_direct_limit_enabled &&
-//         use_direct_mode &&
-//         direct_iterations >=
-//           kGpuDagBitmapMaxDirectIterations) {
-//       bitmap_direct_limit_triggered = true;
-//       break;
-//     }
-//     // Keep one insertion mode for both the bottom-up and
-//     // top-down phases of this complete outer iteration.
-//     const bool iteration_uses_direct =
-//       use_direct_mode;
-
-//     // u0 counts the insertions that survive during the current
-//     // outer iteration.
-//     CUDA_CHECK(cudaMemset(
-//       _dvc_dag_u0,
-//       0,
-//       sizeof(uint32_t)));
-
-//     // ==========================================================
-//     // Bottom-up insertion
-//     // ==========================================================
-//     _gpu_dag_insert_configured(
-//       iteration_uses_direct,
-//       false);
-
-//     // This value is required only for detailed logging.
-//     [[maybe_unused]] uint32_t bottom_up_proposed = 0u;
-
-//     if constexpr (kEnableGpuDagIterationLog) {
-//       CUDA_CHECK(cudaMemcpy(
-//         &bottom_up_proposed,
-//         _dvc_dag_u0,
-//         sizeof(uint32_t),
-//         cudaMemcpyDeviceToHost));
-//     }
-
-//     _gpu_dag_levelize(false);
-//     _gpu_dag_finalize_tentative(false);
-
-//     // This value is required only for detailed logging.
-//     [[maybe_unused]] uint32_t bottom_up_survived = 0u;
-
-//     if constexpr (kEnableGpuDagIterationLog) {
-//       CUDA_CHECK(cudaMemcpy(
-//         &bottom_up_survived,
-//         _dvc_dag_u0,
-//         sizeof(uint32_t),
-//         cudaMemcpyDeviceToHost));
-//     }
-
-//     // ==========================================================
-//     // Top-down insertion
-//     // ==========================================================
-//     _gpu_dag_insert_configured(
-//       iteration_uses_direct,
-//       true);
-
-//     // This value is required only for detailed logging.
-//     [[maybe_unused]] uint32_t after_top_down_insert = 0u;
-
-//     if constexpr (kEnableGpuDagIterationLog) {
-//       CUDA_CHECK(cudaMemcpy(
-//         &after_top_down_insert,
-//         _dvc_dag_u0,
-//         sizeof(uint32_t),
-//         cudaMemcpyDeviceToHost));
-//     }
-
-//     _gpu_dag_levelize(true);
-//     _gpu_dag_finalize_tentative(true);
-
-//     // ==========================================================
-//     // Required outer-loop termination copy
-//     //
-//     // This copy is part of the algorithm, not merely logging.
-//     // It must remain enabled even when iteration logging is off.
-//     // ==========================================================
-//     uint32_t after_both_phases = 0u;
-
-//     CUDA_CHECK(cudaMemcpy(
-//       &after_both_phases,
-//       _dvc_dag_u0,
-//       sizeof(uint32_t),
-//       cudaMemcpyDeviceToHost));
-
-//     host_u0 = after_both_phases;
-//     ++outer_iteration;
-
-//     if (iteration_uses_direct) {
-//       ++direct_iterations;
-//     }
-//     else {
-//       ++batch_iterations;
-//     }
-
-//     // ==========================================================
-//     // Optional per-iteration diagnostics
-//     // ==========================================================
-//     if constexpr (kEnableGpuDagIterationLog) {
-//       const uint32_t top_down_proposed =
-//         after_top_down_insert -
-//         bottom_up_survived;
-
-//       const uint32_t top_down_survived =
-//         after_both_phases -
-//         bottom_up_survived;
-
-//       const uint32_t bottom_up_rollback =
-//         bottom_up_proposed -
-//         bottom_up_survived;
-
-//       const uint32_t top_down_rollback =
-//         top_down_proposed -
-//         top_down_survived;
-
-//       printf(
-//         "[GPU DAG] iteration=%u, mode=%s, "
-//         "BU proposed=%u survived=%u rollback=%u, "
-//         "TD proposed=%u survived=%u rollback=%u, "
-//         "total survived=%u\n",
-//         outer_iteration,
-//         iteration_uses_direct
-//           ? "direct"
-//           : "batch",
-//         bottom_up_proposed,
-//         bottom_up_survived,
-//         bottom_up_rollback,
-//         top_down_proposed,
-//         top_down_survived,
-//         top_down_rollback,
-//         after_both_phases);
-//     }
-
-//     // ==========================================================
-//     // Batch low-activity controller
-//     //
-//     // This controller is evaluated only while the current
-//     // iteration uses the batch insertion kernel.
-//     //
-//     // FullBatch:
-//     //   Ignore the low-activity condition.
-//     //
-//     // BatchEarlyStop:
-//     //   Stop DAG construction when the condition is reached.
-//     //
-//     // BatchThenDirect:
-//     //   Switch the next outer iteration to direct insertion.
-//     //   The current iteration has already completed both
-//     //   levelization and finalization phases.
-//     //
-//     // after_both_phases is already copied for the original
-//     // u0 == 0 convergence condition, so no additional D2H
-//     // copy is introduced.
-//     // ==========================================================
-//     if (!iteration_uses_direct) {
-//       if (after_both_phases > peak_survived) {
-//         peak_survived = after_both_phases;
-//       }
-
-//       if (insertion_policy !=
-//           GpuDagInsertionPolicy::FullBatch) {
-//         const bool is_low_activity =
-//           after_both_phases > 0u &&
-//           static_cast<uint64_t>(
-//             after_both_phases) * 100u <=
-//           static_cast<uint64_t>(
-//             peak_survived) *
-//             kGpuDagLowActivityPercent;
-
-//         if (is_low_activity) {
-//           ++low_activity_streak;
-//         }
-//         else {
-//           low_activity_streak = 0u;
-//         }
-
-//         const bool low_activity_condition_reached =
-//           outer_iteration >=
-//             kGpuDagLowActivityMinimumIterations &&
-//           low_activity_streak >=
-//             kGpuDagLowActivityPatience;
-
-//         if (low_activity_condition_reached) {
-//           if (insertion_policy ==
-//               GpuDagInsertionPolicy::BatchEarlyStop) {
-//             batch_early_stop_triggered = true;
-//             break;
-//           }
-
-//           // BatchThenDirect:
-//           //
-//           // Switch only after one complete batch iteration.
-//           // The next outer iteration begins in direct mode.
-//           use_direct_mode = true;
-//           switched_to_direct = true;
-//           switch_iteration = outer_iteration;
-//           switch_survived = after_both_phases;
-
-//           if constexpr (kEnableGpuDagIterationLog) {
-//             printf(
-//               "[GPU DAG Controller] "
-//               "switch batch->direct after iteration=%u, "
-//               "survived=%u, peak=%u, "
-//               "low_activity_streak=%u\n",
-//               switch_iteration,
-//               switch_survived,
-//               peak_survived,
-//               low_activity_streak);
-//           }
-//         }
-//       }
-//     }
-//   }
-
-  
-//   // ============================================================
-//   // End of DAG construction core
-//   //
-//   // Record the core/filter boundary only when detailed logging
-//   // is enabled.
-//   // ============================================================
-//   if constexpr (kEnableGpuDagIterationLog) {
-//     CUDA_CHECK(cudaEventRecord(after_core_gpu));
-//   }
-
-//   // Match the CPU post-processing semantics:
-//   //
-//   // Keep _dvc_picked_endes unchanged and separately mark selected
-//   // e-nodes lying on a selected root-to-global-leaf path.
-//   _gpu_filter_root_to_leaf();
-
-//   // ============================================================
-//   // Stop total DAG timing
-//   // ============================================================
-//   CUDA_CHECK(cudaEventRecord(stop_gpu));
-//   CUDA_CHECK(cudaEventSynchronize(stop_gpu));
-
-//   // Total runtime is always calculated.
-//   CUDA_CHECK(cudaEventElapsedTime(
-//     &gpu_dag_total_time_ms,
-//     start_gpu,
-//     stop_gpu));
-
-//   // Detailed core/filter timing is calculated only when enabled.
-//   if constexpr (kEnableGpuDagIterationLog) {
-//     CUDA_CHECK(cudaEventElapsedTime(
-//       &gpu_dag_core_time_ms,
-//       start_gpu,
-//       after_core_gpu));
-
-//     CUDA_CHECK(cudaEventElapsedTime(
-//       &gpu_filter_time_ms,
-//       after_core_gpu,
-//       stop_gpu));
-
-//     printf(
-//       "GPU DAG core runtime: %.2f (ms)\n",
-//       gpu_dag_core_time_ms);
-
-//     printf(
-//       "GPU root-to-leaf filtering runtime: %.2f (ms)\n",
-//       gpu_filter_time_ms);
-//   }
-
-//   const uint32_t low_activity_threshold =
-//     static_cast<uint32_t>(
-//       (static_cast<uint64_t>(
-//          peak_survived) *
-//        kGpuDagLowActivityPercent) /
-//       100u);
-
-//   const char* insertion_policy_name = "unknown";
-
-//   switch (insertion_policy) {
-//     case GpuDagInsertionPolicy::FullBatch:
-//       insertion_policy_name = "full-batch";
-//       break;
-
-//     case GpuDagInsertionPolicy::BatchEarlyStop:
-//       insertion_policy_name = "batch-early-stop";
-//       break;
-
-//     case GpuDagInsertionPolicy::BatchThenDirect:
-//       insertion_policy_name = "batch-then-direct";
-//       break;
-//   }
-
-//   const char* termination_reason =
-//     "converged";
-
-//   if (batch_early_stop_triggered) {
-//     termination_reason =
-//       "low-activity-stop";
-//   }
-//   else if (bitmap_direct_limit_triggered) {
-//     termination_reason =
-//       "bitmap-direct-limit";
-//   }
-
-//   printf(
-//     "[GPU DAG Outer Loop] "
-//     "policy=%s, "
-//     "iterations=%u, "
-//     "batch_iterations=%u, "
-//     "direct_iterations=%u, "
-//     "reason=%s, "
-//     "peak=%u, "
-//     "last=%u, "
-//     "low_activity_threshold=%u, "
-//     "low_activity_streak=%u, "
-//     "switched=%s, "
-//     "switch_iteration=%u, "
-//     "switch_survived=%u\n",
-//     insertion_policy_name,
-//     outer_iteration,
-//     batch_iterations,
-//     direct_iterations,
-//     termination_reason,
-//     peak_survived,
-//     host_u0,
-//     low_activity_threshold,
-//     low_activity_streak,
-//     switched_to_direct
-//       ? "yes"
-//       : "no",
-//     switch_iteration,
-//     switch_survived);
-
-//   // Total runtime is always printed.
-//   printf(
-//     "GPU DAG total runtime: %.2f (ms)\n",
-//     gpu_dag_total_time_ms);
-
-//   // ============================================================
-//   // Destroy timing events
-//   // ============================================================
-//   if constexpr (kEnableGpuDagIterationLog) {
-//     CUDA_CHECK(cudaEventDestroy(after_core_gpu));
-//   }
-
-//   CUDA_CHECK(cudaEventDestroy(start_gpu));
-//   CUDA_CHECK(cudaEventDestroy(stop_gpu));
-// }
-
 void G_EXT::_gpu_DAG_construction(
   const GpuDagInsertionPolicy insertion_policy)
 {
-  // Temporary Direct-only runtime experiment.
+  // ============================================================
+  // Total DAG timing
   //
-  // Keep the original function signature so the header and
-  // existing call sites do not need to be changed.
+  // Total runtime is always measured and printed, regardless of
+  // kEnableGpuDagIterationLog, because it is the primary metric
+  // used for performance optimization.
+  // ============================================================
+  float gpu_dag_total_time_ms = 0.0f;
+
+  cudaEvent_t start_gpu = nullptr;
+  cudaEvent_t stop_gpu = nullptr;
+
+  CUDA_CHECK(cudaEventCreate(&start_gpu));
+  CUDA_CHECK(cudaEventCreate(&stop_gpu));
+
+  // ============================================================
+  // Optional detailed timing
   //
-  // insertion_policy is intentionally ignored in this test.
-  (void)insertion_policy;
+  // These objects are used only when detailed GPU DAG logging
+  // is enabled. [[maybe_unused]] is a compile-time annotation and
+  // has no runtime overhead.
+  // ============================================================
+  [[maybe_unused]] float gpu_dag_core_time_ms = 0.0f;
+  [[maybe_unused]] float gpu_filter_time_ms = 0.0f;
 
-  // One Direct outer iteration contains:
+  [[maybe_unused]] cudaEvent_t after_core_gpu = nullptr;
+
+  if constexpr (kEnableGpuDagIterationLog) {
+    CUDA_CHECK(cudaEventCreate(&after_core_gpu));
+  }
+
+  // Start total DAG construction timing.
+  CUDA_CHECK(cudaEventRecord(start_gpu));
+
+  // ============================================================
+  // Algorithm 2 initialization
   //
-  //   1. Bottom-up Direct insertion
-  //   2. Bottom-up levelization
-  //   3. Bottom-up tentative-node finalization
-  //   4. Top-down Direct insertion
-  //   5. Top-down levelization
-  //   6. Top-down tentative-node finalization
+  // Initial top-down levelization of the GPU tree result.
+  // States 1 and 2 are both treated as selected.
+  // At this point only states 0 and 1 should exist.
+  // ============================================================
+  _gpu_dag_levelize(true);
+
+  uint32_t host_u0 = 1u;
+
+  // Total number of completed bottom-up + top-down outer
+  // iterations.
+  uint32_t outer_iteration = 0u;
+
+  // Number of completed iterations using each insertion mode.
+  uint32_t batch_iterations = 0u;
+  uint32_t direct_iterations = 0u;
+
+  // Enable the finite Direct-mode limit only for the two bitmap
+  // implementations:
   //
-  // All DAG kernel and overlap-detection configurations execute
-  // at most ten complete Direct outer iterations.
-  constexpr uint32_t
-    kMaxDirectOuterIterations = 100u;
-
-  static_assert(
-    kMaxDirectOuterIterations > 0u,
-    "Direct iteration limit must be positive");
-
-  float gpu_dag_total_time_ms =
-    0.0f;
-
-  cudaEvent_t start_gpu =
-    nullptr;
-
-  cudaEvent_t stop_gpu =
-    nullptr;
-
-  CUDA_CHECK(
-    cudaEventCreate(
-      &start_gpu));
-
-  CUDA_CHECK(
-    cudaEventCreate(
-      &stop_gpu));
-
-  CUDA_CHECK(
-    cudaEventRecord(
-      start_gpu));
-
-  // Initialize levels for the GPU tree produced by Algorithm 1.
+  //   Warp  + BITMAP_BITS > 0
+  //   Block + BITMAP_BITS > 0
   //
-  // This is the same initialization used by the original GPU
-  // DAG construction implementation.
-  _gpu_dag_levelize(
-    true);
+  // Exact Warp, Exact Block, and Thread insertion continue until
+  // the original host_u0 == 0 convergence condition is reached.
+  const bool bitmap_direct_limit_enabled =
+    _dag_bitmap_bits > 0u &&
+    (_dag_kernel == DagKernel::Warp ||
+    _dag_kernel == DagKernel::Block);
 
-  // A positive initial value enters the first iteration.
-  uint32_t host_u0 =
-    1u;
+  // Largest survived insertion count observed during batch
+  // insertion.
+  uint32_t peak_survived = 0u;
 
-  uint32_t outer_iteration =
-    0u;
+  // Number of consecutive batch iterations whose survived
+  // insertion count is at most kGpuDagLowActivityPercent of
+  // the historical batch peak.
+  uint32_t low_activity_streak = 0u;
 
-  while (host_u0 > 0u &&
-         outer_iteration <
-           kMaxDirectOuterIterations) {
-    // u0 counts tentative insertions that survive both
-    // levelization and finalization in this outer iteration.
-    CUDA_CHECK(
-      cudaMemset(
-        _dvc_dag_u0,
-        0,
-        sizeof(uint32_t)));
+  // false:
+  //   use the transposed-batch insertion kernel.
+  //
+  // true:
+  //   use the one-thread-per-e-node direct insertion kernel.
+  bool use_direct_mode = false; // 0730 我現在再改這裡，原本是 false
 
-    // ========================================================
-    // Bottom-up Direct insertion
-    // ========================================================
+  // BatchEarlyStop terminates immediately when the
+  // low-activity condition is reached.
+  bool batch_early_stop_triggered = false;
 
-    // true means Direct mode for every configured implementation:
+  // Records termination caused by the Bitmap Direct-mode
+  // iteration limit.
+  //
+  // This flag is set only when:
+  //
+  //   direct_iterations has reached the configured limit
+  //   host_u0 is still greater than zero
+  //
+  // If the fifth Direct iteration naturally produces host_u0 ==
+  // zero, termination is still reported as ordinary convergence.
+  bool bitmap_direct_limit_triggered = false;
+
+  // BatchThenDirect records the Batch -> Direct transition.
+  bool switched_to_direct = false;
+  uint32_t switch_iteration = 0u;
+  uint32_t switch_survived = 0u;
+
+  while (host_u0 > 0u) {
+    // Bitmap Warp/Block Direct mode executes at most
+    // kGpuDagBitmapMaxDirectIterations complete outer
+    // iterations.
     //
-    //   Thread Exact
-    //   Warp Exact
-    //   Warp Bitmap
-    //   Block Exact
-    //   Block Bitmap
+    // This check is placed at the beginning of the loop so that:
+    //
+    //   direct_iterations == 0 -> Direct iteration 1 may run
+    //   direct_iterations == 4 -> Direct iteration 5 may run
+    //   direct_iterations == 5 -> stop before iteration 6
+    //
+    // Exact modes never enter this branch because
+    // bitmap_direct_limit_enabled is false.
+    if (bitmap_direct_limit_enabled &&
+        use_direct_mode &&
+        direct_iterations >=
+          kGpuDagBitmapMaxDirectIterations) {
+      bitmap_direct_limit_triggered = true;
+      break;
+    }
+    // Keep one insertion mode for both the bottom-up and
+    // top-down phases of this complete outer iteration.
+    const bool iteration_uses_direct =
+      use_direct_mode;
+
+    // u0 counts the insertions that survive during the current
+    // outer iteration.
+    CUDA_CHECK(cudaMemset(
+      _dvc_dag_u0,
+      0,
+      sizeof(uint32_t)));
+
+    // ==========================================================
+    // Bottom-up insertion
+    // ==========================================================
     _gpu_dag_insert_configured(
-      true,
+      iteration_uses_direct,
       false);
 
-    _gpu_dag_levelize(
-      false);
+    // This value is required only for detailed logging.
+    [[maybe_unused]] uint32_t bottom_up_proposed = 0u;
 
-    _gpu_dag_finalize_tentative(
-      false);
-
-    // ========================================================
-    // Top-down Direct insertion
-    // ========================================================
-
-    _gpu_dag_insert_configured(
-      true,
-      true);
-
-    _gpu_dag_levelize(
-      true);
-
-    _gpu_dag_finalize_tentative(
-      true);
-
-    // This copy is required to determine whether another outer
-    // iteration is needed.
-    CUDA_CHECK(
-      cudaMemcpy(
-        &host_u0,
+    if constexpr (kEnableGpuDagIterationLog) {
+      CUDA_CHECK(cudaMemcpy(
+        &bottom_up_proposed,
         _dvc_dag_u0,
         sizeof(uint32_t),
         cudaMemcpyDeviceToHost));
+    }
 
+    _gpu_dag_levelize(false);
+    _gpu_dag_finalize_tentative(false);
+
+    // This value is required only for detailed logging.
+    [[maybe_unused]] uint32_t bottom_up_survived = 0u;
+
+    if constexpr (kEnableGpuDagIterationLog) {
+      CUDA_CHECK(cudaMemcpy(
+        &bottom_up_survived,
+        _dvc_dag_u0,
+        sizeof(uint32_t),
+        cudaMemcpyDeviceToHost));
+    }
+
+    // ==========================================================
+    // Top-down insertion
+    // ==========================================================
+    _gpu_dag_insert_configured(
+      iteration_uses_direct,
+      true);
+
+    // This value is required only for detailed logging.
+    [[maybe_unused]] uint32_t after_top_down_insert = 0u;
+
+    if constexpr (kEnableGpuDagIterationLog) {
+      CUDA_CHECK(cudaMemcpy(
+        &after_top_down_insert,
+        _dvc_dag_u0,
+        sizeof(uint32_t),
+        cudaMemcpyDeviceToHost));
+    }
+
+    _gpu_dag_levelize(true);
+    _gpu_dag_finalize_tentative(true);
+
+    // ==========================================================
+    // Required outer-loop termination copy
+    //
+    // This copy is part of the algorithm, not merely logging.
+    // It must remain enabled even when iteration logging is off.
+    // ==========================================================
+    uint32_t after_both_phases = 0u;
+
+    CUDA_CHECK(cudaMemcpy(
+      &after_both_phases,
+      _dvc_dag_u0,
+      sizeof(uint32_t),
+      cudaMemcpyDeviceToHost));
+
+    host_u0 = after_both_phases;
     ++outer_iteration;
 
-    if constexpr (
-          kEnableGpuDagIterationLog) {
+    if (iteration_uses_direct) {
+      ++direct_iterations;
+    }
+    else {
+      ++batch_iterations;
+    }
+
+    // ==========================================================
+    // Optional per-iteration diagnostics
+    // ==========================================================
+    if constexpr (kEnableGpuDagIterationLog) {
+      const uint32_t top_down_proposed =
+        after_top_down_insert -
+        bottom_up_survived;
+
+      const uint32_t top_down_survived =
+        after_both_phases -
+        bottom_up_survived;
+
+      const uint32_t bottom_up_rollback =
+        bottom_up_proposed -
+        bottom_up_survived;
+
+      const uint32_t top_down_rollback =
+        top_down_proposed -
+        top_down_survived;
+
       printf(
-        "[GPU DAG Direct Test] "
-        "iteration=%u, survived=%u\n",
+        "[GPU DAG] iteration=%u, mode=%s, "
+        "BU proposed=%u survived=%u rollback=%u, "
+        "TD proposed=%u survived=%u rollback=%u, "
+        "total survived=%u\n",
         outer_iteration,
-        host_u0);
+        iteration_uses_direct
+          ? "direct"
+          : "batch",
+        bottom_up_proposed,
+        bottom_up_survived,
+        bottom_up_rollback,
+        top_down_proposed,
+        top_down_survived,
+        top_down_rollback,
+        after_both_phases);
+    }
+
+    // ==========================================================
+    // Batch low-activity controller
+    //
+    // This controller is evaluated only while the current
+    // iteration uses the batch insertion kernel.
+    //
+    // FullBatch:
+    //   Ignore the low-activity condition.
+    //
+    // BatchEarlyStop:
+    //   Stop DAG construction when the condition is reached.
+    //
+    // BatchThenDirect:
+    //   Switch the next outer iteration to direct insertion.
+    //   The current iteration has already completed both
+    //   levelization and finalization phases.
+    //
+    // after_both_phases is already copied for the original
+    // u0 == 0 convergence condition, so no additional D2H
+    // copy is introduced.
+    // ==========================================================
+    if (!iteration_uses_direct) {
+      if (after_both_phases > peak_survived) {
+        peak_survived = after_both_phases;
+      }
+
+      if (insertion_policy !=
+          GpuDagInsertionPolicy::FullBatch) {
+        const bool is_low_activity =
+          after_both_phases > 0u &&
+          static_cast<uint64_t>(
+            after_both_phases) * 100u <=
+          static_cast<uint64_t>(
+            peak_survived) *
+            kGpuDagLowActivityPercent;
+
+        if (is_low_activity) {
+          ++low_activity_streak;
+        }
+        else {
+          low_activity_streak = 0u;
+        }
+
+        const bool low_activity_condition_reached =
+          outer_iteration >=
+            kGpuDagLowActivityMinimumIterations &&
+          low_activity_streak >=
+            kGpuDagLowActivityPatience;
+
+        if (low_activity_condition_reached) {
+          if (insertion_policy ==
+              GpuDagInsertionPolicy::BatchEarlyStop) {
+            batch_early_stop_triggered = true;
+            break;
+          }
+
+          // 0801 我現在再改這裡
+          // BatchThenDirect:
+          //
+          // Switch only after one complete batch iteration.
+          // The next outer iteration begins in direct mode.
+          use_direct_mode = true;
+          switched_to_direct = true;
+          switch_iteration = outer_iteration;
+          switch_survived = after_both_phases;
+
+          if constexpr (kEnableGpuDagIterationLog) {
+            printf(
+              "[GPU DAG Controller] "
+              "switch batch->direct after iteration=%u, "
+              "survived=%u, peak=%u, "
+              "low_activity_streak=%u\n",
+              switch_iteration,
+              switch_survived,
+              peak_survived,
+              low_activity_streak);
+          }
+          // 0801 我現在再改這裡
+        }
+      }
     }
   }
 
-  const bool converged =
-    host_u0 == 0u;
+  
+  // ============================================================
+  // End of DAG construction core
+  //
+  // Record the core/filter boundary only when detailed logging
+  // is enabled.
+  // ============================================================
+  if constexpr (kEnableGpuDagIterationLog) {
+    CUDA_CHECK(cudaEventRecord(after_core_gpu));
+  }
 
-  // Preserve the original root-to-leaf filtering behavior.
+  // Match the CPU post-processing semantics:
+  //
+  // Keep _dvc_picked_endes unchanged and separately mark selected
+  // e-nodes lying on a selected root-to-global-leaf path.
   _gpu_filter_root_to_leaf();
 
-  CUDA_CHECK(
-    cudaEventRecord(
-      stop_gpu));
+  // ============================================================
+  // Stop total DAG timing
+  // ============================================================
+  CUDA_CHECK(cudaEventRecord(stop_gpu));
+  CUDA_CHECK(cudaEventSynchronize(stop_gpu));
 
-  CUDA_CHECK(
-    cudaEventSynchronize(
-      stop_gpu));
+  // Total runtime is always calculated.
+  CUDA_CHECK(cudaEventElapsedTime(
+    &gpu_dag_total_time_ms,
+    start_gpu,
+    stop_gpu));
 
-  CUDA_CHECK(
-    cudaEventElapsedTime(
-      &gpu_dag_total_time_ms,
+  // Detailed core/filter timing is calculated only when enabled.
+  if constexpr (kEnableGpuDagIterationLog) {
+    CUDA_CHECK(cudaEventElapsedTime(
+      &gpu_dag_core_time_ms,
       start_gpu,
+      after_core_gpu));
+
+    CUDA_CHECK(cudaEventElapsedTime(
+      &gpu_filter_time_ms,
+      after_core_gpu,
       stop_gpu));
+
+    printf(
+      "GPU DAG core runtime: %.2f (ms)\n",
+      gpu_dag_core_time_ms);
+
+    printf(
+      "GPU root-to-leaf filtering runtime: %.2f (ms)\n",
+      gpu_filter_time_ms);
+  }
+
+  const uint32_t low_activity_threshold =
+    static_cast<uint32_t>(
+      (static_cast<uint64_t>(
+         peak_survived) *
+       kGpuDagLowActivityPercent) /
+      100u);
+
+  const char* insertion_policy_name = "unknown";
+
+  switch (insertion_policy) {
+    case GpuDagInsertionPolicy::FullBatch:
+      insertion_policy_name = "full-batch";
+      break;
+
+    case GpuDagInsertionPolicy::BatchEarlyStop:
+      insertion_policy_name = "batch-early-stop";
+      break;
+
+    case GpuDagInsertionPolicy::BatchThenDirect:
+      insertion_policy_name = "batch-then-direct";
+      break;
+  }
+
+  const char* termination_reason =
+    "converged";
+
+  if (batch_early_stop_triggered) {
+    termination_reason =
+      "low-activity-stop";
+  }
+  else if (bitmap_direct_limit_triggered) {
+    termination_reason =
+      "bitmap-direct-limit";
+  }
 
   printf(
     "[GPU DAG Outer Loop] "
-    "policy=direct-only-test, "
+    "policy=%s, "
     "iterations=%u, "
-    "batch_iterations=0, "
+    "batch_iterations=%u, "
     "direct_iterations=%u, "
     "reason=%s, "
-    "last=%u\n",
+    "peak=%u, "
+    "last=%u, "
+    "low_activity_threshold=%u, "
+    "low_activity_streak=%u, "
+    "switched=%s, "
+    "switch_iteration=%u, "
+    "switch_survived=%u\n",
+    insertion_policy_name,
     outer_iteration,
-    outer_iteration,
-    converged
-      ? "converged"
-      : "direct-iteration-limit",
-    host_u0);
+    batch_iterations,
+    direct_iterations,
+    termination_reason,
+    peak_survived,
+    host_u0,
+    low_activity_threshold,
+    low_activity_streak,
+    switched_to_direct
+      ? "yes"
+      : "no",
+    switch_iteration,
+    switch_survived);
 
+  // Total runtime is always printed.
   printf(
     "GPU DAG total runtime: %.2f (ms)\n",
     gpu_dag_total_time_ms);
 
-  CUDA_CHECK(
-    cudaEventDestroy(
-      start_gpu));
+  // ============================================================
+  // Destroy timing events
+  // ============================================================
+  if constexpr (kEnableGpuDagIterationLog) {
+    CUDA_CHECK(cudaEventDestroy(after_core_gpu));
+  }
 
-  CUDA_CHECK(
-    cudaEventDestroy(
-      stop_gpu));
+  CUDA_CHECK(cudaEventDestroy(start_gpu));
+  CUDA_CHECK(cudaEventDestroy(stop_gpu));
 }
 
 G_EXT::CsrGraphSnapshot
