@@ -28,8 +28,8 @@ int main(int argc, char *argv[]) {
       << "  2: Block\n\n"
       << "BITMAP_BITS:\n"
       << "  Thread: 0\n"
-      << "  Warp:   0, 32, 64, 128, 256, 512, 1024, 2048\n"
-      << "  Block:  0, 32, 64, 128, 256, 512, 1024, 2048\n"
+      << "  Warp:   0, 32, 64, 128, 256, 512, 1024, 2048, 4096\n"
+      << "  Block:  0, 32, 64, 128, 256, 512, 1024, 2048, 4096\n"
       << "\n"
       << "  0 uses exact overlap detection.\n"
       << "  A nonzero value uses approximate bitmap overlap detection.\n\n"
@@ -95,7 +95,7 @@ int main(int argc, char *argv[]) {
         bitmap_bits == 0u ||
         (
           bitmap_bits >= 32u &&
-          bitmap_bits <= 2048u &&
+          bitmap_bits <= 4096u &&
           (
             bitmap_bits &
             (bitmap_bits - 1u)
@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
           << "Invalid BITMAP_BITS for Block DAG kernel: "
           << bitmap_bits << "\n"
           << "Valid values are:\n"
-          << "  0, 32, 64, 128, 256, 512, 1024, 2048\n";
+          << "  0, 32, 64, 128, 256, 512, 1024, 2048, 4096\n";
 
         return 1;
       }
@@ -116,12 +116,12 @@ int main(int argc, char *argv[]) {
 
     case DagKernel::Block:
       // Block insertion supports a runtime-sized power-of-two
-      // shared-memory bitmap from 32 through 2048 bits.
+      // shared-memory bitmap from 32 through 4096 bits.
       valid_bitmap_bits =
         bitmap_bits == 0u ||
         (
           bitmap_bits >= 32u &&
-          bitmap_bits <= 2048u &&
+          bitmap_bits <= 4096u &&
           (
             bitmap_bits &
             (bitmap_bits - 1u)
@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
           << "Invalid BITMAP_BITS for Block DAG kernel: "
           << bitmap_bits << "\n"
           << "Valid values are:\n"
-          << "  0, 32, 64, 128, 256, 512, 1024, 2048\n";
+          << "  0, 32, 64, 128, 256, 512, 1024, 2048, 4096\n";
 
         return 1;
       }

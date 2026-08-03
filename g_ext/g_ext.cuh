@@ -587,7 +587,7 @@ private:
   //   Use the existing register-based Warp Bitmap-64
   //   implementation.
   //
-  // 128, 256, 512, 1024, 2048:
+  // 128, 256, 512, 1024, 2048, 4096:
   //   Use one runtime-sized shared-memory bitmap per warp.
   //
   // Every nonzero bitmap size must be a power of two.
@@ -609,11 +609,11 @@ private:
   //   Disable bitmap and use the existing exact Block kernels.
   //
   // Nonzero:
-  //   Must be a power of two in [32, 2048].
+  //   Must be a power of two in [32, 4096].
   //
   // Valid values:
   //
-  //   0, 32, 64, 128, 256, 512, 1024, 2048
+  //   0, 32, 64, 128, 256, 512, 1024, 2048, 4096
   void _validate_block_bitmap_bits(
     uint32_t bitmap_bits) const;    
   // GPU DAG construction controller.
@@ -733,14 +733,14 @@ private:
   //
   // This path is used only for:
   //
-  //   128, 256, 512, 1024, 2048 bits
+  //   128, 256, 512, 1024, 4096 bits
   //
   // Every nonzero Warp bitmap size uses the same Strategy-A1
   // hash and two-probe policy as the Block bitmap
   // implementation.
   //
   // Warp Bitmap-32 and Bitmap-64 remain register-based.
-  // Warp Bitmap-128...2048 use one disjoint dynamic
+  // Warp Bitmap-128...4096 use one disjoint dynamic
   // shared-memory bitmap segment per warp.
   void _gpu_dag_insert_warp_bitmap_shared_batch(
     bool is_top_down_insertion,
@@ -1001,7 +1001,7 @@ private:
   //   32, 64
   //     -> register-based Warp Bitmap implementations
   //
-  //   128, 256, 512, 1024, 2048
+  //   128, 256, 512, 1024, 2048, 4096
   //     -> one runtime-sized shared-memory bitmap per warp
   //
   //   Every nonzero Warp bitmap size uses the same Strategy-A1
@@ -1009,7 +1009,7 @@ private:
   //   implementation.
   // Block:
   //   0    -> existing Exact Block implementation
-  //   32..2048 power-of-two
+  //   32..4096 power-of-two
   //        -> shared-memory Bitmap Block implementation
   //
   // A nonzero bitmap performs approximate overlap detection
@@ -1029,7 +1029,7 @@ private:
   //   32 bits -> 31
   //   64 bits -> 63
   //
-  // Warp Shared-Bitmap-128...2048 and Block Bitmap
+  // Warp Shared-Bitmap-128...4096 and Block Bitmap
   // implementations receive this runtime mask.
   //
   // Every nonzero bitmap implementation passes the applicable
@@ -1039,7 +1039,7 @@ private:
   //
   //   32 bits   -> mask 31
   //   64 bits   -> mask 63
-  //   2048 bits -> mask 2047
+  //   4096 bits -> mask 4095
   uint32_t _dag_bitmap_mask = 0u;
 
   // Number of uint32_t words:
@@ -1050,7 +1050,7 @@ private:
   // this runtime word count because their register layout is
   // known at compile time.
   //
-  // Warp Shared-Bitmap-128...2048 and Block Bitmap kernels use
+  // Warp Shared-Bitmap-128...4096 and Block Bitmap kernels use
   // this value to size dynamic shared memory.
   uint32_t _dag_bitmap_words = 0u;
 

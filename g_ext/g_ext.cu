@@ -339,11 +339,11 @@ void G_EXT::_validate_warp_bitmap_bits(
      (bitmap_bits - 1u)) == 0u;
 
   if (bitmap_bits < 32u ||
-      bitmap_bits > 2048u ||
+      bitmap_bits > 4096u ||
       !is_power_of_two) {
     throw std::invalid_argument(
       "Warp DAG bitmap size must be one of: "
-      "0, 32, 64, 128, 256, 512, 1024, 2048");
+      "0, 32, 64, 128, 256, 512, 1024, 2048, 4096");
   }
 }
 
@@ -416,11 +416,11 @@ void G_EXT::_validate_block_bitmap_bits(
      (bitmap_bits - 1u)) == 0u;
 
   if (bitmap_bits < 32u ||
-      bitmap_bits > 2048u ||
+      bitmap_bits > 4096u ||
       !is_power_of_two) {
     throw std::invalid_argument(
       "Block DAG bitmap size must be one of: "
-      "0, 32, 64, 128, 256, 512, 1024, 2048");
+      "0, 32, 64, 128, 256, 512, 1024, 2048, 4096");
   }
 }
 
@@ -5181,10 +5181,10 @@ void G_EXT::_gpu_dag_insert_block_direct(
 //   Warp Bitmap-64:
 //     two uint32_t registers
 //
-//   Warp Bitmap-128...2048:
+//   Warp Bitmap-128...4096:
 //     one shared-memory bitmap segment per warp
 //
-//   Block Bitmap-32...2048:
+//   Block Bitmap-32...4096:
 //     one shared-memory bitmap per CUDA block
 //
 // The common Strategy-A1 policy is:
@@ -5906,7 +5906,7 @@ void G_EXT::_gpu_dag_insert_block_bitmap_batch(
   }
 
   if (bitmap_words == 0u ||
-      bitmap_words > 64u) {
+      bitmap_words > 128u) {
     throw std::logic_error(
       "_gpu_dag_insert_block_bitmap_batch received "
       "an invalid bitmap word count");
@@ -5987,7 +5987,7 @@ void G_EXT::_gpu_dag_insert_block_bitmap_direct(
   }
 
   if (bitmap_words == 0u ||
-      bitmap_words > 64u) {
+      bitmap_words > 128u) {
     throw std::logic_error(
       "_gpu_dag_insert_block_bitmap_direct received "
       "an invalid bitmap word count");
@@ -7772,7 +7772,7 @@ void G_EXT::_gpu_dag_insert_warp_bitmap64_direct(
 //
 // This path is used only for:
 //
-//   BITMAP_BITS = 128, 256, 512, 1024, 2048
+//   BITMAP_BITS = 128, 256, 512, 1024, 2048, 4096
 //
 // The existing Warp Bitmap-32 and Bitmap-64 paths remain
 // register-based and are not modified.
@@ -7853,8 +7853,8 @@ void gpu_dag_process_warp_bitmap_shared_candidate(
   // 128 bits:
   //   4 uint32_t words
   //
-  // 2048 bits:
-  //   64 uint32_t words
+  // 4096 bits:
+  //   128 uint32_t words
   //
   // With 32 lanes, each lane clears at most two words.
   // ----------------------------------------------------------
@@ -8268,9 +8268,9 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_batch(
   //
   //   128 bits  -> 4 words
   //   ...
-  //   2048 bits -> 64 words
+  //   4096 bits -> 64 words
   if (bitmap_words < 4u ||
-      bitmap_words > 64u) {
+      bitmap_words > 128u) {
     throw std::logic_error(
       "_gpu_dag_insert_warp_bitmap_shared_batch "
       "received an invalid bitmap word count");
@@ -8314,11 +8314,10 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_batch(
   //     sizeof(uint32_t)
   //
   // Maximum:
-  //
   //   1024 threads/block = 32 warps
-  //   2048 bits          = 64 words
+  //   4096 bits          = 128 words
   //
-  //   32 * 64 * 4 = 8192 bytes
+  //   32 * 128 * 4 = 16384 bytes
   const size_t shared_bytes =
     static_cast<size_t>(
       warps_per_block) *
@@ -8373,7 +8372,7 @@ void G_EXT::_gpu_dag_insert_warp_bitmap_shared_direct(
   }
 
   if (bitmap_words < 4u ||
-      bitmap_words > 64u) {
+      bitmap_words > 128u) {
     throw std::logic_error(
       "_gpu_dag_insert_warp_bitmap_shared_direct "
       "received an invalid bitmap word count");
@@ -8497,6 +8496,7 @@ void G_EXT::_gpu_dag_insert_configured(
         case 512u:
         case 1024u:
         case 2048u:
+        case 4096u:
           // Runtime-sized per-warp shared-memory bitmap
           // implementation.
           if (use_direct_mode) {
@@ -10199,7 +10199,6 @@ void G_EXT::_gpu_DAG_construction(
             break;
           }
 
-          // 0801 我現在再改這裡
           // BatchThenDirect:
           //
           // Switch only after one complete batch iteration.
@@ -10220,7 +10219,6 @@ void G_EXT::_gpu_DAG_construction(
               peak_survived,
               low_activity_streak);
           }
-          // 0801 我現在再改這裡
         }
       }
     }
