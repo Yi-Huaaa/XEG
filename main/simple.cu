@@ -179,7 +179,7 @@ int main(int argc, char *argv[]) {
   std::cout << "Read Time: " << g_ext.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
   g_ext.run(
-    false,
+    true,
     360,
     dag_kernel,
     num_thread_dag_constr,
