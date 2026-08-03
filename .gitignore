@@ -3,3 +3,6 @@ g_ext/20260630_test_used.sh
 tmp.log
 tmp.*
 ablation_benchmarks/*
+tmp.*
+tmp32.log
+tmp112.log
