@@ -614,7 +614,7 @@ TEST_CASE(
       128u
     };
 
-  constexpr std::array<uint32_t, 8u>
+  constexpr std::array<uint32_t, 9u>
     bitmap_sizes{
       0u,
       32u,
@@ -623,7 +623,8 @@ TEST_CASE(
       256u,
       512u,
       1024u,
-      2048u
+      2048u,
+      4096u
     };
 
   for (const uint32_t threads_per_candidate :
@@ -837,7 +838,7 @@ TEST_CASE(
       16u,
       31u,
       96u,
-      4096u
+      8192u
     };
 
   for (const uint32_t bitmap_bits :
