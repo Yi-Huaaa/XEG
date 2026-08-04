@@ -44,6 +44,54 @@ enum class DagKernel : uint32_t {
   Block  = 2,
 };
 
+// Selects the ILP solver backend.
+//
+// CpSat:
+//   Use the existing OR-Tools CP-SAT implementation.
+//
+// CuOpt:
+//   Use the NVIDIA cuOpt implementation when XEG is built
+//   with cuOpt support.
+enum class IlpBackend : uint32_t {
+  CpSat = 0u,
+  CuOpt = 1u,
+};
+
+
+inline IlpBackend parse_ilp_backend(
+  const uint32_t value)
+{
+  switch (value) {
+    case 0u:
+      return IlpBackend::CpSat;
+
+    case 1u:
+      return IlpBackend::CuOpt;
+
+    default:
+      throw std::invalid_argument(
+        "Invalid ILP_BACKEND value: " +
+        std::to_string(value));
+  }
+}
+
+
+inline const char* ilp_backend_name(
+  const IlpBackend backend)
+{
+  switch (backend) {
+    case IlpBackend::CpSat:
+      return "CP-SAT";
+
+    case IlpBackend::CuOpt:
+      return "cuOpt";
+
+    default:
+      throw std::invalid_argument(
+        "Invalid ILP backend");
+  }
+}
+
 namespace g_ext_detail {
 
 enum class GpuDagPersistentExitReason : uint32_t
