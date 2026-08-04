@@ -3,7 +3,7 @@
 
 set(
   CMAKE_RUNTIME_OUTPUT_DIRECTORY
-  ${PROJECT_SOURCE_DIR}/build/main
+  ${CMAKE_BINARY_DIR}/main
 )
 
 # -----------------------------------------------------------------------------
