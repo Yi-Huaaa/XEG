@@ -42,7 +42,8 @@ const std::vector<uint32_t> kSupportedBitmapBits{
   256u,
   512u,
   1024u,
-  2048u
+  2048u,
+  4096u
 };
 
 struct Edge
@@ -153,7 +154,7 @@ ProbeBits strategy_a1_probe_bits(
   const uint32_t bitmap_bits)
 {
   if (bitmap_bits < 32u ||
-      bitmap_bits > 2048u ||
+      bitmap_bits > 4096u ||
       (bitmap_bits &
        (bitmap_bits - 1u)) != 0u) {
     throw std::invalid_argument(
@@ -847,7 +848,8 @@ DOCTEST_TEST_CASE(
          256u,
          512u,
          1024u,
-         2048u
+         2048u,
+         4096u
        }) {
     DOCTEST_CAPTURE(
       bitmap_bits);
@@ -868,7 +870,7 @@ DOCTEST_TEST_CASE(
          16u,
          96u,
          192u,
-         4096u
+         8192u
        }) {
     DOCTEST_CAPTURE(
       bitmap_bits);
