@@ -3,24 +3,42 @@
 
 enable_language(CUDA)
 
-add_library(g_ext 
+add_library(g_ext
   G_EXT.hpp
-  g_ext.cu g_ext.cuh
+  g_ext.cu
+  g_ext.cuh
+  cuopt_solver.cpp
+  cuopt_solver.hpp
 )
+
+# -----------------------------------------------------------------------------
+# Optional NVIDIA cuOpt backend
+# -----------------------------------------------------------------------------
+if(XEG_ENABLE_CUOPT)
+  target_compile_definitions(
+    g_ext
+    PUBLIC
+      XEG_ENABLE_CUOPT=1
+  )
+
+  target_link_libraries(
+    g_ext
+    PRIVATE
+      cuOpt::cuOpt
+  )
+
+  set_target_properties(
+    g_ext
+    PROPERTIES
+      BUILD_RPATH "${CUOPT_RUNTIME_LIBRARY_DIRS}"
+  )
+endif()
 
 # -----------------------------------------------------------------------------
 # Link OpenMP for CUDA partition (needed for OpenMP support in CUDA code)
 # -----------------------------------------------------------------------------
 # target_link_libraries(g_ext PRIVATE OpenMP::OpenMP_CXX)
 target_compile_options(g_ext PRIVATE ${OpenMP_CXX_FLAGS})
-
-# -----------------------------------------------------------------------------
-# Add cuBLAS library if necessary
-# -----------------------------------------------------------------------------
-if (g_ext_BUILD_CUDA)
-  target_link_libraries(g_ext PRIVATE ${CUBLAS_LIBRARIES})
-  target_include_directories(g_ext PRIVATE ${CUBLAS_INCLUDE_DIRS})
-endif()
 
 # -----------------------------------------------------------------------------
 # Include taskflow

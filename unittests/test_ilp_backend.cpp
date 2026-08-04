@@ -3,6 +3,7 @@
 #include <doctest.h>
 
 #include <g_ext/g_ext.cuh>
+#include <g_ext/cuopt_solver.hpp>
 
 #include <cstdint>
 #include <stdexcept>
@@ -112,4 +113,57 @@ DOCTEST_TEST_CASE(
   DOCTEST_CHECK_EQ(
     has_expected_signature,
     true);
+}
+
+DOCTEST_TEST_CASE(
+  "cuOpt solver boundary reports its implementation status")
+{
+  const std::vector<std::vector<uint32_t>>
+    ecls_its_ende;
+
+  const std::vector<uint32_t>
+    ende_child;
+
+  const std::vector<uint32_t>
+    ende_child_ptr;
+
+  const std::vector<uint32_t>
+    root_eclass_id;
+
+  const std::vector<float>
+    ende_cost;
+
+  const std::vector<uint32_t>
+    best_ende_of_ecls;
+
+  const std::vector<bool>
+    picked_endes;
+
+#ifdef XEG_ENABLE_CUOPT
+  DOCTEST_CHECK_THROWS_WITH_AS(
+    solve_with_cuopt(
+      1.0,
+      ecls_its_ende,
+      ende_child,
+      ende_child_ptr,
+      root_eclass_id,
+      ende_cost,
+      best_ende_of_ecls,
+      picked_endes),
+    "cuOpt XEG formulation is not implemented in this patch",
+    std::runtime_error);
+#else
+  DOCTEST_CHECK_THROWS_WITH_AS(
+    solve_with_cuopt(
+      1.0,
+      ecls_its_ende,
+      ende_child,
+      ende_child_ptr,
+      root_eclass_id,
+      ende_cost,
+      best_ende_of_ecls,
+      picked_endes),
+    "XEG was built without cuOpt support",
+    std::runtime_error);
+#endif
 }
