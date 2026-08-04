@@ -431,8 +431,13 @@ void G_EXT::_run_impl(
   const uint32_t num_thread_dag_constrution,
   const uint32_t dag_bitmap_bits,
   const CpsatInitialSolutionMode initial_solution_mode,
-  const uint32_t random_seed)
+  const uint32_t random_seed,
+  const IlpBackend ilp_backend)
 {
+  // Backend dispatch is added in the next implementation step.
+  // Until then, preserve the existing CP-SAT execution path.
+  (void)ilp_backend;
+
   switch (dag_kernel) {
     case DagKernel::Thread:
       if (num_thread_dag_constrution != 1u) {

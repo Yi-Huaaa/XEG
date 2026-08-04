@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
-
+#include <type_traits>
 
 DOCTEST_TEST_CASE(
   "ILP backend value zero selects CP-SAT")
@@ -67,4 +67,49 @@ DOCTEST_TEST_CASE(
   DOCTEST_CHECK_EQ(
     cuopt_name,
     "cuOpt");
+}
+
+DOCTEST_TEST_CASE(
+  "G_EXT run accepts a trailing ILP backend")
+{
+  using RunFunction =
+    void (G_EXT::*)(
+      bool,
+      double,
+      DagKernel,
+      uint32_t,
+      uint32_t,
+      IlpBackend);
+
+  constexpr bool has_expected_signature =
+    std::is_same_v<
+      decltype(&G_EXT::run),
+      RunFunction>;
+
+  DOCTEST_CHECK_EQ(
+    has_expected_signature,
+    true);
+}
+
+
+DOCTEST_TEST_CASE(
+  "G_EXT XEG-T experiment accepts a trailing ILP backend")
+{
+  using RunXegTFunction =
+    void (G_EXT::*)(
+      double,
+      DagKernel,
+      uint32_t,
+      uint32_t,
+      uint32_t,
+      IlpBackend);
+
+  constexpr bool has_expected_signature =
+    std::is_same_v<
+      decltype(&G_EXT::run_xeg_t_exp),
+      RunXegTFunction>;
+
+  DOCTEST_CHECK_EQ(
+    has_expected_signature,
+    true);
 }

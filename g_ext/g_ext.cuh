@@ -455,7 +455,8 @@ public:
     const double ILP_time_limit = 360,
     DagKernel dag_kernel = DagKernel::Thread,
     uint32_t num_thread_dag_constrution = 1u,
-    uint32_t dag_bitmap_bits = 0u)
+    uint32_t dag_bitmap_bits = 0u,
+    IlpBackend ilp_backend = IlpBackend::CpSat)
   {
     _run_impl(
       ILP_solver,
@@ -464,7 +465,8 @@ public:
       num_thread_dag_constrution,
       dag_bitmap_bits,
       CpsatInitialSolutionMode::GpuTree,
-      0u);
+      0u,
+      ilp_backend);
   }
 
   void run_xeg_t_exp(
@@ -472,7 +474,8 @@ public:
     DagKernel dag_kernel = DagKernel::Thread,
     uint32_t num_thread_dag_constrution = 1u,
     uint32_t dag_bitmap_bits = 0u,
-    uint32_t random_seed = 42u)
+    uint32_t random_seed = 42u,
+    IlpBackend ilp_backend = IlpBackend::CpSat)
   {
     _run_impl(
       true,
@@ -481,7 +484,8 @@ public:
       num_thread_dag_constrution,
       dag_bitmap_bits,
       CpsatInitialSolutionMode::Random,
-      random_seed);
+      random_seed,
+      ilp_backend);
   }
 
 private:
@@ -543,7 +547,8 @@ private:
     uint32_t num_thread_dag_constrution,
     uint32_t dag_bitmap_bits,
     CpsatInitialSolutionMode initial_solution_mode,
-    uint32_t random_seed);
+    uint32_t random_seed,
+    IlpBackend ilp_backend);
 
   void _build_random_cpsat_initial_solution(
     uint32_t random_seed,
