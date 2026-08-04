@@ -487,9 +487,13 @@ TEST_CASE(
   // GPU execution is nondeterministic. The batch phase may
   // either trigger the switch to direct mode or converge before
   // the switching condition is reached.
-  DOCTEST_REQUIRE(
+  const bool has_valid_switched_value =
     summary.switched == "yes" ||
-    summary.switched == "no");
+    summary.switched == "no";
+
+  DOCTEST_REQUIRE_EQ(
+    has_valid_switched_value,
+    true);
 
   if (summary.switched == "yes") {
     // Once the controller switches, every later iteration uses
