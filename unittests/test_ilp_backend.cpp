@@ -5,6 +5,7 @@
 #include <g_ext/g_ext.cuh>
 #include <g_ext/cuopt_solver.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -230,3 +231,111 @@ DOCTEST_TEST_CASE(
     std::runtime_error);
 #endif
 }
+
+#ifdef XEG_ENABLE_CUOPT
+
+DOCTEST_TEST_CASE(
+  "cuOpt avoids a cyclic solution")
+{
+  // e-class 0 is the root:
+  //   e-node 0 -> e-class 1, cost 0
+  //   e-node 1 -> leaf,      cost 5
+  //
+  // e-class 1:
+  //   e-node 2 -> e-class 0, cost 0
+  //   e-node 3 -> leaf,      cost 1
+  //
+  // Selecting e-node 0 and e-node 2 would create a cycle
+  // with objective 0, so it must be rejected.
+  //
+  // The optimal acyclic solution is e-node 0 + e-node 3,
+  // with objective 1.
+  const std::vector<std::vector<uint32_t>>
+    ecls_its_ende{
+      {0u, 1u},
+      {2u, 3u},
+    };
+
+  const std::vector<uint32_t>
+    ende_child{
+      1u,
+      0u,
+    };
+
+  const std::vector<uint32_t>
+    ende_child_ptr{
+      0u,  // e-node 0 begins
+      1u,  // e-node 1 begins
+      1u,  // e-node 2 begins
+      2u,  // e-node 3 begins
+      2u,
+    };
+
+  const std::vector<uint32_t>
+    root_eclass_id{
+      0u,
+    };
+
+  const std::vector<float>
+    ende_cost{
+      0.0f,
+      5.0f,
+      0.0f,
+      1.0f,
+    };
+
+  const std::vector<uint32_t>
+    best_ende_of_ecls{
+      1u,
+      3u,
+    };
+
+  const std::vector<bool>
+    picked_endes{
+      false,
+      true,
+      false,
+      false,
+    };
+
+  const CuoptSolveResult result =
+    solve_with_cuopt(
+      10.0,
+      ecls_its_ende,
+      ende_child,
+      ende_child_ptr,
+      root_eclass_id,
+      ende_cost,
+      best_ende_of_ecls,
+      picked_endes);
+
+  DOCTEST_REQUIRE(result.has_feasible_solution);
+
+  DOCTEST_CHECK_EQ(
+    result.objective_value,
+    doctest::Approx(1.0));
+
+  DOCTEST_CHECK_EQ(
+    result.recomputed_objective,
+    doctest::Approx(1.0));
+
+  DOCTEST_CHECK(
+    std::find(
+      result.selected_enodes.begin(),
+      result.selected_enodes.end(),
+      0u) != result.selected_enodes.end());
+
+  DOCTEST_CHECK(
+    std::find(
+      result.selected_enodes.begin(),
+      result.selected_enodes.end(),
+      3u) != result.selected_enodes.end());
+
+  DOCTEST_CHECK(
+    std::find(
+      result.selected_enodes.begin(),
+      result.selected_enodes.end(),
+      2u) == result.selected_enodes.end());
+}
+
+#endif
