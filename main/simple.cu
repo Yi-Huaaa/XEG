@@ -14,14 +14,15 @@ int main(int argc, char *argv[]) {
   cudaEvent_t startGPU, stopGPU;
   cudaEventCreate(&startGPU);
   cudaEventCreate(&stopGPU);
-  if (argc < 2 || argc > 5) {
+  if (argc < 2 || argc > 6) {
     std::cerr
       << "Usage:\n"
       << "  ./main/simple "
       << "<input_file> "
       << "[DAG_KERNEL] "
       << "[NUM_THREAD_DAG_CONSTR] "
-      << "[BITMAP_BITS]\n\n"
+      << "[BITMAP_BITS] "
+      << "[ILP_BACKEND]\n\n"
       << "DAG_KERNEL:\n"
       << "  0: Thread\n"
       << "  1: Warp\n"
@@ -33,13 +34,18 @@ int main(int argc, char *argv[]) {
       << "\n"
       << "  0 uses exact overlap detection.\n"
       << "  A nonzero value uses approximate bitmap overlap detection.\n\n"
+      << "ILP_BACKEND:\n"
+      << "  0: CP-SAT (default)\n"
+      << "  1: cuOpt\n\n"
       << "Examples:\n"
       << "  ./main/simple input.json 0 1 0\n"
       << "  ./main/simple input.json 1 128 0\n"
       << "  ./main/simple input.json 1 128 32\n"
       << "  ./main/simple input.json 1 128 64\n"
       << "  ./main/simple input.json 2 128 0\n"
-      << "  ./main/simple input.json 2 128 64\n";
+      << "  ./main/simple input.json 2 128 64\n"
+      << "  ./main/simple input.json 0 1 0 0\n"
+      << "  ./main/simple input.json 0 1 0 1\n";
 
     return 1;
   }
@@ -66,7 +72,27 @@ int main(int argc, char *argv[]) {
   uint32_t bitmap_bits = (argc > 4)
       ? static_cast<uint32_t>(std::stoul(argv[4]))
       : 0u;  
-      
+
+  uint32_t ilp_backend_value = (argc > 5)
+      ? static_cast<uint32_t>(std::stoul(argv[5]))
+      : 0u;
+
+  IlpBackend ilp_backend;
+
+  try {
+    ilp_backend =
+      parse_ilp_backend(ilp_backend_value);
+  }
+  catch (const std::invalid_argument& error) {
+    std::cerr
+      << error.what() << "\n"
+      << "Valid values are:\n"
+      << "  0: CP-SAT\n"
+      << "  1: cuOpt\n";
+
+    return 1;
+  }
+
   bool valid_bitmap_bits =
     false;
 
@@ -167,6 +193,12 @@ int main(int argc, char *argv[]) {
   }
 
   std::cout << "\n";
+  std::cout
+    << "ILP_BACKEND: "
+    << ilp_backend_value
+    << " ("
+    << ilp_backend_name(ilp_backend)
+    << ")\n";
   std::cout << "-------------------------------------\n";
 
 
@@ -183,7 +215,8 @@ int main(int argc, char *argv[]) {
     360,
     dag_kernel,
     num_thread_dag_constr,
-    bitmap_bits);  
+    bitmap_bits,
+    ilp_backend);
 
   return 0;
 }
