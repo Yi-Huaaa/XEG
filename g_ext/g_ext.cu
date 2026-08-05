@@ -435,7 +435,8 @@ void G_EXT::_solve_ilp(
   const std::vector<uint32_t>& root_eclass_id,
   const std::vector<float>& ende_cost,
   const std::vector<uint32_t>& best_ende_of_ecls,
-  const std::vector<bool>& picked_endes)
+  const std::vector<bool>& picked_endes,
+  const CuoptMode cuopt_mode)
 {
   switch (backend) {
     case IlpBackend::CpSat:
@@ -459,7 +460,8 @@ void G_EXT::_solve_ilp(
         root_eclass_id,
         ende_cost,
         best_ende_of_ecls,
-        picked_endes);
+        picked_endes,
+        cuopt_mode);
       return;
 
     default:
@@ -470,7 +472,8 @@ void G_EXT::_solve_ilp(
 
 
 void G_EXT::unittest_solve_ilp_backend(
-  const IlpBackend backend)
+  const IlpBackend ilp_backend,
+  const CuoptMode cuopt_mode)
 {
   // Minimal valid MILP:
   // root e-class 0 contains two leaf e-nodes.
@@ -512,7 +515,7 @@ void G_EXT::unittest_solve_ilp_backend(
     };
 
   _solve_ilp(
-    backend,
+    ilp_backend,
     10.0,
     ecls_its_ende,
     ende_child,
@@ -520,7 +523,8 @@ void G_EXT::unittest_solve_ilp_backend(
     root_eclass_id,
     ende_cost,
     best_ende_of_ecls,
-    picked_endes);
+    picked_endes,
+    cuopt_mode);
 }
 
 void G_EXT::_run_impl(
@@ -531,7 +535,8 @@ void G_EXT::_run_impl(
   const uint32_t dag_bitmap_bits,
   const CpsatInitialSolutionMode initial_solution_mode,
   const uint32_t random_seed,
-  const IlpBackend ilp_backend)
+  const IlpBackend ilp_backend,
+  const CuoptMode cuopt_mode)
 {
   switch (dag_kernel) {
     case DagKernel::Thread:
@@ -823,7 +828,8 @@ void G_EXT::_run_impl(
           _root_eclass_id,
           _ende_cost,
           best_ende_of_ecls_gpu,
-          picked_endes_gpu);
+          picked_endes_gpu,
+          cuopt_mode);
         break;
 
       case CpsatInitialSolutionMode::Random: {
@@ -848,7 +854,8 @@ void G_EXT::_run_impl(
           _root_eclass_id,
           _ende_cost,
           random_best_ende_of_ecls,
-          random_picked_endes);
+          random_picked_endes,
+          cuopt_mode);
         break;
       }
 

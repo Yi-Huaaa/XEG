@@ -37,6 +37,7 @@
 
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
+#include "cuopt_solver.hpp"
 
 enum class DagKernel : uint32_t {
   Thread = 0,
@@ -330,7 +331,8 @@ public:
   // Invoke the production ILP backend dispatcher with an empty
   // model. This wrapper exists only to verify backend routing.
   void unittest_solve_ilp_backend(
-    IlpBackend backend);
+    IlpBackend ilp_backend,
+    CuoptMode cuopt_mode = CuoptMode::Presolve);
 
   // Run exactly one batch insertion phase.
   // This wrapper is used only by unit tests.
@@ -461,7 +463,8 @@ public:
     DagKernel dag_kernel = DagKernel::Thread,
     uint32_t num_thread_dag_constrution = 1u,
     uint32_t dag_bitmap_bits = 0u,
-    IlpBackend ilp_backend = IlpBackend::CpSat)
+    IlpBackend ilp_backend = IlpBackend::CpSat,
+    CuoptMode cuopt_mode = CuoptMode::Presolve)
   {
     _run_impl(
       ILP_solver,
@@ -471,7 +474,8 @@ public:
       dag_bitmap_bits,
       CpsatInitialSolutionMode::GpuTree,
       0u,
-      ilp_backend);
+      ilp_backend,
+      cuopt_mode);
   }
 
   void run_xeg_t_exp(
@@ -490,7 +494,8 @@ public:
       dag_bitmap_bits,
       CpsatInitialSolutionMode::Random,
       random_seed,
-      ilp_backend);
+      ilp_backend,
+      CuoptMode::Presolve);
   }
 
 private:
@@ -553,7 +558,8 @@ private:
     uint32_t dag_bitmap_bits,
     CpsatInitialSolutionMode initial_solution_mode,
     uint32_t random_seed,
-    IlpBackend ilp_backend);
+    IlpBackend ilp_backend,
+    CuoptMode cuopt_mode);
 
   void _build_random_cpsat_initial_solution(
     uint32_t random_seed,
@@ -986,7 +992,8 @@ private:
     const std::vector<uint32_t>& root_eclass_id,
     const std::vector<float>& ende_cost,
     const std::vector<uint32_t>& best_ende_of_ecls,
-    const std::vector<bool>& picked_endes);
+    const std::vector<bool>& picked_endes,
+    CuoptMode cuopt_mode);
 
   void _cpsat_solver(
     const double time_limit,
