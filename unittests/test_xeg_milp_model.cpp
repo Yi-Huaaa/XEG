@@ -524,3 +524,61 @@ DOCTEST_TEST_CASE(
 
   DOCTEST_CHECK_FALSE(validation.valid);
 }
+
+DOCTEST_TEST_CASE(
+  "validator rejects a violated MILP constraint")
+{
+  const std::vector<std::vector<uint32_t>>
+    ecls_its_ende{
+      {0u, 1u},
+    };
+
+  const std::vector<uint32_t> ende_child;
+
+  const std::vector<uint32_t>
+    ende_child_ptr{
+      0u,
+      0u,
+      0u,
+    };
+
+  const std::vector<uint32_t>
+    root_eclass_id{
+      0u,
+    };
+
+  const std::vector<float>
+    ende_cost{
+      5.0f,
+      2.0f,
+    };
+
+  const XegMilpModel model =
+    build_xeg_milp_model(
+      ecls_its_ende,
+      ende_child,
+      ende_child_ptr,
+      root_eclass_id,
+      ende_cost);
+
+  // active[0] = 1, but neither e-node is selected.
+  //
+  // Bounds and integrality are valid, but this violates:
+  //
+  //   selected[0] + selected[1] - active[0] = 0
+  const std::vector<double>
+    primal_solution{
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+    };
+
+  const XegMilpValidationResult validation =
+    validate_xeg_milp_solution(
+      model,
+      primal_solution,
+      0.0);
+
+  DOCTEST_CHECK_FALSE(validation.valid);
+}

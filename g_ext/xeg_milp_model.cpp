@@ -318,6 +318,24 @@ XegMilpValidationResult validate_xeg_milp_solution(
       value;
   }
 
+  for (const XegMilpConstraint& constraint :
+       model.constraints) {
+    double activity = 0.0;
+
+    for (const XegMilpTerm& term : constraint.terms) {
+      activity +=
+        term.coefficient *
+        primal_solution.at(term.variable);
+    }
+
+    if (activity < constraint.lower_bound - tolerance ||
+        activity > constraint.upper_bound + tolerance) {
+      result.message =
+        "primal solution violates a model constraint";
+      return result;
+    }
+  }
+
   if (!std::isfinite(reported_objective)) {
     result.message =
       "reported objective is not finite";
