@@ -116,43 +116,88 @@ DOCTEST_TEST_CASE(
 }
 
 DOCTEST_TEST_CASE(
-  "cuOpt solver boundary reports its implementation status")
+  "cuOpt solves a rooted alternative choice")
 {
+#ifdef XEG_ENABLE_CUOPT
+  // Root e-class 0 contains two leaf e-nodes.
+  // The optimal choice is e-node 1 with cost 2.
   const std::vector<std::vector<uint32_t>>
-    ecls_its_ende;
+    ecls_its_ende{
+      {0u, 1u},
+    };
 
   const std::vector<uint32_t>
     ende_child;
 
   const std::vector<uint32_t>
-    ende_child_ptr;
+    ende_child_ptr{
+      0u,
+      0u,
+      0u,
+    };
 
   const std::vector<uint32_t>
-    root_eclass_id;
+    root_eclass_id{
+      0u,
+    };
 
   const std::vector<float>
-    ende_cost;
+    ende_cost{
+      5.0f,
+      2.0f,
+    };
 
+  // Phase 1C-A does not use warm-start information.
   const std::vector<uint32_t>
-    best_ende_of_ecls;
+    best_ende_of_ecls{
+      0u,
+    };
 
   const std::vector<bool>
-    picked_endes;
+    picked_endes{
+      true,
+      false,
+    };
 
-#ifdef XEG_ENABLE_CUOPT
-  DOCTEST_CHECK_THROWS_WITH_AS(
+  const CuoptSolveResult result =
     solve_with_cuopt(
-      1.0,
+      10.0,
       ecls_its_ende,
       ende_child,
       ende_child_ptr,
       root_eclass_id,
       ende_cost,
       best_ende_of_ecls,
-      picked_endes),
-    "cuOpt XEG formulation is not implemented in this patch",
-    std::runtime_error);
+      picked_endes);
+
+  DOCTEST_CHECK(result.has_feasible_solution);
+
+  DOCTEST_CHECK_EQ(
+    result.objective_value,
+    doctest::Approx(2.0));
+
+  DOCTEST_CHECK_EQ(
+    result.recomputed_objective,
+    doctest::Approx(2.0));
+
+  DOCTEST_REQUIRE_EQ(
+    result.selected_enodes.size(),
+    1u);
+
+  DOCTEST_CHECK_EQ(
+    result.selected_enodes.at(0u),
+    1u);
 #else
+  const std::vector<std::vector<uint32_t>>
+    ecls_its_ende;
+
+  const std::vector<uint32_t> ende_child;
+  const std::vector<uint32_t> ende_child_ptr;
+  const std::vector<uint32_t> root_eclass_id;
+  const std::vector<float> ende_cost;
+  const std::vector<uint32_t> best_ende_of_ecls;
+  const std::vector<bool> picked_endes;
+
   DOCTEST_CHECK_THROWS_WITH_AS(
     solve_with_cuopt(
       1.0,
@@ -167,17 +212,16 @@ DOCTEST_TEST_CASE(
     std::runtime_error);
 #endif
 }
+
 DOCTEST_TEST_CASE(
   "G_EXT dispatcher routes cuOpt backend to cuOpt solver boundary")
 {
   G_EXT extension;
 
 #ifdef XEG_ENABLE_CUOPT
-  DOCTEST_CHECK_THROWS_WITH_AS(
+  DOCTEST_CHECK_NOTHROW(
     extension.unittest_solve_ilp_backend(
-      IlpBackend::CuOpt),
-    "cuOpt XEG formulation is not implemented in this patch",
-    std::runtime_error);
+      IlpBackend::CuOpt));
 #else
   DOCTEST_CHECK_THROWS_WITH_AS(
     extension.unittest_solve_ilp_backend(

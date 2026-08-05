@@ -472,30 +472,48 @@ void G_EXT::_solve_ilp(
 void G_EXT::unittest_solve_ilp_backend(
   const IlpBackend backend)
 {
+  // Minimal valid MILP:
+  // root e-class 0 contains two leaf e-nodes.
   const std::vector<std::vector<uint32_t>>
-    ecls_its_ende;
+    ecls_its_ende{
+      {0u, 1u},
+    };
 
   const std::vector<uint32_t>
     ende_child;
 
   const std::vector<uint32_t>
-    ende_child_ptr;
+    ende_child_ptr{
+      0u,
+      0u,
+      0u,
+    };
 
   const std::vector<uint32_t>
-    root_eclass_id;
+    root_eclass_id{
+      0u,
+    };
 
   const std::vector<float>
-    ende_cost;
+    ende_cost{
+      5.0f,
+      2.0f,
+    };
 
   const std::vector<uint32_t>
-    best_ende_of_ecls;
+    best_ende_of_ecls{
+      0u,
+    };
 
   const std::vector<bool>
-    picked_endes;
+    picked_endes{
+      true,
+      false,
+    };
 
   _solve_ilp(
     backend,
-    0.0,
+    10.0,
     ecls_its_ende,
     ende_child,
     ende_child_ptr,

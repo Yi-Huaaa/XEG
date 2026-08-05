@@ -4,8 +4,14 @@
 #include <cstdint>
 #include <vector>
 
+struct CuoptSolveResult {
+  bool has_feasible_solution = false;
+  double objective_value = 0.0;
+  double recomputed_objective = 0.0;
+  std::vector<uint32_t> selected_enodes;
+};
 
-void solve_with_cuopt(
+CuoptSolveResult solve_with_cuopt(
   double time_limit,
   const std::vector<std::vector<uint32_t>>& ecls_its_ende,
   const std::vector<uint32_t>& ende_child,
