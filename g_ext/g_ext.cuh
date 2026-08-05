@@ -44,6 +44,54 @@ enum class DagKernel : uint32_t {
   Block  = 2,
 };
 
+// Selects the ILP solver backend.
+//
+// CpSat:
+//   Use the existing OR-Tools CP-SAT implementation.
+//
+// CuOpt:
+//   Use the NVIDIA cuOpt implementation when XEG is built
+//   with cuOpt support.
+enum class IlpBackend : uint32_t {
+  CpSat = 0u,
+  CuOpt = 1u,
+};
+
+
+inline IlpBackend parse_ilp_backend(
+  const uint32_t value)
+{
+  switch (value) {
+    case 0u:
+      return IlpBackend::CpSat;
+
+    case 1u:
+      return IlpBackend::CuOpt;
+
+    default:
+      throw std::invalid_argument(
+        "Invalid ILP_BACKEND value: " +
+        std::to_string(value));
+  }
+}
+
+
+inline const char* ilp_backend_name(
+  const IlpBackend backend)
+{
+  switch (backend) {
+    case IlpBackend::CpSat:
+      return "CP-SAT";
+
+    case IlpBackend::CuOpt:
+      return "cuOpt";
+
+    default:
+      throw std::invalid_argument(
+        "Invalid ILP backend");
+  }
+}
+
 namespace g_ext_detail {
 
 enum class GpuDagPersistentExitReason : uint32_t
@@ -278,7 +326,12 @@ public:
 
   CsrGraphSnapshot
   unittest_get_csr_snapshot() const;
-  
+
+  // Invoke the production ILP backend dispatcher with an empty
+  // model. This wrapper exists only to verify backend routing.
+  void unittest_solve_ilp_backend(
+    IlpBackend backend);
+
   // Run exactly one batch insertion phase.
   // This wrapper is used only by unit tests.
   GpuInsertionResult unittest_gpu_insert_batch_once(
@@ -407,7 +460,8 @@ public:
     const double ILP_time_limit = 360,
     DagKernel dag_kernel = DagKernel::Thread,
     uint32_t num_thread_dag_constrution = 1u,
-    uint32_t dag_bitmap_bits = 0u)
+    uint32_t dag_bitmap_bits = 0u,
+    IlpBackend ilp_backend = IlpBackend::CpSat)
   {
     _run_impl(
       ILP_solver,
@@ -416,7 +470,8 @@ public:
       num_thread_dag_constrution,
       dag_bitmap_bits,
       CpsatInitialSolutionMode::GpuTree,
-      0u);
+      0u,
+      ilp_backend);
   }
 
   void run_xeg_t_exp(
@@ -424,7 +479,8 @@ public:
     DagKernel dag_kernel = DagKernel::Thread,
     uint32_t num_thread_dag_constrution = 1u,
     uint32_t dag_bitmap_bits = 0u,
-    uint32_t random_seed = 42u)
+    uint32_t random_seed = 42u,
+    IlpBackend ilp_backend = IlpBackend::CpSat)
   {
     _run_impl(
       true,
@@ -433,7 +489,8 @@ public:
       num_thread_dag_constrution,
       dag_bitmap_bits,
       CpsatInitialSolutionMode::Random,
-      random_seed);
+      random_seed,
+      ilp_backend);
   }
 
 private:
@@ -495,7 +552,8 @@ private:
     uint32_t num_thread_dag_constrution,
     uint32_t dag_bitmap_bits,
     CpsatInitialSolutionMode initial_solution_mode,
-    uint32_t random_seed);
+    uint32_t random_seed,
+    IlpBackend ilp_backend);
 
   void _build_random_cpsat_initial_solution(
     uint32_t random_seed,
@@ -919,6 +977,17 @@ private:
   void _gpu_filter_root_to_leaf();
 
   /* ILP solver */ 
+  void _solve_ilp(
+    IlpBackend backend,
+    double time_limit,
+    const std::vector<std::vector<uint32_t>>& ecls_its_ende,
+    const std::vector<uint32_t>& ende_child,
+    const std::vector<uint32_t>& ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id,
+    const std::vector<float>& ende_cost,
+    const std::vector<uint32_t>& best_ende_of_ecls,
+    const std::vector<bool>& picked_endes);
+
   void _cpsat_solver(
     const double time_limit,
     const std::vector<std::vector<uint32_t>>& ecls_its_ende, 

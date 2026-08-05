@@ -62,6 +62,8 @@ endif()
 # build options
 option(g_ext_BUILD_TESTS "Enables builds of tests" ON)
 option(g_ext_BUILD_CUDA "Enables builds of cuda code" ON)
+option(XEG_ENABLE_CUOPT "Build the NVIDIA cuOpt backend" OFF)
+set(CUOPT_ROOT "" CACHE PATH "Root of the libcuopt package")
 
 # project-specific variables
 set(g_ext_CMAKE_DIR ${PROJECT_SOURCE_DIR}/cmake)
@@ -73,6 +75,7 @@ message(STATUS "CMAKE_CUDA_COMPILER_ID: " ${CMAKE_CUDA_COMPILER_ID})
 message(STATUS "CMAKE_CUDA_COMPILER_VERSION: " ${CMAKE_CUDA_COMPILER_VERSION})
 message(STATUS "CMAKE_CUDA_FLAGS: " ${CMAKE_CUDA_FLAGS})
 message(STATUS "g_ext_BUILD_CUDA: " ${g_ext_BUILD_CUDA})
+message(STATUS "XEG_ENABLE_CUOPT: " ${XEG_ENABLE_CUOPT})
 
 # Turn on the verbose
 set(CMAKE_VERBOSE_MAKEFILE ON)
@@ -86,6 +89,17 @@ include(CheckLanguage)
 # Enable test
 include(CTest)
 set(CMAKE_CTEST_ARGUMENTS "--output-on-failure")
+
+if(XEG_ENABLE_CUOPT)
+  if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+  endif()
+
+  list(APPEND CMAKE_MODULE_PATH "${g_ext_CMAKE_DIR}")
+  find_package(cuOpt REQUIRED)
+  message(STATUS "CUOPT_INCLUDE_DIR: ${CUOPT_INCLUDE_DIR}")
+  message(STATUS "CUOPT_LIBRARY: ${CUOPT_LIBRARY}")
+endif()
 
 # -----------------------------------------------------------------------------
 # start build

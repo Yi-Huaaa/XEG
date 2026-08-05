@@ -8,6 +8,7 @@ find_package(Threads REQUIRED)
 
 list(APPEND g_ext_UNITTESTS
   test_basics
+  test_ilp_backend
   test_csr_invariants
   test_gpu_dag_construction
   test_gpu_finalize
@@ -25,7 +26,7 @@ list(APPEND g_ext_UNITTESTS
 foreach(unittest IN LISTS g_ext_UNITTESTS)
   set(
     CMAKE_RUNTIME_OUTPUT_DIRECTORY
-    ${PROJECT_SOURCE_DIR}/build/unittests
+    ${CMAKE_BINARY_DIR}/unittests
   )
 
   add_executable(
@@ -96,7 +97,7 @@ set_target_properties(
   ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
   PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY
-      "${PROJECT_SOURCE_DIR}/build/unittests"
+      "${CMAKE_BINARY_DIR}/unittests"
     CUDA_SEPARABLE_COMPILATION
       ON
 )
@@ -126,3 +127,43 @@ add_test(
   COMMAND
     $<TARGET_FILE:${GPU_DAG_HYBRID_FIXED_MASK_TEST}>
 )
+
+# -----------------------------------------------------------------------------
+# Optional cuOpt C API smoke test
+# -----------------------------------------------------------------------------
+if(XEG_ENABLE_CUOPT)
+  add_executable(
+    test_cuopt_link
+    test_cuopt_link.cpp
+  )
+
+  set_target_properties(
+    test_cuopt_link
+    PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unittests"
+      BUILD_RPATH "${CUOPT_RUNTIME_LIBRARY_DIRS}"
+  )
+
+  target_compile_options(
+    test_cuopt_link
+    PRIVATE
+      -Wall
+      -Wextra
+      -Wfatal-errors
+      -Wshadow
+  )
+
+  target_include_directories(
+    test_cuopt_link
+    PRIVATE
+      ${g_ext_3RD_PARTY_DIR}/doctest
+  )
+
+  target_link_libraries(
+    test_cuopt_link
+    PRIVATE
+      cuOpt::cuOpt
+  )
+
+  doctest_discover_tests(test_cuopt_link)
+endif()

@@ -3,7 +3,7 @@
 
 set(
   CMAKE_RUNTIME_OUTPUT_DIRECTORY
-  ${PROJECT_SOURCE_DIR}/build/main
+  ${CMAKE_BINARY_DIR}/main
 )
 
 # -----------------------------------------------------------------------------
@@ -60,18 +60,10 @@ foreach(example IN LISTS g_ext_examples)
     g_ext
   )
 
-  # Link cuBLAS library.
   target_link_libraries(
     ${example}
     PRIVATE
-    ${CUBLAS_LIBRARIES}
-  )
-
-  # Include cuBLAS/CUDA include directories.
-  target_include_directories(
-    ${example}
-    PRIVATE
-    ${CUBLAS_INCLUDE_DIRS}
+    g_ext
   )
 
 endforeach()

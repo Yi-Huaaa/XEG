@@ -1,4 +1,6 @@
 #include "g_ext.cuh"
+#include "cuopt_solver.hpp"
+
 #include <cuda/atomic>
 
 #include <filesystem>
@@ -424,6 +426,85 @@ void G_EXT::_validate_block_bitmap_bits(
   }
 }
 
+void G_EXT::_solve_ilp(
+  const IlpBackend backend,
+  const double time_limit,
+  const std::vector<std::vector<uint32_t>>& ecls_its_ende,
+  const std::vector<uint32_t>& ende_child,
+  const std::vector<uint32_t>& ende_child_ptr,
+  const std::vector<uint32_t>& root_eclass_id,
+  const std::vector<float>& ende_cost,
+  const std::vector<uint32_t>& best_ende_of_ecls,
+  const std::vector<bool>& picked_endes)
+{
+  switch (backend) {
+    case IlpBackend::CpSat:
+      _cpsat_solver(
+        time_limit,
+        ecls_its_ende,
+        ende_child,
+        ende_child_ptr,
+        root_eclass_id,
+        ende_cost,
+        best_ende_of_ecls,
+        picked_endes);
+      return;
+
+    case IlpBackend::CuOpt:
+      solve_with_cuopt(
+        time_limit,
+        ecls_its_ende,
+        ende_child,
+        ende_child_ptr,
+        root_eclass_id,
+        ende_cost,
+        best_ende_of_ecls,
+        picked_endes);
+      return;
+
+    default:
+      throw std::invalid_argument(
+        "Invalid ILP backend");
+  }
+}
+
+
+void G_EXT::unittest_solve_ilp_backend(
+  const IlpBackend backend)
+{
+  const std::vector<std::vector<uint32_t>>
+    ecls_its_ende;
+
+  const std::vector<uint32_t>
+    ende_child;
+
+  const std::vector<uint32_t>
+    ende_child_ptr;
+
+  const std::vector<uint32_t>
+    root_eclass_id;
+
+  const std::vector<float>
+    ende_cost;
+
+  const std::vector<uint32_t>
+    best_ende_of_ecls;
+
+  const std::vector<bool>
+    picked_endes;
+
+  _solve_ilp(
+    backend,
+    0.0,
+    ecls_its_ende,
+    ende_child,
+    ende_child_ptr,
+    root_eclass_id,
+    ende_cost,
+    best_ende_of_ecls,
+    picked_endes);
+}
+
 void G_EXT::_run_impl(
   const bool ILP_solver,
   const double ILP_time_limit,
@@ -431,7 +512,8 @@ void G_EXT::_run_impl(
   const uint32_t num_thread_dag_constrution,
   const uint32_t dag_bitmap_bits,
   const CpsatInitialSolutionMode initial_solution_mode,
-  const uint32_t random_seed)
+  const uint32_t random_seed,
+  const IlpBackend ilp_backend)
 {
   switch (dag_kernel) {
     case DagKernel::Thread:
@@ -714,7 +796,8 @@ void G_EXT::_run_impl(
   if (ILP_solver) {
     switch (initial_solution_mode) {
       case CpsatInitialSolutionMode::GpuTree:
-        _cpsat_solver(
+        _solve_ilp(
+          ilp_backend,
           ILP_time_limit,
           _ecls_its_ende_newG_GPU,
           _ende_child,
@@ -738,7 +821,8 @@ void G_EXT::_run_impl(
           random_best_ende_of_ecls,
           random_picked_endes);
 
-        _cpsat_solver(
+        _solve_ilp(
+          ilp_backend,
           ILP_time_limit,
           _ecls_its_ende_newG_GPU,
           _ende_child,
