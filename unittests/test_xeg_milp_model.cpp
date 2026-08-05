@@ -6,7 +6,7 @@
 
 #include <cstdint>
 #include <vector>
-
+#include <limits>
 
 namespace {
 
@@ -161,4 +161,85 @@ DOCTEST_TEST_CASE(
   DOCTEST_CHECK_EQ(
     coefficient_of(root, active_0),
     1.0);
+}
+
+DOCTEST_TEST_CASE(
+  "selected e-node activates its child e-class")
+{
+  // e-class 0:
+  //   e-node 0 -> child e-class 1
+  //
+  // e-class 1:
+  //   e-node 1 is a leaf
+  const std::vector<std::vector<uint32_t>>
+    ecls_its_ende{
+      {0u},
+      {1u},
+    };
+
+  const std::vector<uint32_t>
+    ende_child{
+      1u,
+    };
+
+  const std::vector<uint32_t>
+    ende_child_ptr{
+      0u,
+      1u,
+      1u,
+    };
+
+  const std::vector<uint32_t>
+    root_eclass_id{
+      0u,
+    };
+
+  const std::vector<float>
+    ende_cost{
+      3.0f,
+      2.0f,
+    };
+
+  const XegMilpModel model =
+    build_xeg_milp_model(
+      ecls_its_ende,
+      ende_child,
+      ende_child_ptr,
+      root_eclass_id,
+      ende_cost);
+
+  // Expected constraint order:
+  //   0: selection for e-class 0
+  //   1: selection for e-class 1
+  //   2: selected[0] <= active[1]
+  //   3: active[0] = 1
+  DOCTEST_REQUIRE_EQ(
+    model.constraints.size(),
+    4u);
+
+  const uint32_t selected_0 =
+    model.selected_var_by_enode.at(0u);
+
+  const uint32_t active_1 =
+    model.active_var_by_eclass.at(1u);
+
+  const XegMilpConstraint& dependency =
+    model.constraints.at(2u);
+
+  DOCTEST_CHECK_EQ(
+    dependency.lower_bound,
+    -std::numeric_limits<double>::infinity());
+
+  DOCTEST_CHECK_EQ(
+    dependency.upper_bound,
+    0.0);
+
+  // selected[0] - active[1] <= 0
+  DOCTEST_CHECK_EQ(
+    coefficient_of(dependency, selected_0),
+    1.0);
+
+  DOCTEST_CHECK_EQ(
+    coefficient_of(dependency, active_1),
+    -1.0);
 }

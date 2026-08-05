@@ -129,6 +129,54 @@ XegMilpModel build_xeg_milp_model(
       std::move(constraint));
   }
 
+  // If an e-node is selected, each alive child e-class
+  // referenced by that e-node must be active:
+  //
+  //   selected[e-node] - active[child] <= 0
+  for (uint32_t cid = 0u;
+       cid < model.num_eclasses;
+       ++cid) {
+    for (const uint32_t ende : ecls_its_ende[cid]) {
+      const uint32_t child_begin =
+        ende_child_ptr.at(ende);
+
+      const uint32_t child_end =
+        ende_child_ptr.at(ende + 1u);
+
+      for (uint32_t child_idx = child_begin;
+           child_idx < child_end;
+           ++child_idx) {
+        const uint32_t child_eclass =
+          ende_child.at(child_idx);
+
+        // Dead-child handling is added in the next test.
+        if (ecls_its_ende.at(child_eclass).empty()) {
+          continue;
+        }
+
+        XegMilpConstraint constraint;
+
+        constraint.lower_bound =
+          -std::numeric_limits<double>::infinity();
+
+        constraint.upper_bound = 0.0;
+
+        constraint.terms.push_back({
+          model.selected_var_by_enode.at(ende),
+          1.0,
+        });
+
+        constraint.terms.push_back({
+          model.active_var_by_eclass.at(child_eclass),
+          -1.0,
+        });
+
+        model.constraints.push_back(
+          std::move(constraint));
+      }
+    }
+  }  
+
   // Root e-classes must be active.
   for (const uint32_t root : root_eclass_id) {
     XegMilpConstraint constraint;
