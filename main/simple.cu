@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
   cudaEvent_t startGPU, stopGPU;
   cudaEventCreate(&startGPU);
   cudaEventCreate(&stopGPU);
-  if (argc < 2 || argc > 6) {
+  if (argc < 2 || argc > 7) {
     std::cerr
       << "Usage:\n"
       << "  ./main/simple "
@@ -22,7 +22,8 @@ int main(int argc, char *argv[]) {
       << "[DAG_KERNEL] "
       << "[NUM_THREAD_DAG_CONSTR] "
       << "[BITMAP_BITS] "
-      << "[ILP_BACKEND]\n\n"
+      << "[ILP_BACKEND] "
+      << "[CUOPT_MODE]\n\n"
       << "DAG_KERNEL:\n"
       << "  0: Thread\n"
       << "  1: Warp\n"
@@ -37,6 +38,9 @@ int main(int argc, char *argv[]) {
       << "ILP_BACKEND:\n"
       << "  0: CP-SAT (default)\n"
       << "  1: cuOpt\n\n"
+      << "CUOPT_MODE:\n"
+      << "  0: Presolve (default)\n"
+      << "  1: GPU-tree warm start\n\n"
       << "Examples:\n"
       << "  ./main/simple input.json 0 1 0\n"
       << "  ./main/simple input.json 1 128 0\n"
@@ -45,7 +49,9 @@ int main(int argc, char *argv[]) {
       << "  ./main/simple input.json 2 128 0\n"
       << "  ./main/simple input.json 2 128 64\n"
       << "  ./main/simple input.json 0 1 0 0\n"
-      << "  ./main/simple input.json 0 1 0 1\n";
+      << "  ./main/simple input.json 0 1 0 1\n"
+      << "  ./main/simple input.json 0 1 0 1 0\n"
+      << "  ./main/simple input.json 0 1 0 1 1\n";
 
     return 1;
   }
@@ -89,6 +95,26 @@ int main(int argc, char *argv[]) {
       << "Valid values are:\n"
       << "  0: CP-SAT\n"
       << "  1: cuOpt\n";
+
+    return 1;
+  }
+
+  uint32_t cuopt_mode_value = (argc > 6)
+      ? static_cast<uint32_t>(std::stoul(argv[6]))
+      : 0u;
+
+  CuoptMode cuopt_mode;
+
+  try {
+    cuopt_mode =
+      parse_cuopt_mode(cuopt_mode_value);
+  }
+  catch (const std::invalid_argument& error) {
+    std::cerr
+      << error.what() << "\n"
+      << "Valid values are:\n"
+      << "  0: Presolve\n"
+      << "  1: GPU-tree warm start\n";
 
     return 1;
   }
@@ -199,6 +225,12 @@ int main(int argc, char *argv[]) {
     << " ("
     << ilp_backend_name(ilp_backend)
     << ")\n";
+  std::cout
+    << "CUOPT_MODE: "
+    << cuopt_mode_value
+    << " ("
+    << cuopt_mode_name(cuopt_mode)
+    << ")\n";
   std::cout << "-------------------------------------\n";
 
 
@@ -216,7 +248,8 @@ int main(int argc, char *argv[]) {
     dag_kernel,
     num_thread_dag_constr,
     bitmap_bits,
-    ilp_backend);
+    ilp_backend,
+    cuopt_mode);
 
   return 0;
 }

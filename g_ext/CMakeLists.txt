@@ -9,6 +9,8 @@ add_library(g_ext
   g_ext.cuh
   cuopt_solver.cpp
   cuopt_solver.hpp
+  xeg_milp_model.cpp
+  xeg_milp_model.hpp
 )
 
 # -----------------------------------------------------------------------------
