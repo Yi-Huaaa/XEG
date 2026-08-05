@@ -306,6 +306,13 @@ XegMilpValidationResult validate_xeg_milp_solution(
       return result;
     }
 
+    if (model_variable.is_integer &&
+        std::abs(value - std::round(value)) > tolerance) {
+      result.message =
+        "primal solution contains a fractional integer value";
+      return result;
+    }
+
     result.recomputed_objective +=
       model_variable.objective_coefficient *
       value;
