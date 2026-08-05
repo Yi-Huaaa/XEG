@@ -2,6 +2,7 @@
 #define XEG_MILP_MODEL_HPP
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 
@@ -51,12 +52,26 @@ struct XegMilpModel {
 };
 
 
+struct XegMilpValidationResult {
+  bool valid = false;
+  double recomputed_objective = 0.0;
+  std::string message;
+};
+
+
 XegMilpModel build_xeg_milp_model(
   const std::vector<std::vector<uint32_t>>& ecls_its_ende,
   const std::vector<uint32_t>& ende_child,
   const std::vector<uint32_t>& ende_child_ptr,
   const std::vector<uint32_t>& root_eclass_id,
   const std::vector<float>& ende_cost);
+
+
+XegMilpValidationResult validate_xeg_milp_solution(
+  const XegMilpModel& model,
+  const std::vector<double>& primal_solution,
+  double reported_objective,
+  double tolerance = 1.0e-6);
 
 
 #endif

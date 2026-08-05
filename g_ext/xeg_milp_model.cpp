@@ -1,7 +1,9 @@
 #include "xeg_milp_model.hpp"
 
+#include <cmath>
 #include <limits>
 #include <utility>
+
 
 XegMilpModel build_xeg_milp_model(
   const std::vector<std::vector<uint32_t>>& ecls_its_ende,
@@ -267,4 +269,54 @@ XegMilpModel build_xeg_milp_model(
   }
 
   return model;
+}
+
+XegMilpValidationResult validate_xeg_milp_solution(
+  const XegMilpModel& model,
+  const std::vector<double>& primal_solution,
+  const double reported_objective,
+  const double tolerance)
+{
+  XegMilpValidationResult result;
+
+  if (primal_solution.size() != model.variables.size()) {
+    result.message =
+      "primal solution size does not match model";
+    return result;
+  }
+
+  for (uint32_t variable = 0u;
+       variable < model.variables.size();
+       ++variable) {
+    const double value = primal_solution.at(variable);
+
+    if (!std::isfinite(value)) {
+      result.message =
+        "primal solution contains a non-finite value";
+      return result;
+    }
+
+    result.recomputed_objective +=
+      model.variables.at(variable).objective_coefficient *
+      value;
+  }
+
+  if (!std::isfinite(reported_objective)) {
+    result.message =
+      "reported objective is not finite";
+    return result;
+  }
+
+  if (std::abs(
+        result.recomputed_objective -
+        reported_objective) > tolerance) {
+    result.message =
+      "reported objective does not match recomputed objective";
+    return result;
+  }
+
+  result.valid = true;
+  result.message = "valid";
+
+  return result;
 }
