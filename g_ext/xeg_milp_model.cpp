@@ -296,8 +296,18 @@ XegMilpValidationResult validate_xeg_milp_solution(
       return result;
     }
 
+    const XegMilpVariable& model_variable =
+      model.variables.at(variable);
+
+    if (value < model_variable.lower_bound - tolerance ||
+        value > model_variable.upper_bound + tolerance) {
+      result.message =
+        "primal solution contains a value outside its bounds";
+      return result;
+    }
+
     result.recomputed_objective +=
-      model.variables.at(variable).objective_coefficient *
+      model_variable.objective_coefficient *
       value;
   }
 
