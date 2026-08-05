@@ -326,7 +326,12 @@ public:
 
   CsrGraphSnapshot
   unittest_get_csr_snapshot() const;
-  
+
+  // Invoke the production ILP backend dispatcher with an empty
+  // model. This wrapper exists only to verify backend routing.
+  void unittest_solve_ilp_backend(
+    IlpBackend backend);
+
   // Run exactly one batch insertion phase.
   // This wrapper is used only by unit tests.
   GpuInsertionResult unittest_gpu_insert_batch_once(
@@ -972,6 +977,17 @@ private:
   void _gpu_filter_root_to_leaf();
 
   /* ILP solver */ 
+  void _solve_ilp(
+    IlpBackend backend,
+    double time_limit,
+    const std::vector<std::vector<uint32_t>>& ecls_its_ende,
+    const std::vector<uint32_t>& ende_child,
+    const std::vector<uint32_t>& ende_child_ptr,
+    const std::vector<uint32_t>& root_eclass_id,
+    const std::vector<float>& ende_cost,
+    const std::vector<uint32_t>& best_ende_of_ecls,
+    const std::vector<bool>& picked_endes);
+
   void _cpsat_solver(
     const double time_limit,
     const std::vector<std::vector<uint32_t>>& ecls_its_ende, 

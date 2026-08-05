@@ -167,3 +167,22 @@ DOCTEST_TEST_CASE(
     std::runtime_error);
 #endif
 }
+DOCTEST_TEST_CASE(
+  "G_EXT dispatcher routes cuOpt backend to cuOpt solver boundary")
+{
+  G_EXT extension;
+
+#ifdef XEG_ENABLE_CUOPT
+  DOCTEST_CHECK_THROWS_WITH_AS(
+    extension.unittest_solve_ilp_backend(
+      IlpBackend::CuOpt),
+    "cuOpt XEG formulation is not implemented in this patch",
+    std::runtime_error);
+#else
+  DOCTEST_CHECK_THROWS_WITH_AS(
+    extension.unittest_solve_ilp_backend(
+      IlpBackend::CuOpt),
+    "XEG was built without cuOpt support",
+    std::runtime_error);
+#endif
+}
