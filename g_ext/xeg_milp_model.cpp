@@ -10,11 +10,6 @@ XegMilpModel build_xeg_milp_model(
   const std::vector<uint32_t>& root_eclass_id,
   const std::vector<float>& ende_cost)
 {
-  // These inputs are used by later formulation steps.
-  // The first test contains no dependency edges.
-  (void)ende_child;
-  (void)ende_child_ptr;
-
   XegMilpModel model;
 
   model.num_eclasses =
@@ -149,7 +144,7 @@ XegMilpModel build_xeg_milp_model(
         const uint32_t child_eclass =
           ende_child.at(child_idx);
 
-        // Dead-child handling is added in the next test.
+        // A dead child makes this e-node unselectable.
         if (ecls_its_ende.at(child_eclass).empty()) {
           XegMilpConstraint constraint;
 
@@ -205,6 +200,70 @@ XegMilpModel build_xeg_milp_model(
 
     model.constraints.push_back(
       std::move(constraint));
+  }
+
+  // If an e-node is selected, every alive child must be
+  // placed at a strictly larger level than its parent:
+  //
+  //   selected[e] = 1
+  //     => level[child] - level[parent] >= 1
+  //
+  // Big-M form:
+  //
+  //   level[child] - level[parent]
+  //     - M * selected[e] >= 1 - M
+  //
+  // Levels are in [0, num_eclasses], so M = num_eclasses + 1.
+  const double big_m =
+    static_cast<double>(model.num_eclasses) + 1.0;
+
+  for (uint32_t parent_eclass = 0u;
+       parent_eclass < model.num_eclasses;
+       ++parent_eclass) {
+    for (const uint32_t ende :
+         ecls_its_ende[parent_eclass]) {
+      const uint32_t child_begin =
+        ende_child_ptr.at(ende);
+
+      const uint32_t child_end =
+        ende_child_ptr.at(ende + 1u);
+
+      for (uint32_t child_idx = child_begin;
+           child_idx < child_end;
+           ++child_idx) {
+        const uint32_t child_eclass =
+          ende_child.at(child_idx);
+
+        // Dead children already disable this e-node.
+        if (ecls_its_ende.at(child_eclass).empty()) {
+          continue;
+        }
+
+        XegMilpConstraint constraint;
+
+        constraint.lower_bound = 1.0 - big_m;
+        constraint.upper_bound =
+          std::numeric_limits<double>::infinity();
+
+        constraint.terms.push_back({
+          model.level_var_by_eclass.at(child_eclass),
+          1.0,
+        });
+
+        constraint.terms.push_back({
+          model.level_var_by_eclass.at(parent_eclass),
+          -1.0,
+        });
+
+        constraint.terms.push_back({
+          model.selected_var_by_enode.at(ende),
+          -big_m,
+        });
+
+        model.constraints.push_back(
+          std::move(constraint));
+      }
+    }
   }
 
   return model;

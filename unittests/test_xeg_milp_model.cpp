@@ -213,9 +213,11 @@ DOCTEST_TEST_CASE(
   //   1: selection for e-class 1
   //   2: selected[0] <= active[1]
   //   3: active[0] = 1
+  //   4: selected[0] =>
+  //        level[1] - level[0] >= 1
   DOCTEST_REQUIRE_EQ(
     model.constraints.size(),
-    4u);
+    5u);
 
   const uint32_t selected_0 =
     model.selected_var_by_enode.at(0u);
@@ -242,6 +244,38 @@ DOCTEST_TEST_CASE(
   DOCTEST_CHECK_EQ(
     coefficient_of(dependency, active_1),
     -1.0);
+
+  const uint32_t level_0 =
+    model.level_var_by_eclass.at(0u);
+
+  const uint32_t level_1 =
+    model.level_var_by_eclass.at(1u);
+
+  const XegMilpConstraint& acyclic =
+    model.constraints.at(4u);
+
+  // num_eclasses = 2, so M = 3:
+  //
+  // level[1] - level[0] - 3 * selected[0] >= -2
+  DOCTEST_CHECK_EQ(
+    acyclic.lower_bound,
+    -2.0);
+
+  DOCTEST_CHECK_EQ(
+    acyclic.upper_bound,
+    std::numeric_limits<double>::infinity());
+
+  DOCTEST_CHECK_EQ(
+    coefficient_of(acyclic, level_1),
+    1.0);
+
+  DOCTEST_CHECK_EQ(
+    coefficient_of(acyclic, level_0),
+    -1.0);
+
+  DOCTEST_CHECK_EQ(
+    coefficient_of(acyclic, selected_0),
+    -3.0);
 }
 
 DOCTEST_TEST_CASE(
