@@ -175,7 +175,7 @@ XegMilpModel build_xeg_milp_model(
           std::move(constraint));
       }
     }
-  }  
+  }
 
   // Root e-classes must be active.
   for (const uint32_t root : root_eclass_id) {
