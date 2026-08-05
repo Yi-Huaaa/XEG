@@ -7,3 +7,5 @@ tmp.*
 tmp32.log
 tmp112.log
 /build-*/
+# Benchmark outputs
+/results/
