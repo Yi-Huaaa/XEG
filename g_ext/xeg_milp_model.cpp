@@ -151,6 +151,20 @@ XegMilpModel build_xeg_milp_model(
 
         // Dead-child handling is added in the next test.
         if (ecls_its_ende.at(child_eclass).empty()) {
+          XegMilpConstraint constraint;
+
+          // selected[e-node] = 0
+          constraint.lower_bound = 0.0;
+          constraint.upper_bound = 0.0;
+
+          constraint.terms.push_back({
+            model.selected_var_by_enode.at(ende),
+            1.0,
+          });
+
+          model.constraints.push_back(
+            std::move(constraint));
+
           continue;
         }
 

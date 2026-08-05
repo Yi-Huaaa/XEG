@@ -243,3 +243,72 @@ DOCTEST_TEST_CASE(
     coefficient_of(dependency, active_1),
     -1.0);
 }
+
+DOCTEST_TEST_CASE(
+  "e-node with a dead child cannot be selected")
+{
+  // e-class 0:
+  //   e-node 0 -> child e-class 1
+  //
+  // e-class 1 is dead: it contains no candidate e-node.
+  const std::vector<std::vector<uint32_t>>
+    ecls_its_ende{
+      {0u},
+      {},
+    };
+
+  const std::vector<uint32_t>
+    ende_child{
+      1u,
+    };
+
+  const std::vector<uint32_t>
+    ende_child_ptr{
+      0u,
+      1u,
+    };
+
+  const std::vector<uint32_t>
+    root_eclass_id{
+      0u,
+    };
+
+  const std::vector<float>
+    ende_cost{
+      1.0f,
+    };
+
+  const XegMilpModel model =
+    build_xeg_milp_model(
+      ecls_its_ende,
+      ende_child,
+      ende_child_ptr,
+      root_eclass_id,
+      ende_cost);
+
+  // Expected constraint order:
+  //   0: selection for e-class 0
+  //   1: selected[0] = 0 because its child is dead
+  //   2: active[0] = 1
+  DOCTEST_REQUIRE_EQ(
+    model.constraints.size(),
+    3u);
+
+  const uint32_t selected_0 =
+    model.selected_var_by_enode.at(0u);
+
+  const XegMilpConstraint& disabled =
+    model.constraints.at(1u);
+
+  DOCTEST_CHECK_EQ(
+    disabled.lower_bound,
+    0.0);
+
+  DOCTEST_CHECK_EQ(
+    disabled.upper_bound,
+    0.0);
+
+  DOCTEST_CHECK_EQ(
+    coefficient_of(disabled, selected_0),
+    1.0);
+}
