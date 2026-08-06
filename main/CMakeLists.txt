@@ -27,6 +27,15 @@ add_executable(
   ${g_ext_MAIN_DIR}/output_degree_ablation.cpp
 )
 
+# Standalone XEG-D executable.
+#
+# This path uses the complete post-read e-graph, runs CPU tree
+# construction for the warm start, and solves with CP-SAT.
+add_executable(
+  xeg_d
+  ${g_ext_MAIN_DIR}/xeg_d.cpp
+)
+
 
 find_package(Threads REQUIRED)
 
@@ -36,6 +45,7 @@ list(
   g_ext_examples
   simple
   output_degree_ablation
+  xeg_d
 )
 
 
@@ -97,6 +107,17 @@ target_compile_options(
 # option and may be rejected by GCC or Clang.
 target_compile_options(
   output_degree_ablation
+  PRIVATE
+  -Wall
+  -Wextra
+  -Wfatal-errors
+  -Wshadow
+  -O3
+)
+
+# xeg_d.cpp is also compiled by the normal C++ compiler.
+target_compile_options(
+  xeg_d
   PRIVATE
   -Wall
   -Wextra

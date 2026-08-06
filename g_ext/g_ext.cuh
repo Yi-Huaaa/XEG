@@ -478,6 +478,13 @@ public:
       cuopt_mode);
   }
 
+  // Run XEG-D on the complete post-read e-graph.
+  //
+  // CPU tree construction provides the CP-SAT warm start.
+  // This path does not perform CPU or GPU DAG construction.
+  void run_xeg_d(
+    const double ILP_time_limit = 86400.0);
+
   void run_xeg_t_exp(
     const double ILP_time_limit = 360,
     DagKernel dag_kernel = DagKernel::Thread,

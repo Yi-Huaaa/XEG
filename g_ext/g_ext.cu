@@ -527,6 +527,63 @@ void G_EXT::unittest_solve_ilp_backend(
     cuopt_mode);
 }
 
+void G_EXT::run_xeg_d(
+  const double ILP_time_limit)
+{
+  std::vector<double> cost_of_ecls;
+  std::vector<double> cost_of_ende;
+  std::vector<uint32_t> best_ende_of_ecls;
+  std::vector<bool> picked_endes;
+
+  const auto start =
+    std::chrono::steady_clock::now();
+
+  const auto [best_tree_cost_cpu, dag_cost_cpu] =
+    _cpu_tree_construction(
+      _ende_cost,
+      cost_of_ecls,
+      cost_of_ende,
+      best_ende_of_ecls,
+      picked_endes);
+
+  const auto end =
+    std::chrono::steady_clock::now();
+
+  const std::chrono::duration<double> duration =
+    end - start;
+
+  std::cout
+    << "CPU tree construction runtime: "
+    << round_to(
+         duration.count() * 1000,
+         0.01)
+    << " (ms)\n";
+
+  printf(
+    "CPU version cost:\n"
+    "\tunder tree cost model = %.2lf,\n"
+    "\tunder DAG cost model = %.2lf\n",
+    best_tree_cost_cpu,
+    dag_cost_cpu);
+
+  printf(
+    "[XEG-D] CP-SAT input: complete post-read e-graph\n");
+
+  printf(
+    "[XEG-D] CP-SAT time limit: %.2lf seconds\n",
+    ILP_time_limit);
+
+  _cpsat_solver(
+    ILP_time_limit,
+    _ecls_its_ende,
+    _ende_child,
+    _ende_child_ptr,
+    _root_eclass_id,
+    _ende_cost,
+    best_ende_of_ecls,
+    picked_endes);
+}
+
 void G_EXT::_run_impl(
   const bool ILP_solver,
   const double ILP_time_limit,
@@ -12137,30 +12194,93 @@ uint32_t single_choice_eclasses = 0;
   // start solving ILP
   const CpSolverResponse response = SolveCpModel(cp_model.Build(), &model);
 
-  // print results
-  if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) {
-    std::cout << "=========================================\n";
-    std::cout << "Solver finished.\n";
-    std::cout << "Objective value = " << response.objective_value() << "\n";
-    std::cout << "Runtime = " << response.wall_time() << " (s)\n";
-    std::cout << "Feasible solutions found = " << num_solutions << "\n";
+  // // print results
+  // if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) {
+  //   std::cout << "=========================================\n";
+  //   std::cout << "Solver finished.\n";
+  //   std::cout << "Objective value = " << response.objective_value() << "\n";
+  //   std::cout << "Runtime = " << response.wall_time() << " (s)\n";
+  //   std::cout << "Feasible solutions found = " << num_solutions << "\n";
 
-    // // Optional: print all active e-nodes
-    // std::cout << "==== Active enodes (solution) ====\n";
-    // for (const auto& [cid, node_map] : nodes_vars) {
-    //   for (const auto& [node_id, var] : node_map) {
-    //     bool value = SolutionBooleanValue(response, var);
-    //     if (value) {
-    //       std::cout << "EClass " << cid
-    //                 << " -> enode " << node_id
-    //                 << " (cost " << ende_cost[node_id] << ")\n";
-    //     }
-    //   }
-    // }
-    std::cout << "=========================================\n";
+  //   // // Optional: print all active e-nodes
+  //   // std::cout << "==== Active enodes (solution) ====\n";
+  //   // for (const auto& [cid, node_map] : nodes_vars) {
+  //   //   for (const auto& [node_id, var] : node_map) {
+  //   //     bool value = SolutionBooleanValue(response, var);
+  //   //     if (value) {
+  //   //       std::cout << "EClass " << cid
+  //   //                 << " -> enode " << node_id
+  //   //                 << " (cost " << ende_cost[node_id] << ")\n";
+  //   //     }
+  //   //   }
+  //   // }
+  //   std::cout << "=========================================\n";
+  // } else {
+  //   std::cout << "No feasible solution found.\n";
+  // }
+  // Print final CP-SAT result.
+  const char* solver_status = "UNKNOWN";
+
+  switch (response.status()) {
+    case CpSolverStatus::OPTIMAL:
+      solver_status = "OPTIMAL";
+      break;
+
+    case CpSolverStatus::FEASIBLE:
+      solver_status = "FEASIBLE";
+      break;
+
+    case CpSolverStatus::INFEASIBLE:
+      solver_status = "INFEASIBLE";
+      break;
+
+    case CpSolverStatus::MODEL_INVALID:
+      solver_status = "MODEL_INVALID";
+      break;
+
+    case CpSolverStatus::UNKNOWN:
+      solver_status = "UNKNOWN";
+      break;
+  }
+
+  std::cout << "=========================================\n";
+  std::cout << "Solver finished.\n";
+  std::cout << "Solver status = " << solver_status << "\n";
+  std::cout << "Runtime = " << response.wall_time() << " (s)\n";
+  std::cout << "Feasible solutions found = "
+            << num_solutions
+            << "\n";
+
+  if (
+    response.status() == CpSolverStatus::OPTIMAL ||
+    response.status() == CpSolverStatus::FEASIBLE)
+  {
+    const double objective =
+      response.objective_value();
+
+    const double best_bound =
+      response.best_objective_bound();
+
+    const double relative_gap =
+      std::abs(objective - best_bound) /
+      std::max(1.0, std::abs(objective));
+
+    std::cout << "Objective value = "
+              << objective
+              << "\n";
+
+    std::cout << "Best objective bound = "
+              << best_bound
+              << "\n";
+
+    std::cout << "Relative gap = "
+              << relative_gap
+              << "\n";
   } else {
     std::cout << "No feasible solution found.\n";
   }
+
+  std::cout << "=========================================\n";
 }
 
 // =========================== Print functions =========================== // 
