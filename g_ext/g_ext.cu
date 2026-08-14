@@ -1439,6 +1439,226 @@ void G_EXT::_prune_dead_nodes(
     }
   }
 
+// // 0813 check
+
+//   // ============================================================
+//   // BIBI DEBUG: check whether the pruned e-graph contains
+//   // a zero-local-cost cycle.
+//   //
+//   // Graph node:
+//   //   e-class
+//   //
+//   // Directed edge A -> B:
+//   //   there exists a zero-cost e-node in e-class A whose
+//   //   child contains e-class B.
+//   // ============================================================
+
+//   uint32_t bibi_check_zero_cost_enode = 0u;
+//   uint32_t bibi_check_neg_cost_enode = 0u;
+
+//   // (child e-class, e-node producing this dependency)
+//   std::vector<
+//     std::vector<std::pair<uint32_t, uint32_t>>>
+//     zero_cost_adj(_num_ecls);
+
+//   for (uint32_t ende = 0u;
+//        ende < _num_ende;
+//        ++ende) {
+
+//     if (_ende_cost[ende] < 0.0f) {
+//       ++bibi_check_neg_cost_enode;
+//     }
+
+//     if (_ende_cost[ende] != 0.0f) {
+//       continue;
+//     }
+
+//     ++bibi_check_zero_cost_enode;
+
+//     const uint32_t src_ecls =
+//       _ende_ecls[ende];
+
+//     const uint32_t start =
+//       _ende_child_ptr[ende];
+
+//     const uint32_t end =
+//       _ende_child_ptr[ende + 1u];
+
+//     for (uint32_t pos = start;
+//          pos < end;
+//          ++pos) {
+
+//       const uint32_t dst_ecls =
+//         _ende_child[pos];
+
+//       zero_cost_adj[src_ecls].push_back(
+//         {dst_ecls, ende});
+//     }
+//   }
+
+//   // DFS color:
+//   //   0 = unvisited
+//   //   1 = currently visiting
+//   //   2 = finished
+//   std::vector<uint8_t>
+//     color(_num_ecls, 0u);
+
+//   std::vector<uint32_t>
+//     parent_ecls(
+//       _num_ecls,
+//       UINT32_MAX);
+
+//   // e-node used for parent_ecls[v] -> v
+//   std::vector<uint32_t>
+//     parent_ende(
+//       _num_ecls,
+//       UINT32_MAX);
+
+//   bool has_zero_cost_cycle = false;
+
+//   uint32_t cycle_start =
+//     UINT32_MAX;
+
+//   uint32_t cycle_end =
+//     UINT32_MAX;
+
+//   uint32_t cycle_back_ende =
+//     UINT32_MAX;
+
+//   auto dfs =
+//     [&](auto&& self,
+//         const uint32_t u) -> bool {
+
+//       color[u] = 1u;
+
+//       for (const auto& edge :
+//            zero_cost_adj[u]) {
+
+//         const uint32_t v =
+//           edge.first;
+
+//         const uint32_t ende =
+//           edge.second;
+
+//         if (color[v] == 0u) {
+//           parent_ecls[v] = u;
+//           parent_ende[v] = ende;
+
+//           if (self(self, v)) {
+//             return true;
+//           }
+//         }
+//         else if (color[v] == 1u) {
+//           // Found:
+//           //
+//           //   v -> ... -> u -> v
+//           cycle_start = v;
+//           cycle_end = u;
+//           cycle_back_ende = ende;
+
+//           return true;
+//         }
+//       }
+
+//       color[u] = 2u;
+
+//       return false;
+//     };
+
+//   for (uint32_t ecls = 0u;
+//        ecls < _num_ecls;
+//        ++ecls) {
+
+//     if (color[ecls] != 0u) {
+//       continue;
+//     }
+
+//     if (dfs(dfs, ecls)) {
+//       has_zero_cost_cycle = true;
+//       break;
+//     }
+//   }
+
+//   printf(
+//     "bibi_check_zero_cost_enode = %u, "
+//     "bibi_check_neg_cost_enode = %u\n",
+//     bibi_check_zero_cost_enode,
+//     bibi_check_neg_cost_enode);
+
+//   printf(
+//     "bibi_check_zero_cost_cycle = %s\n",
+//     has_zero_cost_cycle
+//       ? "YES"
+//       : "NO");
+
+//   // Print one concrete cycle for debugging.
+//   if (has_zero_cost_cycle) {
+
+//     std::vector<uint32_t>
+//       cycle_eclasses;
+
+//     uint32_t cur =
+//       cycle_end;
+
+//     cycle_eclasses.push_back(cur);
+
+//     while (cur != cycle_start) {
+//       cur = parent_ecls[cur];
+
+//       MY_CHECK(
+//         cur != UINT32_MAX,
+//         "broken zero-cost cycle parent chain");
+
+//       cycle_eclasses.push_back(cur);
+//     }
+
+//     std::reverse(
+//       cycle_eclasses.begin(),
+//       cycle_eclasses.end());
+
+//     printf(
+//       "ZERO-COST CYCLE FOUND:\n");
+
+//     // Tree edges on:
+//     //
+//     // cycle_start -> ... -> cycle_end
+//     for (size_t i = 0;
+//          i + 1u < cycle_eclasses.size();
+//          ++i) {
+
+//       const uint32_t src =
+//         cycle_eclasses[i];
+
+//       const uint32_t dst =
+//         cycle_eclasses[i + 1u];
+
+//       const uint32_t ende =
+//         parent_ende[dst];
+
+//       printf(
+//         "  eclass %u -- enode %u (%s, cost=%.6f) --> eclass %u\n",
+//         src,
+//         ende,
+//         _ende_name[ende].c_str(),
+//         _ende_cost[ende],
+//         dst);
+//     }
+
+//     // Closing edge:
+//     //
+//     // cycle_end -> cycle_start
+//     printf(
+//       "  eclass %u -- enode %u (%s, cost=%.6f) --> eclass %u\n",
+//       cycle_end,
+//       cycle_back_ende,
+//       _ende_name[cycle_back_ende].c_str(),
+//       _ende_cost[cycle_back_ende],
+//       cycle_start);
+//   }
+
+//   exit(1);
+
+// // 0813 check 
 
 }
 
