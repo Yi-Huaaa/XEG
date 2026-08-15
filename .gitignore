@@ -13,3 +13,4 @@ extract_xeg_d_results.sh
 build_tmp/
 run_deg.sh
 0813.*
+cpsat_memory_614080.log

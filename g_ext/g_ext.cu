@@ -1,10 +1,26 @@
+// #include "g_ext.cuh"
+// #include "cuopt_solver.hpp"
+
+// #include <cuda/atomic>
+
+// #include <filesystem>
+// #include <iomanip>
+
 #include "g_ext.cuh"
 #include "cuopt_solver.hpp"
 
 #include <cuda/atomic>
 
+#include <atomic>
+#include <condition_variable>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
+#include <mutex>
+#include <thread>
+
+#include <sys/resource.h>
+#include <unistd.h>
 
 #define FAST_BITMAP_CHECK true // Use bitmap strategy or not
 
@@ -52,6 +68,59 @@
   } while (0)    
  
 namespace {
+
+  // used to test cpsat peak memory start
+uint64_t get_peak_rss_kb()
+{
+  struct rusage usage {};
+
+  if (getrusage(
+        RUSAGE_SELF,
+        &usage) != 0) {
+    return 0u;
+  }
+
+  return static_cast<uint64_t>(
+    usage.ru_maxrss);
+}
+constexpr std::chrono::seconds
+  kCpsatMemorySampleInterval{10};
+
+
+void write_cpsat_memory_sample(
+  std::ofstream& memory_log,
+  const std::chrono::steady_clock::time_point& start_time)
+{
+  const auto now =
+    std::chrono::steady_clock::now();
+
+  const double elapsed_seconds =
+    std::chrono::duration<double>(
+      now - start_time).count();
+
+  const uint64_t peak_rss_kb =
+    get_peak_rss_kb();
+
+  const double peak_rss_gib =
+    static_cast<double>(
+      peak_rss_kb) /
+    (1024.0 * 1024.0);
+
+  memory_log
+    << std::fixed
+    << std::setprecision(3)
+    << "elapsed_s = "
+    << elapsed_seconds
+    << ", peak_rss_kb = "
+    << peak_rss_kb
+    << ", peak_rss_gib = "
+    << peak_rss_gib
+    << '\n';
+
+  memory_log.flush();
+}
+// used to test cpsat peak memory end
+
 
 constexpr uint32_t kGpuThreads = 512u;
 constexpr uint32_t kGpuReachabilityThreads = 256u;
@@ -12372,11 +12441,52 @@ uint32_t single_choice_eclasses = 0;
   // // 20260616: ★ 新增：顯示 formulation 後的規模
 
   // Part 9. 
+  // Model model;
+  // int num_solutions = 0;
+  // auto start = std::chrono::high_resolution_clock::now();
   Model model;
   int num_solutions = 0;
-  auto start = std::chrono::high_resolution_clock::now();
+  const auto start =
+    std::chrono::steady_clock::now();  
+
+  const pid_t process_id =
+    getpid();
+
+  const std::string memory_log_path =
+    "cpsat_memory_" +
+    std::to_string(process_id) +
+    ".log";
+
+  std::ofstream memory_log(
+    memory_log_path,
+    std::ios::out |
+    std::ios::trunc);
+
+  if (!memory_log.is_open()) {
+    throw std::runtime_error(
+      "Failed to open CP-SAT memory log: " +
+      memory_log_path);
+  }
+
+  std::cout
+    << "[CP-SAT Memory] Log file: "
+    << memory_log_path
+    << std::endl;
+
+  memory_log
+    << "CP-SAT Memory Monitor\n"
+    << "PID = "
+    << process_id
+    << '\n'
+    << "sample_interval_s = "
+    << kCpsatMemorySampleInterval.count()
+    << '\n'
+    << '\n';
+
+  memory_log.flush();    
   model.Add(NewFeasibleSolutionObserver([&](const CpSolverResponse& r) {
-      auto current_time = std::chrono::high_resolution_clock::now();
+      const auto current_time =
+        std::chrono::steady_clock::now();
       double elapsed_seconds =
           std::chrono::duration_cast<std::chrono::duration<double>>(current_time - start).count();
 
@@ -12411,8 +12521,77 @@ uint32_t single_choice_eclasses = 0;
   }
 
 
+  // // start solving ILP
+  // const CpSolverResponse response = SolveCpModel(cp_model.Build(), &model);
+  // ============================================================
+  // CP-SAT memory monitor
+  // ============================================================
+
+  std::atomic<bool> stop_memory_monitor{
+    false
+  };
+
+  std::mutex memory_monitor_mutex;
+
+  std::condition_variable memory_monitor_cv;
+
+  // Record one sample immediately before CP-SAT starts.
+  write_cpsat_memory_sample(
+    memory_log,
+    start);
+
+  std::thread memory_monitor(
+    [&]() {
+      std::unique_lock<std::mutex>
+        lock(memory_monitor_mutex);
+
+      while (true) {
+        const bool should_stop =
+          memory_monitor_cv.wait_for(
+            lock,
+            kCpsatMemorySampleInterval,
+            [&]() {
+              return stop_memory_monitor.load(
+                std::memory_order_relaxed);
+            });
+
+        if (should_stop) {
+          break;
+        }
+
+        // Do not hold the monitor mutex while reading/writing
+        // the memory sample.
+        lock.unlock();
+
+        write_cpsat_memory_sample(
+          memory_log,
+          start);
+
+        lock.lock();
+      }
+    });
+
   // start solving ILP
-  const CpSolverResponse response = SolveCpModel(cp_model.Build(), &model);
+  const CpSolverResponse response =
+    SolveCpModel(
+      cp_model.Build(),
+      &model);
+
+  // Stop the memory monitor immediately after CP-SAT returns.
+  stop_memory_monitor.store(
+    true,
+    std::memory_order_relaxed);
+
+  memory_monitor_cv.notify_one();
+
+  memory_monitor.join();
+
+  // Record one final sample at solver termination.
+  write_cpsat_memory_sample(
+    memory_log,
+    start);
+
+  memory_log.close();  
 
   // // print results
   // if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) {
