@@ -13,10 +13,12 @@
 #
 # Environment (optional):
 #   XEG_BUILD_DIR   build directory (default: <repo>/build)
+#   XEG_RUN_DIR     run directory to use instead of the default one
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-  sed -n '2,15p' "$0"
+  # Print the header comment as usage.
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
   exit 1
 fi
 
@@ -36,7 +38,7 @@ if [ ! -f "${input}" ]; then
 fi
 
 name="$(basename "${input}" .json)"
-run_dir="${build_dir}/runs/$(date +%Y%m%d_%H%M%S)_${name}"
+run_dir="${XEG_RUN_DIR:-${build_dir}/runs/$(date +%Y%m%d_%H%M%S)_${name}}"
 mkdir -p "${run_dir}"
 
 cd "${run_dir}"
