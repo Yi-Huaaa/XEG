@@ -39,9 +39,11 @@ The following components are required for every build:
 | Protobuf | OR-Tools dependency |
 | Google OR-Tools C++ | CP-SAT backend |
 
-The project has been tested with CUDA 12.0.
-The root `CMakeLists.txt` currently targets CUDA compute capability 8.6 with `sm_86`.
-If your GPU uses a different compute capability, update both `CMAKE_CUDA_ARCHITECTURES` and the `-arch=sm_86` flag in the root `CMakeLists.txt`.
+The project has been tested with CUDA 12.0 and CUDA 13.1.
+
+CMake builds for the compute capability of the first local GPU, queried with `nvidia-smi`.
+If no GPU can be queried, it falls back to compute capability 8.6.
+To build for a different GPU, pass `-DCMAKE_CUDA_ARCHITECTURES=<arch>` to CMake (for example `86` or `120`), or set `XEG_CUDA_ARCH` when using `scripts/build.sh`.
 
 ### OR-Tools and CP-SAT
 
@@ -51,6 +53,7 @@ The cuOpt build still includes the CP-SAT backend.
 The current CMake configuration expects OR-Tools C++ 9.7.2996 at `$HOME/or-tools_x86_64_Ubuntu-22.04_cpp_v9.7.2996`.
 
 Download the OR-Tools C++ binary archive and extract it under your home directory so this path exists.
+To use another location, set the `ORTOOLS_HOME` environment variable or pass `-DORTOOLS_HOME=<dir>` to CMake.
 
 Useful links:
 
@@ -101,21 +104,22 @@ libcuopt/
 
 ## Tested Environment
 
-This table shows the environment used to test the current version of the project.
+This table shows the environments used to test the current version of the project.
 Other compatible systems may also work.
+The cuOpt build was tested only on the first machine.
 
-| Component | Tested version |
-|---|---|
-| Operating system | Ubuntu 24.04.4 LTS |
-| Linux kernel | 6.8.0-134-generic |
-| GPU | NVIDIA RTX A4000 |
-| NVIDIA driver | 550.163.01 |
-| CUDA compiler | CUDA 12.0, V12.0.140 |
-| CMake | 3.28.3 |
-| GCC and G++ | 13.3.0 |
-| Python | 3.12.13 |
-| OR-Tools C++ | 9.7.2996 |
-| NVIDIA libcuopt | 26.6.0 |
+| Component | Machine 1 | Machine 2 |
+|---|---|---|
+| Operating system | Ubuntu 24.04.4 LTS | Ubuntu 22.04.5 LTS |
+| Linux kernel | 6.8.0-134-generic | 6.8.0-90-generic |
+| GPU | NVIDIA RTX A4000 | NVIDIA RTX PRO 6000 Blackwell Server Edition |
+| NVIDIA driver | 550.163.01 | 580.126.09 |
+| CUDA compiler | CUDA 12.0, V12.0.140 | CUDA 13.1, V13.1.115 |
+| CMake | 3.28.3 | 3.22.1 |
+| GCC and G++ | 13.3.0 | 12.3.0 |
+| Python | 3.12.13 | Not used |
+| OR-Tools C++ | 9.7.2996 | 9.7.2996 |
+| NVIDIA libcuopt | 26.6.0 | Not tested |
 
 ## Build Options
 
@@ -132,6 +136,25 @@ XEG has two build variants.
 git clone https://github.com/Yi-Huaaa/gpu_extractor.git
 cd gpu_extractor
 ```
+
+### Build With the Script
+
+`scripts/build.sh` configures a Release build without cuOpt in `build/` and builds `main/simple`.
+
+```bash
+scripts/build.sh                  # build main/simple
+scripts/build.sh simple xeg_d     # build the listed targets
+```
+
+Optional environment variables:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `XEG_BUILD_DIR` | `build` | Build directory |
+| `XEG_CUDA_ARCH` | First local GPU | CUDA architecture, for example `86` or `120` |
+| `ORTOOLS_HOME` | `$HOME/or-tools_x86_64_Ubuntu-22.04_cpp_v9.7.2996` | OR-Tools C++ install directory |
+
+The CMake commands below give the same builds without the script.
 
 ### Build Without cuOpt
 
@@ -177,6 +200,45 @@ cmake \
 
 cmake --build build-cuopt -j "$(nproc)"
 ```
+
+## Run With Scripts
+
+The run scripts use `build/main/simple` from `scripts/build.sh`.
+Both pass any arguments after the input options to `main/simple` unchanged (see [Runtime Options](#runtime-options)).
+With no such arguments, they use `2 64 512`: the Block kernel, 64 threads per candidate, and a 512-bit bitmap.
+This differs from the `main/simple` defaults (`0 1 0`).
+
+### Run One Input
+
+```bash
+scripts/run.sh dataset/maxsat/maxcut-140-630-0.7-1.rename.json           # 2 64 512
+scripts/run.sh dataset/maxsat/maxcut-140-630-0.7-1.rename.json 0 1 0     # Thread kernel
+```
+
+Each run writes to its own directory, `build/runs/<timestamp>_<input name>/`.
+`run.log` holds the full console output.
+The CP-SAT memory log is written to the same directory.
+
+### Run Every Input in a Directory
+
+```bash
+scripts/run_all.sh                                # every *.json under dataset/
+scripts/run_all.sh --dataset dataset/maxsat       # one benchmark directory
+scripts/run_all.sh --dataset dataset/esyn 0 1 0   # one directory, Thread kernel
+```
+
+`run_all.sh` finds the input files when it starts, so it runs whatever `*.json` files are present.
+Each input runs through `scripts/run.sh` in `build/runs/<timestamp>_all/<path under the dataset directory>/`.
+A failing input does not stop the batch.
+`summary.tsv` in the batch directory has one row per input with these columns:
+
+- exit code;
+- CP-SAT status;
+- objective;
+- solver runtime;
+- wall time.
+
+Inputs that run until the 360-second CP-SAT time limit make a full run take a long time.
 
 ## Run the Simple Driver
 
@@ -322,13 +384,30 @@ ctest \
 
 ## Benchmarks
 
-The full benchmark set is not included in this repository yet because the data is too large for standard GitHub storage.
+The `dataset/` directory holds the benchmark e-graphs, one subdirectory per benchmark:
+
+- `boolE`
+- `diospyros`
+- `esyn`
+- `flexc`
+- `impress`
+- `maxsat`
+- `morphic`
+- `rover`
+- `tensat`
+
+The six largest BoolE inputs are not included in the repository because of their size:
+
+- `mul112`
+- `mul128`
+- `mul80_map`
+- `mul96_map`
+- `mul112_map`
+- `mul128_map`
 
 Some of the smaller inputs used by this project come from the [Extraction Gym](https://github.com/egraphs-good/extraction-gym).
 
 Users can also run `main/simple` with their own compatible JSON input files.
-
-TODO: Add a `benchmark/` directory with a small public benchmark set and clear commands for repeatable runs.
 
 ## cuOpt Notes and Limitations
 
