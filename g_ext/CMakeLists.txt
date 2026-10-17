@@ -13,6 +13,13 @@ add_library(g_ext
   xeg_milp_model.hpp
 )
 
+# Sources compiled by the host C++ compiler (for example main/xeg_d.cpp and
+# the unit tests) include g_ext.cuh, which needs the CUDA headers.
+target_include_directories(g_ext
+  PUBLIC
+    ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+)
+
 # -----------------------------------------------------------------------------
 # Optional NVIDIA cuOpt backend
 # -----------------------------------------------------------------------------
