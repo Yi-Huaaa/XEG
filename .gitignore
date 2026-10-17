@@ -14,3 +14,11 @@ build_tmp/
 run_deg.sh
 0813.*
 cpsat_memory_614080.log
+oom_0815_20260815_032950/*
+# Large BoolE inputs (over GitHub's size limits or warning threshold)
+dataset/boolE/mul112.rename.json
+dataset/boolE/mul128.rename.json
+dataset/boolE/mul80_map.rename.json
+dataset/boolE/mul96_map.rename.json
+dataset/boolE/mul112_map.rename.json
+dataset/boolE/mul128_map.rename.json

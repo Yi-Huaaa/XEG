@@ -1,0 +1,747 @@
+{
+  "nodes": {
+    "0.0": {
+      "children": [],
+      "cost": 0.0,
+      "eclass": "0",
+      "op": "0"
+    },
+    "0.1": {
+      "children": [],
+      "cost": 1.0,
+      "eclass": "0",
+      "op": "+"
+    },
+    "0.2": {
+      "children": [
+        "16.1"
+      ],
+      "cost": 1.0,
+      "eclass": "0",
+      "op": "*"
+    },
+    "0.3": {
+      "children": [],
+      "cost": 0.0,
+      "eclass": "0",
+      "op": "Get"
+    },
+    "1.0": {
+      "children": [
+        "0.3"
+      ],
+      "cost": 1.0,
+      "eclass": "1",
+      "op": "+"
+    },
+    "1.1": {
+      "children": [
+        "16.2"
+      ],
+      "cost": 1.0,
+      "eclass": "1",
+      "op": "*"
+    },
+    "1.2": {
+      "children": [],
+      "cost": 0.0,
+      "eclass": "1",
+      "op": "a"
+    },
+    "16.0": {
+      "children": [],
+      "cost": 0.0,
+      "eclass": "16",
+      "op": "1"
+    },
+    "16.1": {
+      "children": [
+        "0.0"
+      ],
+      "cost": 1.0,
+      "eclass": "16",
+      "op": "+"
+    },
+    "16.2": {
+      "children": [],
+      "cost": 1.0,
+      "eclass": "16",
+      "op": "*"
+    },
+    "2.0": {
+      "children": [
+        "0.2"
+      ],
+      "cost": 1.0,
+      "eclass": "2",
+      "op": "+"
+    },
+    "2.1": {
+      "children": [
+        "16.2"
+      ],
+      "cost": 1.0,
+      "eclass": "2",
+      "op": "*"
+    },
+    "2.2": {
+      "children": [],
+      "cost": 0.0,
+      "eclass": "2",
+      "op": "b"
+    },
+    "26.0": {
+      "children": [
+        "0.2"
+      ],
+      "cost": 1.0,
+      "eclass": "26",
+      "op": "+"
+    },
+    "26.1": {
+      "children": [
+        "16.1"
+      ],
+      "cost": 1.0,
+      "eclass": "26",
+      "op": "*"
+    },
+    "26.2": {
+      "children": [
+        "1.0",
+        "4.1",
+        "0.0"
+      ],
+      "cost": 10.0,
+      "eclass": "26",
+      "op": "Vec"
+    },
+    "26.3": {
+      "children": [
+        "35.0"
+      ],
+      "cost": 1.0,
+      "eclass": "26",
+      "op": "VecAdd"
+    },
+    "26.4": {
+      "children": [
+        "45.0"
+      ],
+      "cost": 1.0,
+      "eclass": "26",
+      "op": "VecMul"
+    },
+    "26.5": {
+      "children": [
+        "35.3",
+        "45.5"
+      ],
+      "cost": 1.0,
+      "eclass": "26",
+      "op": "VecMAC"
+    },
+    "27.0": {
+      "children": [
+        "0.1"
+      ],
+      "cost": 1.0,
+      "eclass": "27",
+      "op": "+"
+    },
+    "27.1": {
+      "children": [
+        "16.1"
+      ],
+      "cost": 1.0,
+      "eclass": "27",
+      "op": "*"
+    },
+    "27.2": {
+      "children": [
+        "2.0",
+        "5.2",
+        "0.2"
+      ],
+      "cost": 10.0,
+      "eclass": "27",
+      "op": "Vec"
+    },
+    "27.3": {
+      "children": [
+        "35.0"
+      ],
+      "cost": 1.0,
+      "eclass": "27",
+      "op": "VecAdd"
+    },
+    "27.4": {
+      "children": [
+        "45.0"
+      ],
+      "cost": 1.0,
+      "eclass": "27",
+      "op": "VecMul"
+    },
+    "27.5": {
+      "children": [
+        "35.7",
+        "45.4"
+      ],
+      "cost": 1.0,
+      "eclass": "27",
+      "op": "VecMAC"
+    },
+    "3.0": {
+      "children": [
+        "0.3"
+      ],
+      "cost": 1.0,
+      "eclass": "3",
+      "op": "+"
+    },
+    "3.1": {
+      "children": [
+        "1.2",
+        "2.0"
+      ],
+      "cost": 1.0,
+      "eclass": "3",
+      "op": "+"
+    },
+    "3.2": {
+      "children": [
+        "16.0"
+      ],
+      "cost": 1.0,
+      "eclass": "3",
+      "op": "*"
+    },
+    "35.0": {
+      "children": [
+        "0.0"
+      ],
+      "cost": 1.0,
+      "eclass": "35",
+      "op": "+"
+    },
+    "35.1": {
+      "children": [
+        "16.2"
+      ],
+      "cost": 1.0,
+      "eclass": "35",
+      "op": "*"
+    },
+    "35.2": {
+      "children": [
+        "0.0"
+      ],
+      "cost": 10.0,
+      "eclass": "35",
+      "op": "Vec"
+    },
+    "35.3": {
+      "children": [
+        "0.2"
+      ],
+      "cost": 0.0,
+      "eclass": "35",
+      "op": "LitVec"
+    },
+    "35.4": {
+      "children": [],
+      "cost": 1.0,
+      "eclass": "35",
+      "op": "VecAdd"
+    },
+    "35.5": {
+      "children": [],
+      "cost": 1.0,
+      "eclass": "35",
+      "op": "VecMinus"
+    },
+    "35.6": {
+      "children": [
+        "45.1"
+      ],
+      "cost": 1.0,
+      "eclass": "35",
+      "op": "VecMul"
+    },
+    "35.7": {
+      "children": [
+        "45.3"
+      ],
+      "cost": 1.0,
+      "eclass": "35",
+      "op": "VecMAC"
+    },
+    "37.0": {
+      "children": [
+        "0.2"
+      ],
+      "cost": 1.0,
+      "eclass": "37",
+      "op": "+"
+    },
+    "37.1": {
+      "children": [
+        "16.0"
+      ],
+      "cost": 1.0,
+      "eclass": "37",
+      "op": "*"
+    },
+    "37.2": {
+      "children": [
+        "0.1",
+        "4.0"
+      ],
+      "cost": 10.0,
+      "eclass": "37",
+      "op": "Vec"
+    },
+    "37.3": {
+      "children": [
+        "35.2"
+      ],
+      "cost": 1.0,
+      "eclass": "37",
+      "op": "VecAdd"
+    },
+    "37.4": {
+      "children": [
+        "45.3"
+      ],
+      "cost": 1.0,
+      "eclass": "37",
+      "op": "VecMul"
+    },
+    "37.5": {
+      "children": [
+        "35.4",
+        "45.2"
+      ],
+      "cost": 1.0,
+      "eclass": "37",
+      "op": "VecMAC"
+    },
+    "38.0": {
+      "children": [
+        "0.0"
+      ],
+      "cost": 1.0,
+      "eclass": "38",
+      "op": "+"
+    },
+    "38.1": {
+      "children": [
+        "16.0"
+      ],
+      "cost": 1.0,
+      "eclass": "38",
+      "op": "*"
+    },
+    "38.2": {
+      "children": [
+        "3.0",
+        "5.2",
+        "0.1"
+      ],
+      "cost": 10.0,
+      "eclass": "38",
+      "op": "Vec"
+    },
+    "38.3": {
+      "children": [
+        "35.1"
+      ],
+      "cost": 1.0,
+      "eclass": "38",
+      "op": "VecAdd"
+    },
+    "38.4": {
+      "children": [
+        "40.2",
+        "27.0"
+      ],
+      "cost": 1.0,
+      "eclass": "38",
+      "op": "VecAdd"
+    },
+    "38.5": {
+      "children": [
+        "45.4"
+      ],
+      "cost": 1.0,
+      "eclass": "38",
+      "op": "VecMul"
+    },
+    "38.6": {
+      "children": [
+        "35.4",
+        "45.1"
+      ],
+      "cost": 1.0,
+      "eclass": "38",
+      "op": "VecMAC"
+    },
+    "38.7": {
+      "children": [
+        "40.2",
+        "45.3",
+        "27.5"
+      ],
+      "cost": 1.0,
+      "eclass": "38",
+      "op": "VecMAC"
+    },
+    "4.0": {
+      "children": [
+        "0.2"
+      ],
+      "cost": 1.0,
+      "eclass": "4",
+      "op": "+"
+    },
+    "4.1": {
+      "children": [
+        "16.1"
+      ],
+      "cost": 1.0,
+      "eclass": "4",
+      "op": "*"
+    },
+    "4.2": {
+      "children": [],
+      "cost": 0.0,
+      "eclass": "4",
+      "op": "c"
+    },
+    "40.0": {
+      "children": [
+        "0.0"
+      ],
+      "cost": 1.0,
+      "eclass": "40",
+      "op": "+"
+    },
+    "40.1": {
+      "children": [
+        "16.2"
+      ],
+      "cost": 1.0,
+      "eclass": "40",
+      "op": "*"
+    },
+    "40.2": {
+      "children": [
+        "1.1",
+        "0.2"
+      ],
+      "cost": 10.0,
+      "eclass": "40",
+      "op": "Vec"
+    },
+    "40.3": {
+      "children": [
+        "35.1"
+      ],
+      "cost": 1.0,
+      "eclass": "40",
+      "op": "VecAdd"
+    },
+    "40.4": {
+      "children": [
+        "45.2"
+      ],
+      "cost": 1.0,
+      "eclass": "40",
+      "op": "VecMul"
+    },
+    "40.5": {
+      "children": [
+        "35.0",
+        "45.0"
+      ],
+      "cost": 1.0,
+      "eclass": "40",
+      "op": "VecMAC"
+    },
+    "41.0": {
+      "children": [
+        "0.3"
+      ],
+      "cost": 1.0,
+      "eclass": "41",
+      "op": "+"
+    },
+    "41.1": {
+      "children": [
+        "16.2"
+      ],
+      "cost": 1.0,
+      "eclass": "41",
+      "op": "*"
+    },
+    "41.2": {
+      "children": [
+        "2.2",
+        "6.1",
+        "0.3"
+      ],
+      "cost": 10.0,
+      "eclass": "41",
+      "op": "Vec"
+    },
+    "41.3": {
+      "children": [
+        "35.3"
+      ],
+      "cost": 1.0,
+      "eclass": "41",
+      "op": "VecAdd"
+    },
+    "41.4": {
+      "children": [
+        "37.1",
+        "27.0"
+      ],
+      "cost": 1.0,
+      "eclass": "41",
+      "op": "VecAdd"
+    },
+    "41.5": {
+      "children": [
+        "45.0"
+      ],
+      "cost": 1.0,
+      "eclass": "41",
+      "op": "VecMul"
+    },
+    "41.6": {
+      "children": [
+        "35.1",
+        "45.4"
+      ],
+      "cost": 1.0,
+      "eclass": "41",
+      "op": "VecMAC"
+    },
+    "41.7": {
+      "children": [
+        "37.1",
+        "45.2",
+        "27.4"
+      ],
+      "cost": 1.0,
+      "eclass": "41",
+      "op": "VecMAC"
+    },
+    "45.0": {
+      "children": [
+        "0.0"
+      ],
+      "cost": 1.0,
+      "eclass": "45",
+      "op": "+"
+    },
+    "45.1": {
+      "children": [
+        "16.1"
+      ],
+      "cost": 1.0,
+      "eclass": "45",
+      "op": "*"
+    },
+    "45.2": {
+      "children": [
+        "16.1"
+      ],
+      "cost": 10.0,
+      "eclass": "45",
+      "op": "Vec"
+    },
+    "45.3": {
+      "children": [
+        "35.6"
+      ],
+      "cost": 1.0,
+      "eclass": "45",
+      "op": "VecAdd"
+    },
+    "45.4": {
+      "children": [],
+      "cost": 1.0,
+      "eclass": "45",
+      "op": "VecMul"
+    },
+    "45.5": {
+      "children": [
+        "35.0"
+      ],
+      "cost": 1.0,
+      "eclass": "45",
+      "op": "VecMAC"
+    },
+    "5.0": {
+      "children": [
+        "0.0"
+      ],
+      "cost": 1.0,
+      "eclass": "5",
+      "op": "+"
+    },
+    "5.1": {
+      "children": [
+        "16.2"
+      ],
+      "cost": 1.0,
+      "eclass": "5",
+      "op": "*"
+    },
+    "5.2": {
+      "children": [],
+      "cost": 0.0,
+      "eclass": "5",
+      "op": "d"
+    },
+    "6.0": {
+      "children": [
+        "0.1"
+      ],
+      "cost": 1.0,
+      "eclass": "6",
+      "op": "+"
+    },
+    "6.1": {
+      "children": [
+        "4.0",
+        "5.0"
+      ],
+      "cost": 1.0,
+      "eclass": "6",
+      "op": "+"
+    },
+    "6.2": {
+      "children": [
+        "16.1"
+      ],
+      "cost": 1.0,
+      "eclass": "6",
+      "op": "*"
+    },
+    "7.0": {
+      "children": [
+        "0.3"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "+"
+    },
+    "7.1": {
+      "children": [
+        "16.0"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "*"
+    },
+    "7.10": {
+      "children": [
+        "37.2",
+        "45.3",
+        "38.1"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecMAC"
+    },
+    "7.11": {
+      "children": [
+        "40.3",
+        "45.3",
+        "41.1"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecMAC"
+    },
+    "7.2": {
+      "children": [
+        "3.0",
+        "6.2",
+        "0.3"
+      ],
+      "cost": 10.0,
+      "eclass": "7",
+      "op": "Vec"
+    },
+    "7.3": {
+      "children": [
+        "26.4",
+        "27.2"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecAdd"
+    },
+    "7.4": {
+      "children": [
+        "35.7"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecAdd"
+    },
+    "7.5": {
+      "children": [
+        "37.2",
+        "38.7"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecAdd"
+    },
+    "7.6": {
+      "children": [
+        "40.5",
+        "41.4"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecAdd"
+    },
+    "7.7": {
+      "children": [
+        "45.4"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecMul"
+    },
+    "7.8": {
+      "children": [
+        "26.5",
+        "45.1",
+        "27.0"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecMAC"
+    },
+    "7.9": {
+      "children": [
+        "35.4",
+        "45.1"
+      ],
+      "cost": 1.0,
+      "eclass": "7",
+      "op": "VecMAC"
+    }
+  },
+  "root_eclasses": [
+    "7"
+  ]
+}
