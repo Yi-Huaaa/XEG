@@ -20,6 +20,27 @@
 
 # CMake version
 cmake_minimum_required(VERSION 3.20)
+
+# CUDA architecture. Must be set before project(), which otherwise
+# fills in the compiler's default. Override with
+# -DCMAKE_CUDA_ARCHITECTURES=<arch>; by default build for the first
+# local GPU, falling back to 86 when no GPU can be queried.
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  execute_process(
+    COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader
+    OUTPUT_VARIABLE XEG_GPU_COMPUTE_CAP
+    RESULT_VARIABLE XEG_NVIDIA_SMI_RESULT
+    ERROR_QUIET
+  )
+  string(REGEX MATCH "[0-9]+\\.[0-9]+" XEG_GPU_COMPUTE_CAP "${XEG_GPU_COMPUTE_CAP}")
+  if(XEG_NVIDIA_SMI_RESULT EQUAL 0 AND XEG_GPU_COMPUTE_CAP)
+    string(REPLACE "." "" CMAKE_CUDA_ARCHITECTURES "${XEG_GPU_COMPUTE_CAP}")
+  else()
+    set(CMAKE_CUDA_ARCHITECTURES 86)
+  endif()
+endif()
+message(STATUS "CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
+
 project(
   g_ext 
   VERSION 1.0 
@@ -29,14 +50,11 @@ project(
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_FLAGS "-std=c++17")
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES 86)
-endif()
 # compile and link CUDA code separately from the rest of your code to
 # speed up the build process and reduce the size of your final executable.
 set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 # set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wall -O3 --extended-lambda")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_86 -Wall -O3 --extended-lambda")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wall -O3 --extended-lambda")
 
 
 # set compilation flags
