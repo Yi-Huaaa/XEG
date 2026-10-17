@@ -8,7 +8,8 @@
 # (default: <repo>/dataset), in sorted order. No input name is fixed, so a
 # full local dataset and a clone with only the published files both work.
 # Pass a subdirectory, e.g. --dataset dataset/maxsat, to run one suite.
-# Arguments after the options are passed to main/simple for every input.
+# Arguments after the options are passed to main/simple for every input;
+# with none, run.sh's default (the paper's setting "2 64 512") applies.
 #
 # Each input runs through scripts/run.sh, in
 #   <build>/runs/<timestamp>_all/<path under DIR>/run.log
@@ -49,7 +50,7 @@ summary="${batch_dir}/summary.tsv"
 printf 'input\texit_code\tsolver_status\tobjective\tsolver_runtime_s\twall_s\n' > "${summary}"
 
 echo "dataset: ${dataset_dir} (${#inputs[@]} inputs)"
-echo "simple arguments: ${*:-<defaults>}"
+echo "simple arguments: ${*:-<run.sh default>}"
 echo "batch directory: ${batch_dir}"
 
 count=0

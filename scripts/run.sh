@@ -5,7 +5,9 @@
 #   scripts/run.sh <input.json> [DAG_KERNEL [NUM_THREAD_DAG_CONSTR [BITMAP_BITS]]]
 #
 # Arguments after the input are passed to main/simple unchanged; see its
-# usage message for the valid values. With none, simple's defaults apply.
+# usage message for the valid values. With none, the paper's setting
+# "2 64 512" is used: Block kernel, 64 threads per candidate, 512-bit
+# bitmap.
 #
 # Each run gets its own directory, <build>/runs/<timestamp>_<input name>/,
 # holding run.log (the full console output) and any files the solver
@@ -27,6 +29,9 @@ build_dir="${XEG_BUILD_DIR:-${repo_root}/build}"
 binary="${build_dir}/main/simple"
 input="$(realpath "$1")"
 shift
+if [ "$#" -eq 0 ]; then
+  set -- 2 64 512
+fi
 
 if [ ! -x "${binary}" ]; then
   echo "error: ${binary} not found; run scripts/build.sh first" >&2
