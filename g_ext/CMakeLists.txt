@@ -64,7 +64,14 @@ target_link_libraries(g_ext PRIVATE OpenMP::OpenMP_CXX)
 # OR-Tools: 假設在 $HOME/or-tools_x86_64_Ubuntu-22.04_cpp_v9.7.2996
 # Note: my OR-Tools locates at ~/
 # -----------------------------------------------------------------------------
-set(ORTOOLS_HOME "$ENV{HOME}/or-tools_x86_64_Ubuntu-22.04_cpp_v9.7.2996")
+# Override with -DORTOOLS_HOME=<dir> or the ORTOOLS_HOME environment variable.
+if(DEFINED ENV{ORTOOLS_HOME})
+  set(XEG_DEFAULT_ORTOOLS_HOME "$ENV{ORTOOLS_HOME}")
+else()
+  set(XEG_DEFAULT_ORTOOLS_HOME "$ENV{HOME}/or-tools_x86_64_Ubuntu-22.04_cpp_v9.7.2996")
+endif()
+set(ORTOOLS_HOME "${XEG_DEFAULT_ORTOOLS_HOME}" CACHE PATH "OR-Tools C++ install directory")
+message(STATUS "ORTOOLS_HOME: ${ORTOOLS_HOME}")
 target_include_directories(g_ext
   PUBLIC
     ${ORTOOLS_HOME}/include
