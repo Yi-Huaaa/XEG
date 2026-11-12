@@ -10,7 +10,6 @@
 struct GpuProfileArgs {
   std::vector<char*> positional;
   std::string config_path, design;
-  bool enabled = true;
 
   GpuProfileArgs(int argc, char** argv) : positional{argv[0]} {
     for (int i = 1; i < argc; ++i) {
@@ -21,17 +20,13 @@ struct GpuProfileArgs {
         if (!value.empty()) throw std::invalid_argument("Duplicate option: " + argument);
         value = argv[i];
         if (value.empty()) throw std::invalid_argument("Empty value after " + argument);
-      } else if (argument == "--no-profile") {
-        if (!enabled) throw std::invalid_argument("Duplicate --no-profile");
-        enabled = false;
+      } else if (argument.rfind("--", 0) == 0 && argument != "--report") {
+        throw std::invalid_argument("Unknown option: " + argument);
       } else positional.push_back(argv[i]);
     }
-    if (!enabled && (!config_path.empty() || !design.empty()))
-      throw std::invalid_argument("--no-profile cannot be combined with --config or --design");
   }
 
   xeg::GpuProfile resolve(const std::string& input_path) {
-    if (!enabled) return {};
     if (design.empty()) {
       const std::filesystem::path input(input_path);
       design = input.parent_path().filename().string() + "/" + input.stem().string();

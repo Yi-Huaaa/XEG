@@ -44,21 +44,20 @@ build/main/gpu INPUT.json [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS=360]
                          [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1] [DETERMINISTIC_SECONDS=0]
 ```
 
-The default is the measured design profile. Shared options for `gpu`, `simple`,
-and `xeg_t` are:
+Known designs automatically use their saved parameters; unlisted inputs use
+common Block/64/512 settings. Shared options for `gpu`, `simple`, and `xeg_t` are:
 
 | Option | Meaning |
 |---|---|
 | `--config FILE.json` | Replace the built-in profile manifest |
 | `--design FAMILY/STEM` | Select a profile explicitly when the input was moved or renamed |
-| `--no-profile` | Original Thread/1/0 and controller defaults; conflicts with the two options above |
 
 `gpu` additionally accepts `--report FILE.json` instead of the positional report.
 The report array includes the effective geometry/controller settings and final
 selected e-nodes. As with CPU, zero solver seconds means construction only.
 
 ```bash
-# Full extraction with default Profiled GPU settings
+# Full extraction with automatic GPU settings
 env -u OMP_PLACES OMP_PROC_BIND=false \
   build/main/gpu dataset/esyn/mul3.rename.json --report gpu-report.json
 
@@ -104,9 +103,9 @@ writes `summary.tsv`. It is a GPU batch runner, not a CPU thread-scaling test.
 | Warp | `1` | Multiples of 32 from 32 through 1024 | `0`, or powers of two from 32 through 4096 |
 | Block | `2` | `64`, `128`, `256`, `512`, `1024` | `0`, or powers of two from 32 through 4096 |
 
-`BITMAP_BITS=0` means exact overlap detection. Profile defaults for unlisted
-inputs are Block/64/512; explicit geometry overrides the profile. Append
-`--no-profile` to `2 64 512` to reproduce the Fixed GPU controller settings.
+`BITMAP_BITS=0` means exact overlap detection. Defaults for unlisted inputs are Block/64/512; explicit geometry overrides
+the selected values. To change controller settings, follow the
+[JSON configuration guide](../configs/gpu/README.md#write-your-own-settings).
 
 ## XEG-D and compatibility
 

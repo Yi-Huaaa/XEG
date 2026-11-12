@@ -4,9 +4,9 @@
 # Usage:
 #   scripts/run_all.sh [--dataset DIR] [DAG_KERNEL [NUM_THREAD_DAG_CONSTR [BITMAP_BITS]]]
 #
-# Inputs are found when the script starts: every *.json under DIR
+# Inputs are found when the script starts: every *.json or *.json.zip under DIR
 # (default: <repo>/dataset), in sorted order. No input name is fixed, so a
-# full local dataset and a clone with only the published files both work.
+# full local dataset and a clone with the compressed inputs both work.
 # Pass a subdirectory, e.g. --dataset dataset/maxsat, to run one suite.
 # Arguments after the options are passed to main/simple for every input;
 # with none, run.sh loads the measured profile for each design.
@@ -37,6 +37,7 @@ if [ ! -d "${dataset_dir}" ]; then
   exit 1
 fi
 dataset_dir="$(realpath "${dataset_dir}")"
+python3 "$repo_root/scripts/prepare_input.py" --dataset "$dataset_dir" > /dev/null || exit 1
 
 mapfile -t inputs < <(find "${dataset_dir}" -type f -name '*.json' | LC_ALL=C sort)
 if [ "${#inputs[@]}" -eq 0 ]; then

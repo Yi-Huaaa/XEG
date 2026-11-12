@@ -7,7 +7,7 @@ import unittest
 
 
 class RunGpuEnvironmentTest(unittest.TestCase):
-    def test_both_wrappers_select_profiles_and_allow_explicit_opt_out(self):
+    def test_both_wrappers_select_settings_and_forward_overrides(self):
         repo = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix='xeg-default-profile-') as temporary:
             root = Path(temporary)
@@ -22,7 +22,7 @@ pathlib.Path('report.json').write_text(json.dumps(sys.argv[1:]))
             (root / 'input.json').write_text('{}')
             (root / 'custom.json').write_text('{"schema_version": 1}')
             for wrapper in ['run_gpu.sh', 'run.sh']:
-                for mode, args in [('default', []), ('original', ['--no-profile']),
+                for mode, args in [('default', []), ('geometry', ['2', '128', '1024']),
                                    ('custom', ['--config', 'custom.json'])]:
                     with self.subTest(wrapper=wrapper, mode=mode):
                         output = root / f'{wrapper}-{mode}'
@@ -32,13 +32,11 @@ pathlib.Path('report.json').write_text(json.dumps(sys.argv[1:]))
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         actual = json.loads((output / 'report.json').read_text())
                         self.assertEqual(actual[0], str(root / 'input.json'))
-                        if mode == 'original':
-                            self.assertIn('--no-profile', actual)
-                            self.assertNotIn('--config', actual)
-                        else:
-                            self.assertEqual(actual.count('--config'), 1)
-                            expected = root / 'custom.json' if mode == 'custom' else repo / 'configs/gpu/87-designs.json'
-                            self.assertEqual(actual[actual.index('--config') + 1], str(expected))
+                        self.assertEqual(actual.count('--config'), 1)
+                        expected = root / 'custom.json' if mode == 'custom' else repo / 'configs/gpu/87-designs.json'
+                        self.assertEqual(actual[actual.index('--config') + 1], str(expected))
+                        if mode == 'geometry':
+                            self.assertEqual(actual[1:4], args)
 
     def test_wrapper_disables_inherited_binding_with_and_without_solver(self):
         wrapper = Path(__file__).resolve().parents[1] / 'scripts/run_gpu.sh'

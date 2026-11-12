@@ -3,6 +3,35 @@
 #include <xeg/gpu_config.hpp>
 #include <filesystem>
 #include <fstream>
+#include "../main/gpu_profile_args.hpp"
+
+TEST_CASE("GPU CLI automatically resolves known and new designs and accepts explicit selection") {
+  auto resolve = [](std::vector<std::string> words, const std::string& input) {
+    std::vector<char*> argv;
+    for (auto& word : words) argv.push_back(word.data());
+    GpuProfileArgs args(static_cast<int>(argv.size()), argv.data());
+    return args.resolve(input);
+  };
+  const auto known = resolve({"gpu"}, "/inputs/boolE/mul128.rename.json");
+  const auto unlisted = resolve({"gpu"}, "/inputs/new/design.json");
+  DOCTEST_CHECK(known.to_json() == xeg::default_gpu_profile("boolE/mul128.rename").to_json());
+  DOCTEST_CHECK(unlisted.to_json() == xeg::default_gpu_profile("new/design").to_json());
+  DOCTEST_CHECK(known.dag.bitmap_batch_size == 256);
+  DOCTEST_CHECK(unlisted.kernel == 2);
+  DOCTEST_CHECK(unlisted.dag_threads == 64);
+  DOCTEST_CHECK(unlisted.bitmap_bits == 512);
+  DOCTEST_CHECK(unlisted.dag.bitmap_batch_size == 32);
+  DOCTEST_CHECK(resolve({"gpu", "--design", "boolE/mul128.rename"}, "renamed.json").to_json() == known.to_json());
+}
+
+TEST_CASE("GPU CLI rejects removed and misspelled options before reading the graph") {
+  for (const std::string option : {"--no-profile", "--confg"}) {
+    std::vector<std::string> words{"gpu", "input.json", option};
+    std::vector<char*> argv;
+    for (auto& word : words) argv.push_back(word.data());
+    DOCTEST_CHECK_THROWS_AS(GpuProfileArgs(static_cast<int>(argv.size()), argv.data()), std::invalid_argument);
+  }
+}
 
 TEST_CASE("Embedded GPU defaults match every measured design and the unlisted fallback") {
   const auto path = std::filesystem::path(__FILE__).parent_path().parent_path()

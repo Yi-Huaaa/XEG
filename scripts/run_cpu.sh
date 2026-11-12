@@ -11,7 +11,7 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${XEG_BUILD_DIR:-${repo_root}/build}"
 binary="$(realpath -m "${build_dir}/main/cpu")"
-input="$(realpath "$1")"
+input="$(python3 "$repo_root/scripts/prepare_input.py" "$1")"
 if [ ! -x "$binary" ] || [ ! -f "$input" ]; then
   echo "error: input or CPU executable missing; build with scripts/build.sh cpu" >&2
   exit 1

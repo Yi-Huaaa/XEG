@@ -3,6 +3,7 @@
 **Efficient and effective e-graph extraction on CPU and GPU**
 
 [![Paper](https://img.shields.io/badge/paper-ASPLOS%202027-blue)](https://yi-huaaa.github.io/uploads/publications/2027-xeg-paper.pdf)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![CUDA](https://img.shields.io/badge/GPU-CUDA-76B900?logo=nvidia&logoColor=white)](#requirements)
 [![OpenMP](https://img.shields.io/badge/CPU-OpenMP-0071C5)](#cpu)
 
@@ -22,12 +23,12 @@ numbers from measurements of the current code.
 
 - **CPU and GPU construction.** OpenMP CPU and CUDA GPU implementations build
   the candidate space for extraction.
-- **Profiled GPU (default settings).** The GPU runner automatically loads the
-  supplied design profiles; common settings cover unlisted inputs.
+- **Automatic GPU settings.** Known inputs use their saved parameters; other
+  inputs use common defaults. Custom settings are optional.
 - **Checked solutions.** Both implementations share CP-SAT solving and final
   checks, with a separate Python verifier for exported solutions.
 - **87-design evaluation.** [Runtime and quality tables](results/gpu/20261112/overall_runtime.md)
-  compare CPU, Profiled GPU (default settings), and Fixed GPU.
+  compare CPU and GPU results, including a common-settings reference.
 
 ## Requirements
 
@@ -37,7 +38,7 @@ numbers from measurements of the current code.
   a GPU**; GPU execution requires an NVIDIA GPU.
 - [Google OR-Tools C++ 9.7.2996](https://github.com/google/or-tools/releases/tag/v9.7)
   and Protobuf development libraries.
-- Python 3 for the independent verifier and benchmark scripts.
+- Python 3 for the run scripts, automatic input extraction, and independent verifier.
 
 The recorded experiments used CUDA 12.9, GCC 12, and OR-Tools 9.7.2996.
 See [build options](docs/usage.md#build-options) for installation paths and CUDA
@@ -58,7 +59,7 @@ Run these commands from the repository root, using an appropriate compute
 allocation on a cluster. Both examples extract from the supplied BoolE `mul16`
 e-graph and independently check the result.
 
-### Profiled GPU (default settings)
+### GPU
 
 ```bash
 XEG_RUN_DIR=build/runs/example-gpu \
@@ -68,10 +69,10 @@ python3 verification/verify_solution.py \
   dataset/boolE/mul16.rename.json build/runs/example-gpu/report.json
 ```
 
-No optional arguments are needed. The runner loads
-[`configs/gpu/87-designs.json`](configs/gpu/87-designs.json) and selects the input's
-profile. CP-SAT defaults to **360 seconds and 8 workers**. Unlisted designs use
-common Block / 64 / 512 geometry and the common controller settings.
+Only the input file is required. The runner automatically uses saved settings
+for the 87 known designs. Other designs use **Block / 64 / 512**, a **360-second
+CP-SAT limit**, and **8 solver workers**. To change parameters, see the
+[JSON configuration guide](configs/gpu/README.md#write-your-own-settings).
 
 ### CPU
 
@@ -87,22 +88,6 @@ python3 verification/verify_solution.py \
 CPU construction threads and CP-SAT workers are separate settings. Both runners
 write `run.log`, `report.json`, and solver memory logs. If `XEG_RUN_DIR` is omitted,
 each run gets a timestamped directory under `build/runs/`.
-
-### Fixed GPU (comparison settings)
-
-To use the common GPU parameters without per-design overrides:
-
-```bash
-scripts/run_gpu.sh dataset/boolE/mul16.rename.json 2 64 512 360 8 --no-profile
-```
-
-The five numbers mean **kernel, DAG threads, bitmap bits, solver seconds, and
-solver workers**. Here `2` selects the Block kernel. **A solver limit of `0`
-skips CP-SAT**; `2 64 512 0 8` is a construction-only run. `--no-profile` alone
-restores Thread / 1 / 0, so keep `2 64 512` for Fixed GPU.
-
-For custom profiles, construction-only runs, and parameter precedence, see
-[run settings](docs/usage.md#gpu-settings).
 
 ## How XEG works
 
@@ -121,10 +106,9 @@ but their candidate spaces can differ in size, final cost, and solving time.
 
 | Resource | Contents |
 |---|---|
-| [Overall runtime and solution quality](results/gpu/20261112/overall_runtime.md) | CPU 8 threads / Profiled GPU (default settings) / Fixed GPU across 87 designs |
+| [Overall runtime and solution quality](results/gpu/20261112/overall_runtime.md) | CPU 8 threads and GPU across 87 designs, with a common-settings reference |
 | [CPU construction scaling](results/cpu/20261112/comparison.md) | Tree/DAG timings across thread counts and quality versus paper XEG |
-| [Profiled GPU (default settings)](results/gpu/20261112/profiled.md) | Selected profiles, solution quality, and separate construction timings |
-| [Fixed GPU](results/gpu/20261112/comparison.md) | Implementation comparison with common original parameters |
+| [GPU results](results/gpu/20261112/README.md) | Solution quality, separate construction timings, and experiment settings |
 
 Quality cells in the overall table show `final cost (cost ratio, status)`.
 The cost ratio uses **paper XEG's final cost** as the baseline; lower is better.
@@ -141,13 +125,14 @@ comparison. Profile selection and timing limitations are explained with the resu
 | Guide | Contents |
 |---|---|
 | [Running XEG](docs/usage.md) | CPU/GPU arguments, reports, benchmarks, build options, and tests |
-| [GPU profiles](configs/gpu/README.md) | Per-design settings and all controller parameters |
+| [GPU configuration](configs/gpu/README.md) | How to write your own JSON settings and override parameters |
 | [Solution verification](verification/README.md) | Independent legality checks and deterministic CPU comparisons |
 | [Program reference](main/README.md) | Direct CLI usage, legacy tools, and XEG-D compatibility notes |
 | [Optional cuOpt backend](docs/cuopt.md) | Build instructions and solver modes |
 
-The repository includes 81 of the 87 benchmark inputs. See the
-[benchmark notes](docs/usage.md#benchmarks) for the six large inputs omitted from git.
+All 87 benchmark inputs are included: 81 JSON files and six ZIP archives.
+The run scripts automatically unpack a missing JSON from its matching ZIP.
+See [dataset/](dataset/README.md) for manual preparation and archive details.
 
 ## Citation
 
@@ -174,3 +159,8 @@ If you use XEG in your research, please cite our paper:
 
 For questions about XEG, please email Yi-Hua Chung at
 [yihua.chung@wisc.edu](mailto:yihua.chung@wisc.edu).
+
+## License
+
+XEG code is released under the [Apache License 2.0](LICENSE).
+Third-party components and benchmark data retain their respective licenses.

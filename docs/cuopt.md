@@ -32,7 +32,7 @@ package libraries to the build runtime search path. See
 
 ```text
 build-cuopt/main/simple INPUT.json [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_BACKEND] [CUOPT_MODE]
-                                  [--config FILE.json] [--design FAMILY/STEM] [--no-profile]
+                                  [--config FILE.json] [--design FAMILY/STEM]
 ```
 
 | Setting | Value | Behavior |
@@ -51,8 +51,9 @@ build-cuopt/main/simple dataset/esyn/mul3.rename.json 2 64 512 1 1
 ```
 
 Both commands use the design profile's controller parameters, with explicit
-Block/64/512 geometry. Append `--no-profile` for the original common controller
-parameters. `simple` uses a 360-second solver limit.
+Block/64/512 geometry. To change controller parameters, provide a custom
+JSON file as described in the [configuration guide](../configs/gpu/README.md#write-your-own-settings).
+`simple` uses a 360-second solver limit.
 
 cuOpt retains its own level-constrained model and console output interface;
 it does not use the CP-SAT report/fallback path. A feasible incumbent is not an

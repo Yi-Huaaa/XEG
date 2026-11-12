@@ -4,6 +4,10 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.prepare_input import prepare_input, prepare_dataset
 
 try:
     from .verify_solution import verify_report
@@ -23,7 +27,7 @@ def main():
     if min(args.threads) < 1 or args.deterministic_seconds <= 0 or args.wall_seconds <= 0:
         parser.error('Thread counts and time limits must be positive')
     source, binary, output = args.input.resolve(), args.binary.resolve(), args.output.resolve()
-    inputs = sorted(source.rglob('*.json')) if source.is_dir() else [source]
+    inputs = prepare_dataset(source) if source.is_dir() else [prepare_input(source)]
     if not inputs:
         parser.error('No input JSON files found')
     results = []
@@ -45,17 +49,17 @@ def main():
             row = rows[0]
             if row['solver']['wall_time_s'] >= args.wall_seconds * 0.95:
                 raise RuntimeError(f'{relative}: wall-time cap may have interrupted deterministic work')
-            source = row['solution']['source']
+            solution_source = row['solution']['source']
             reason = row['solution'].get('reason')
             signature = [row[k] for k in fields] + [verified['objective'], row['solver']['status'],
-                                                   source, reason]
+                                                   solution_source, reason]
             if reference is None:
                 reference = signature
             if signature != reference:
                 raise RuntimeError(f'{relative}: construction, final cost, solver status or '
                                    f'solution source/reason differs at {threads} threads')
             result = {'input': str(relative), 'threads': threads, **verified,
-                      'solver_status': row['solver']['status'], 'source': source, 'reason': reason}
+                      'solver_status': row['solver']['status'], 'source': solution_source, 'reason': reason}
             results.append(result)
             (output / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
             print(json.dumps(result), flush=True)

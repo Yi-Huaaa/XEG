@@ -1,24 +1,108 @@
-# GPU design profiles
+# GPU configuration
 
-**Profiled GPU (default settings)** loads this manifest automatically through `scripts/run_gpu.sh`. For a concise explanation of Profiled versus Fixed GPU, see the [run settings](../../docs/usage.md#gpu-settings).
-
-`87-designs.json` contains measured profiles for the 87 benchmark inputs: 33 override the common Block/64/512 configuration, and 54 inherit its defaults. The [results and selection protocol](../../results/gpu/20261112/profiled.md) show costs, separate construction timings, and rejected trials. These are selected observations, not guaranteed optima; GPU construction and timed parallel solving remain nondeterministic. Empty design objects use the common defaults.
+Run any input with one command:
 
 ```bash
-scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json
-# Reproduce the Fixed GPU settings (common original parameters):
-scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json 2 64 512 360 8 --no-profile
-# Direct executable; use --design if the input has been moved or renamed:
-build/main/gpu input.json --config configs/gpu/87-designs.json --design boolE/mul32_map.rename --report report.json
+scripts/run_gpu.sh path/to/your-design.json
 ```
 
-The design key is the immediate parent directory plus the filename without `.json`. Resolution order is built-in defaults, configuration `defaults`, then the matching `designs` entry. Explicit positional kernel/thread/bitmap arguments override the resolved geometry. Without an explicit configuration, the CUDA executables use the measured manifest. `--no-profile` selects Thread/1/0 and the original controller defaults and cannot be combined with `--config` or `--design`. To reproduce the Fixed GPU comparison, pass `2 64 512 --no-profile`. Unlisted inputs inherit the configuration defaults. Unknown keys, invalid values, and malformed entries fail before construction.
+The runner reads [`87-designs.json`](87-designs.json) automatically. It starts
+with `defaults`, then applies a matching entry from `designs`. The bundled file
+covers 87 inputs: 33 have overrides and 54 use the common defaults. Inputs not
+listed in `designs` also use the common defaults. No separate execution mode is
+needed.
 
-`scripts/run_gpu.sh` and `scripts/run.sh` read the checkout's `configs/gpu/87-designs.json` automatically. Direct `gpu`, `simple`, and `xeg_t` executables use a build-time copy embedded from this same file, so defaults work from any working directory and after moving the executable. Rebuild to refresh embedded defaults, or pass `--config` for runtime changes. The low-level C++ API continues to accept explicit geometry/options; the automatic selection belongs to the CLI.
+The common settings are kernel `2` (Block), `64` DAG threads, and `512` bitmap
+bits. CP-SAT separately defaults to `360` seconds and `8` workers. The saved
+settings and [recorded results](../../results/gpu/20261112/profiled.md) come from
+measured trials; they do not guarantee the same cost on every run.
 
-The JSON format uses the project's existing parser. Every report records the effective kernel, thread count, bitmap size, and all `dag_options`; changing a profile never changes the saved report.
+## Write your own settings
 
-| Option | Original default | Meaning |
+Save the following as `my-gpu-settings.json`. JSON uses double-quoted keys and
+does not allow comments or trailing commas.
+
+```json
+{
+  "schema_version": 1,
+  "defaults": {
+    "kernel": 2,
+    "dag_threads": 64,
+    "bitmap_bits": 512,
+    "bitmap_batch_size": 32
+  },
+  "designs": {
+    "my-designs/adder": {
+      "bitmap_batch_size": 8,
+      "bitmap_max_direct_iterations": 10
+    },
+    "my-designs/multiplier": {
+      "bitmap_bits": 2048
+    }
+  }
+}
+```
+
+Then run:
+
+```bash
+scripts/run_gpu.sh my-designs/adder.json --config my-gpu-settings.json
+```
+
+- **`defaults`** supplies values shared by all designs in this file.
+- **`designs`** supplies per-input overrides. The example adder keeps Block / 64 /
+  512 but uses batch size 8 and at most 10 direct iterations. The multiplier
+  changes only the bitmap size. An unlisted design uses `defaults` unchanged.
+- The key is the **immediate parent folder plus filename without the final
+  `.json`**. For `dataset/boolE/mul16.rename.json`, use `boolE/mul16.rename`.
+- A custom file **replaces** the bundled file. To keep the existing 87 settings,
+  copy `configs/gpu/87-designs.json` and edit the copy instead.
+- Include `kernel`, `dag_threads`, and `bitmap_bits` explicitly in your custom
+  `defaults`, as above. Controller fields omitted from `defaults` use the
+  built-in values listed below. For compatibility, omitted geometry fields in
+  a custom file fall back to Thread / 1 / 0; the bundled file explicitly sets
+  Block / 64 / 512.
+
+For one configuration shared by every input, remove the `designs` section or
+set it to `{}`. The examples demonstrate the format; their parameter choices
+are not measured recommendations for your input.
+
+If you move or rename an input, select its settings explicitly:
+
+```bash
+scripts/run_gpu.sh renamed.json --config my-gpu-settings.json --design my-designs/adder
+```
+
+## Override arguments on the command line
+
+```bash
+scripts/run_gpu.sh my-designs/adder.json 2 128 1024 60 4 --config my-gpu-settings.json
+```
+
+The five numbers are **kernel, DAG threads, bitmap bits, solver seconds, solver
+workers**. This example overrides the geometry to Block / 128 / 1024, keeps the
+adder's JSON controller settings, and gives CP-SAT 60 seconds and 4 workers.
+A solver limit of `0` skips solving.
+
+Solver limits and worker counts belong to CLI arguments, not this JSON schema.
+Unknown JSON keys, invalid types, and incompatible geometry are rejected before
+construction, including invalid entries for designs not selected by this run.
+
+## Geometry parameters
+
+| Key | Values |
+|---|---|
+| `kernel` | `0` = Thread, `1` = Warp, `2` = Block |
+| `dag_threads` | Thread: `1`; Warp: multiples of 32 from 32 to 1024; Block: `64`, `128`, `256`, `512`, `1024` |
+| `bitmap_bits` | Thread: `0`; Warp/Block: `0` for exact overlap detection, or powers of two from 32 to 4096 |
+
+`dag_threads` is the CUDA execution width for each candidate insertion, not a
+CPU or solver thread count. A valid example for exact overlap detection is
+`"kernel": 2, "dag_threads": 64, "bitmap_bits": 0`.
+
+## DAG controller parameters
+
+| Option | Built-in controller default | Meaning |
 |---|---:|---|
 | `exact_batch_size` | 256 | Maximum concurrent candidate lanes in exact transposed batches; also the Thread batch's CUDA block size. Range 1–1024. |
 | `bitmap_batch_size` | 32 | Maximum concurrent candidate lanes in bitmap transposed batches. Range 1–1024; independent of threads per candidate. |
@@ -33,6 +117,17 @@ The JSON format uses the project's existing parser. Every report records the eff
 | `persistent_small_levels` | 8 | Consecutive small frontiers required before entering the persistent path. |
 | `persistent_exit_frontier` | 1024 | A wider frontier returns control to the host; must be at least the entry threshold. |
 
-For example, `"boolE/mul32_map.rename": {"bitmap_batch_size": 8}` changes only that design's bitmap concurrency. This is an illustration, not a measured recommendation. Smaller batches can preserve more compatible candidates but also increase construction work. GPU scheduling can change candidate selection between runs, so compare repeated runs with the same solver budget and validate every exported solution. Candidate count alone does not establish solution quality.
 
-Correctness checks and CP-SAT constraints are independent of profiles. Each run validates its seed, removes candidates with impossible child dependencies, checks whether the candidate graph is acyclic, preserves the seed, and validates the final solution. Only a checked acyclic candidate graph permits omission of CP-SAT level constraints. Performance and quality measurements belong in `results/gpu/`.
+## Configuration loading and validation
+
+`scripts/run_gpu.sh` and the legacy `scripts/run.sh` read the checkout's JSON
+file at runtime. Direct `gpu`, `simple`, and `xeg_t` executables embed that file
+at build time; rebuild after editing it, or use `--config` for runtime loading.
+Explicit geometry arguments have highest priority. The report records the
+actual kernel, DAG threads, bitmap size, and every `dag_options` value.
+
+Correctness checks and CP-SAT constraints are independent of these choices.
+Every run validates its seed, removes candidates with impossible child
+dependencies, checks candidate acyclicity, preserves the seed, and validates the
+final solution. GPU scheduling can change candidate selection between runs;
+compare repeated runs with the same solver budget and verify exported solutions.

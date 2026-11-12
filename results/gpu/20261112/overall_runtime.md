@@ -7,15 +7,15 @@
 ## What is measured
 
 - **CPU 8 threads:** the accepted CPU quality run, with 8 construction threads.
-- **Profiled GPU (default settings):** the selected per-design quality observations used in the [profiled comparison](profiled.md). These were selected from parameter trials for quality; they are not fresh runs or an independent performance evaluation.
-- **Fixed GPU:** the corrected CUDA implementation with common Block/64/512 parameters and the original controller settings.
+- **GPU:** the selected per-design quality observations used in the [profiled comparison](profiled.md). These were selected from parameter trials for quality; they are not fresh runs or an independent performance evaluation.
+- **GPU (common settings):** the corrected CUDA implementation with common Block/64/512 parameters and the original controller settings.
 - Every column uses **8 CP-SAT workers** and a **360-second solver limit**. This is a solver budget, not an overall-runtime cap; pipeline time can exceed 360000 ms.
 - The value is the original report's `cpu_pipeline_ms` or `gpu_pipeline_ms`: tree construction, DAG construction, in-program validation/cleanup, model formulation, solving, and final solution handling. GPU pipeline time also includes setup and transfers within that interval. **Input loading/JSON parsing, output-file writing, and the separate Python verifier are excluded.**
 - Each cell is **one retained quality-run observation**, not a three-run construction median. No construction time from another run was added to solver time.
-- **54 designs reuse the same Fixed GPU observation in the Profiled GPU column.** Equal times for those designs are reused measurements, not independent repeated measurements. The remaining 33 Profiled GPU cells use selected tuning trials.
-- Four large Fixed GPU solves (BoolE `mul80`, `mul96`, `mul112`, `mul128`) were retried with a 256 GiB allocation after the initial 128 GiB concurrent job ran out of memory; completed observations from the other 83 designs were retained. See the [full experiment report](REPORT.txt).
+- **54 designs reuse the same GPU (common settings) observation in the GPU column.** Equal times for those designs are reused measurements, not independent repeated measurements. The remaining 33 GPU cells use selected tuning trials.
+- Four large GPU (common settings) solves (BoolE `mul80`, `mul96`, `mul112`, `mul128`) were retried with a 256 GiB allocation after the initial 128 GiB concurrent job ran out of memory; completed observations from the other 83 designs were retained. See the [full experiment report](REPORT.txt).
 
-The three solution-quality columns show **final cost (cost ratio, status)**, for example `1093 (1.03, O)`. For **CPU, Profiled GPU, and Fixed GPU alike**, the **cost ratio is the reported final cost divided by the paper's XEG final cost for the same design** (Table 8, PDF page 15; [paper baseline CSV](../../cpu/20261112/paper_xeg.csv)). A cost ratio below 1 means a lower cost than paper XEG, while a cost ratio above 1 means a higher cost. Cost ratios are rounded to two decimal places, so a displayed cost ratio of 1.00 can hide a small cost difference. Each measured cost and runtime still come from the same retained run.
+The three solution-quality columns show **final cost (cost ratio, status)**, for example `1093 (1.03, O)`. For **CPU, GPU, and GPU (common settings) alike**, the **cost ratio is the reported final cost divided by the paper's XEG final cost for the same design** (Table 8, PDF page 15; [paper baseline CSV](../../cpu/20261112/paper_xeg.csv)). A cost ratio below 1 means a lower cost than paper XEG, while a cost ratio above 1 means a higher cost. Cost ratios are rounded to two decimal places, so a displayed cost ratio of 1.00 can hide a small cost difference. Each measured cost and runtime still come from the same retained run.
 
 **Status key:** **O = Optimal**, a legal CP-SAT solution proved optimal within that run's candidate graph; **F = Feasible**, a legal CP-SAT solution without an optimality proof; **T = Tree fallback**, the validated seed tree retained when CP-SAT finds no feasible solution or returns a higher-cost solution. T describes the final solution source, not a CP-SAT status. O does not imply a global optimum over the complete original e-graph. The retained runs in this table contain only O and F; none used T.
 
@@ -25,7 +25,7 @@ Runtime values above 1000 ms are rounded to integers; values at or below 1000 ms
 
 ## Recorded overall runtime and solution quality
 
-| Benchmark / Design | CPU 8 threads runtime (ms) | Profiled GPU (default settings) runtime (ms) | Fixed GPU runtime (ms) | CPU 8 threads cost (cost ratio, status) | Profiled GPU (default settings) cost (cost ratio, status) | Fixed GPU cost (cost ratio, status) |
+| Benchmark / Design | CPU 8 threads runtime (ms) | GPU runtime (ms) | GPU (common settings) runtime (ms) | CPU 8 threads cost (cost ratio, status) | GPU cost (cost ratio, status) | GPU (common settings) cost (cost ratio, status) |
 |---|---:|---:|---:|---:|---:|---:|
 | BoolE / mul16 | 162.217 | 1330 | 1330 | 1093 (1.03, O) | 1057 (1.00, O) | 1057 (1.00, O) |
 | BoolE / mul32 | 3486 | 14132 | 15097 | 4236 (1.02, O) | 4165 (1.00, O) | 4199 (1.01, O) |
@@ -117,7 +117,7 @@ Runtime values above 1000 ms are rounded to integers; values at or below 1000 ms
 
 ## Sources
 
-The CPU column matches the accepted [CPU quality-run pipeline times](../../cpu/20261112/comparison.md#quality-run). Fixed and Profiled GPU times come from the same quality reports that produced their published final costs. `profile_construction_pipeline_ms` in `profiles.csv` is solver-disabled and is **not** the source for this table.
+The CPU column matches the accepted [CPU quality-run pipeline times](../../cpu/20261112/comparison.md#quality-run). Both GPU columns' times come from the same quality reports that produced their published final costs. `profile_construction_pipeline_ms` in `profiles.csv` is solver-disabled and is **not** the source for this table.
 
 Raw report paths in the CSV are relative to the repository on the experiment server. They remain under `build/plan/20261112_cpu_parallel/quality-delivered-cpu/`, `build/plan/20261112_gpu_alignment/v9-quality/`, and the selected `v9-tuning/` trial directories. Raw experiment logs remain local; the table and CSV are published for review.
 

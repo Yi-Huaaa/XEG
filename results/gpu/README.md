@@ -1,5 +1,5 @@
 # GPU results
 
 - [2026-11-12: GPU correctness, construction performance, and design profiles](20261112/README.md)
-- [CPU 8 threads / Profiled GPU (default settings) / Fixed GPU: overall runtime and solution quality across 87 designs](20261112/overall_runtime.md) (recorded quality runs; see timing caveats)
+- [CPU 8 threads / GPU / GPU (common settings): overall runtime and solution quality across 87 designs](20261112/overall_runtime.md) (recorded quality runs; see timing caveats)
 - [CPU results](../cpu/README.md)

@@ -6,8 +6,8 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0]
       << " INPUT [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS=360] [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1] [DETERMINISTIC_SECONDS=0]\n"
-      << "Options: --config FILE.json --design FAMILY/STEM --no-profile --report FILE.json\n"
-      << "Defaults: measured design profile (unlisted: Block/64/512). --no-profile restores Thread/1/0.\nKERNEL: 0=Thread, 1=Warp, 2=Block. ILP_SECONDS=0 skips solving.\n";
+      << "Options: --config FILE.json --design FAMILY/STEM --report FILE.json\n"
+      << "Defaults: automatic design settings; unlisted inputs use Block/64/512, 360 seconds, 8 solver workers.\nKERNEL: 0=Thread, 1=Warp, 2=Block. ILP_SECONDS=0 skips solving.\n";
     return 2;
   }
   try {
@@ -56,9 +56,8 @@ int main(int argc, char** argv) {
     for (int i = 0; i < repeats; ++i) {
       auto report = graph.run_gpu(seconds,kernel,threads,bits,workers,deterministic,profile.dag);
       report["input"] = argv[1]; report["repeat"] = i;
-      report["configuration_source"] = !profile_args.enabled ? "original-defaults"
-        : profile_args.config_path.empty() ? "built-in-profile" : "file";
-      if (profile_args.enabled) report["design_profile"] = profile_args.design;
+      report["configuration_source"] = profile_args.config_path.empty() ? "built-in-profile" : "file";
+      report["design_profile"] = profile_args.design;
       if (!profile_args.config_path.empty()) report["configuration_file"] = profile_args.config_path;
       auto summary = report;
       for (const char* key : {"solver", "solution"})

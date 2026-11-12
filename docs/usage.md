@@ -22,78 +22,60 @@ The recommended GPU runner is `scripts/run_gpu.sh`:
 
 ```text
 scripts/run_gpu.sh INPUT.json [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS] [SOLVER_WORKERS]
-                             [--config FILE.json] [--design FAMILY/STEM] [--no-profile]
+                             [--config FILE.json] [--design FAMILY/STEM]
 ```
 
-### Profiled GPU (default settings)
+### Automatic settings
 
 ```bash
 scripts/run_gpu.sh dataset/boolE/mul16.rename.json
+scripts/run_gpu.sh path/to/your-design.json
 ```
 
-No optional arguments are needed. The runner reads
-[`configs/gpu/87-designs.json`](../configs/gpu/87-designs.json), applies its common
-defaults, then applies any overrides for the input design. The design key is
-the parent directory and filename without `.json`, such as `esyn/mul3.rename`.
-Unlisted inputs inherit the common settings. CP-SAT defaults to **360 seconds
-and 8 workers**.
+Both commands use the same GPU implementation. The runner reads
+[`configs/gpu/87-designs.json`](../configs/gpu/87-designs.json): matching designs
+receive their saved overrides, and other designs use the common defaults.
+For an unlisted input, the five default arguments are **`2 64 512 360 8`**.
 
-The common geometry is **Block / 64 / 512**. Profiles can change geometry or
-DAG controller settings, so a profiled run is not defined by geometry alone.
-For example, `esyn/mul3.rename` uses a bitmap batch size of 8 instead of the
-common value 32.
+### Optional manual arguments
 
 ```bash
-# Replace the profile file.
-scripts/run_gpu.sh dataset/esyn/mul3.rename.json --config configs/gpu/87-designs.json
-
-# Select the profile explicitly for a moved or renamed input.
-scripts/run_gpu.sh path/to/input.json --design esyn/mul3.rename
+scripts/run_gpu.sh path/to/your-design.json 2 128 1024 60 4
 ```
 
-### Fixed GPU (comparison settings)
+| Argument | Common default | Meaning |
+|---|---:|---|
+| `KERNEL` | `2` | Block kernel; `0` is Thread and `1` is Warp |
+| `DAG_THREADS` | `64` | CUDA execution width for candidate insertion |
+| `BITMAP_BITS` | `512` | Overlap bitmap size; `0` selects exact overlap detection |
+| `ILP_SECONDS` | `360` | CP-SAT time limit in seconds |
+| `SOLVER_WORKERS` | `8` | CP-SAT worker count |
 
-Fixed GPU uses Block / 64 / 512 and the original common DAG controller settings,
-without per-design overrides:
+Explicit arguments override the corresponding selected values. Controller
+settings still come from the configuration file. A solver limit of `0` skips
+CP-SAT and runs construction and validation only:
 
 ```bash
-scripts/run_gpu.sh dataset/boolE/mul16.rename.json 2 64 512 360 8 --no-profile
+scripts/run_gpu.sh dataset/boolE/mul16.rename.json 2 64 512 0 8
 ```
 
-| Value | Argument | Meaning |
-|---|---|---|
-| `2` | `KERNEL` | Block kernel; `0` is Thread and `1` is Warp |
-| `64` | `DAG_THREADS` | CUDA execution width for candidate insertion |
-| `512` | `BITMAP_BITS` | Overlap bitmap size; `0` selects exact overlap detection |
-| `360` | `ILP_SECONDS` | CP-SAT time limit in seconds |
-| `8` | `SOLVER_WORKERS` | CP-SAT worker count |
-
-`--no-profile` disables profile loading. By itself it restores the legacy
-Thread / 1 / 0 geometry; specify `2 64 512` as above for Fixed GPU. Providing
-`2 64 512` without `--no-profile` still retains the design's controller overrides.
-
-### Construction without solving
-
-For this runner, the fourth number after the input is the solver time limit.
-**`2 64 512 0 8` skips CP-SAT.** It does not produce a final solver solution:
+### Custom JSON settings
 
 ```bash
-# Fixed GPU construction and validation only.
-scripts/run_gpu.sh dataset/boolE/mul16.rename.json 2 64 512 0 8 --no-profile
+scripts/run_gpu.sh path/to/your-design.json --config my-gpu-settings.json
 ```
 
-### Configuration precedence and other entry points
+The [JSON configuration guide](../configs/gpu/README.md#write-your-own-settings)
+provides a complete example, explains `defaults` and per-design overrides, and
+lists every valid parameter. A custom file replaces the bundled configuration.
+If an input has been moved or renamed, `--design FAMILY/STEM` selects its saved
+settings explicitly.
 
-Explicit positional geometry overrides profile geometry. The full controller
-options, valid values, and selection precedence are documented in
-[GPU profiles](../configs/gpu/README.md).
-
-The scripts read the profile JSON at runtime. Direct `gpu`, `simple`, and
-`xeg_t` executables embed the same manifest at build time; rebuild to refresh it
-or supply `--config`. The legacy `scripts/run.sh` invokes `simple`, whose fourth
-and fifth optional numbers are **ILP backend and cuOpt mode**, not solver seconds
-and workers. See the [program reference](../main/README.md) for direct and legacy
-CLI syntax.
+The scripts read JSON at runtime. Direct `gpu`, `simple`, and `xeg_t` executables
+embed the bundled settings at build time; rebuild to refresh them or supply
+`--config`. The legacy `scripts/run.sh` invokes `simple`, whose fourth and fifth
+optional numbers are **ILP backend and cuOpt mode**, not solver seconds and
+workers. See the [program reference](../main/README.md) for direct and legacy syntax.
 
 ## Reports and verification
 
@@ -128,9 +110,11 @@ single-core affinity. For direct calls that solve, use
 ## Benchmarks
 
 The 87-design suite covers BoolE, Diospyros, E-Syn, FlexC, IMpress, MaxSAT,
-E-morphic, Rover, and Tensat. The repository tracks 81 JSON inputs; six large
-BoolE inputs are omitted from git: `mul112`, `mul128`, `mul80_map`, `mul96_map`,
-`mul112_map`, and `mul128_map`.
+E-morphic, Rover, and Tensat. All 87 inputs are included: 81 JSON files and six
+compressed BoolE inputs. The CPU/GPU runners, batch runner, and CPU benchmark
+helper automatically restore a missing `INPUT.json` from `INPUT.json.zip`.
+Existing JSON files are kept unchanged. See [dataset/](../dataset/README.md) for
+manual preparation before invoking executables directly.
 
 To compare CPU construction thread counts without solver time:
 

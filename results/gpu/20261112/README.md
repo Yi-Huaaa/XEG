@@ -1,7 +1,7 @@
 # GPU extraction results
 
-- [CPU 8 threads / Profiled GPU (default settings) / Fixed GPU: overall runtime and solution quality across 87 designs](overall_runtime.md), with [matching costs, statuses, and source paths](overall_runtime.csv)
-- [Profiled GPU (default settings): quality and separate tree/DAG tables](profiled.md)
+- [CPU 8 threads / GPU / GPU (common settings): overall runtime and solution quality across 87 designs](overall_runtime.md), with [matching costs, statuses, and source paths](overall_runtime.csv)
+- [GPU: quality and separate tree/DAG tables](profiled.md)
 - [Fixed original parameters: implementation-only comparison](comparison.md)
 - [Full report and experiment limits](REPORT.txt)
 - [Per-design costs](quality.csv), [full measurements](profiles.csv), [profile settings](profiles.json)
@@ -18,4 +18,9 @@ Selected quality versus the CPU reference: 17 lower, 51 equal, 19 higher; 0 with
 
 Validation: 139 C++/CUDA tests, 15 Python tests, 87 CPU regression comparisons, and GPU memcheck on tree/repeated-extraction tests. Raw experiment/review logs remain under `build/plan/20261112_gpu_alignment/` on the experiment server.
 
-The CUDA CLI now uses these measured profiles by default. The tables retain their original recorded runs; this default-selection change does not rerun or replace the measurements. To request the Fixed GPU settings, pass `2 64 512 --no-profile`.
+The GPU runner automatically selects saved settings for known inputs and common
+settings for other inputs. The common-settings column is a retained experimental
+reference, not a separate execution mode. Historical reports may call these
+observations “Profiled GPU” and “Fixed GPU.” The measurements are unchanged.
+See the [configuration guide](../../../configs/gpu/README.md#write-your-own-settings)
+for custom JSON settings, including how to use one configuration for all inputs.

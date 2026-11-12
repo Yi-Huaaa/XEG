@@ -6,8 +6,8 @@
 #
 # Arguments after the input are passed to main/simple unchanged; see its
 # usage message for the valid values. By default the measured design profile
-# in configs/gpu/87-designs.json is loaded. --no-profile restores the original
-# controller defaults; positional arguments override profile geometry.
+# in configs/gpu/87-designs.json is loaded. Unlisted inputs use its common
+# defaults; positional arguments override the selected geometry.
 #
 # Each run gets its own directory, <build>/runs/<timestamp>_<input name>/,
 # holding run.log (the full console output) and any files the solver
@@ -27,23 +27,22 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${XEG_BUILD_DIR:-${repo_root}/build}"
 binary="$(realpath -m "${build_dir}/main/simple")"
-input="$(realpath "$1")"
+input="$(python3 "$repo_root/scripts/prepare_input.py" "$1")"
 shift
 arguments=()
-profile_selected=false
+config_selected=false
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --config ]; then
     if [ "$#" -lt 2 ]; then echo 'error: --config needs a path' >&2; exit 2; fi
-    profile_selected=true
+    config_selected=true
     arguments+=(--config "$(realpath "$2")")
     shift 2
   else
-    if [ "$1" = --no-profile ]; then profile_selected=true; fi
     arguments+=("$1")
     shift
   fi
 done
-if ! "$profile_selected"; then
+if ! "$config_selected"; then
   arguments+=(--config "$repo_root/configs/gpu/87-designs.json")
 fi
 

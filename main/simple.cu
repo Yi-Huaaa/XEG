@@ -18,7 +18,7 @@ int main(int argc, char *argv[]) {
   
   if (argc < 2 || argc > 7) {
     std::cerr
-      << "Defaults: measured GPU design profiles. Options: --config FILE.json --design FAMILY/STEM --no-profile\n"
+      << "Defaults: automatic GPU design settings (unlisted: Block/64/512). Options: --config FILE.json --design FAMILY/STEM\n"
       << "Usage:\n"
       << "  ./main/simple "
       << "<input_file> "

@@ -1,6 +1,6 @@
 # GPU XEG: measured design profiles
 
-This page evaluates **Profiled GPU (default settings)** using the supplied [87-design profiles](../../../configs/gpu/87-designs.json). The [fixed-parameter comparison](comparison.md) measures the code changes with the original common settings.
+This page evaluates **GPU** using the supplied [87-design profiles](../../../configs/gpu/87-designs.json). The [fixed-parameter comparison](comparison.md) measures the code changes with the original common settings.
 
 Selection protocol: every design received a construction-only trial with `persistent_small_levels=1`; it was considered only with a measured DAG improvement above 10%. Designs whose fixed GPU cost exceeded the CPU reference or a valid original GPU result received six 60-second quality screens: bitmap batch 8, 16, 64, or 128, 2048-bit bitmap, and a 10-iteration bitmap direct limit. If the best screen still exceeded the lower reference cost by more than 3%, two additional screens used exact overlap with batch 32 and 4096-bit bitmap with batch 1. A lower-cost screen candidate (or an equal-cost OPTIMAL candidate that improves proof status or reduces observed solver time by more than 25%), optionally combined with the faster levelization setting, then received a full 360-second / 8-worker solve. For remaining gaps above 3%, up to two alternate profiles receive the full budget even when the 60-second screen has not beaten the 360-second fixed result. A profile is retained only if its validated full-budget result is no worse than the fixed run. Otherwise the original defaults and fixed result are retained.
 
@@ -14,7 +14,7 @@ These are **selected observed results**, with different numbers of trials per de
 
 Paper and CPU values are references from the accepted CPU report. All selected GPU reports passed the independent original-JSON verifier. `OPTIMAL` applies within that run’s candidate graph; `FEASIBLE` lacks an optimality proof; `UNKNOWN` can return a valid `tree_fallback`. Original GPU dashes denote no incumbent, not zero cost.
 
-| Benchmark | Design | Paper XEG | CPU 8t reference | Original GPU | Profiled GPU (default settings) | Fixed GPU | Profiled status | Source |
+| Benchmark | Design | Paper XEG | CPU 8t reference | Original GPU | GPU | GPU (common settings) | GPU status | Source |
 |---|---|---:|---:|---:|---:|---:|---|---|
 | BoolE | mul16 | 1057 | 1093 | 1057 | 1057 | 1057 | OPTIMAL | solver |
 | BoolE | mul32 | 4167 | 4236 | 4170 | 4165 | 4199 | OPTIMAL | solver |
@@ -108,7 +108,7 @@ Paper and CPU values are references from the accepted CPU report. All selected G
 
 Native CUDA-event times in milliseconds; parsing, allocation, transfers/checks outside the original timer, and solving are excluded. Speedups use the original GPU as 1.00x. Each design has equal weight in mean rows. The fixed and profiled runs retain identical timing boundaries.
 
-| Benchmark | Design | Original GPU | Profiled GPU (default settings) | Fixed GPU |
+| Benchmark | Design | Original GPU | GPU | GPU (common settings) |
 |---|---|---:|---:|---:|
 | BoolE | mul16 | 1.461 (1.00x) | 1.636 (0.89x) | 1.673 (0.87x) |
 | BoolE | mul32 | 3.825 (1.00x) | 3.468 (1.10x) | 3.424 (1.12x) |
@@ -223,7 +223,7 @@ Native CUDA-event times in milliseconds; parsing, allocation, transfers/checks o
 Native CUDA-event times in milliseconds; parsing, allocation, transfers/checks outside the original timer, and solving are excluded. Speedups use the original GPU as 1.00x. Each design has equal weight in mean rows. The fixed and profiled runs retain identical timing boundaries.
 The final column includes seed checking and candidate copying, pruning, and checking; it is additional to the native construction times.
 
-| Benchmark | Design | Original GPU | Profiled GPU (default settings) | Fixed GPU | Added checks/transfers |
+| Benchmark | Design | Original GPU | GPU | GPU (common settings) | Added checks/transfers |
 |---|---|---:|---:|---:|---:|
 | BoolE | mul16 | 27.082 (1.00x) | 25.584 (1.06x) | 25.617 (1.06x) | 0.552 |
 | BoolE | mul32 | 65.336 (1.00x) | 91.034 (0.72x) | 62.416 (1.05x) | 1.907 |
