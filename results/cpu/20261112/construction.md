@@ -2,96 +2,206 @@
 
 [Back to paper/runtime/cost comparison](comparison.md)
 
-CPU tree plus DAG construction in **milliseconds**, including candidate cleanup. Each value is the median of three runs on the same parsed graph. Parsing, independent validation, and solving are excluded. These construction-only timings are distinct from the overall runtime reported in paper Table 8.
+- [Tree construction](#tree-construction)
+- [DAG construction](#dag-construction)
+- [Exact measurements and speedups as CSV](comparison.csv)
 
-Threads: 1, 2, 4, 8, 16, 32. Hardware: AMD EPYC 9B45, with a 32-CPU allocation and `OMP_PROC_BIND=close`, `OMP_PLACES=cores`. Exact values are in [comparison.csv](comparison.csv).
+Runtime values above 1000 ms are rounded to the nearest integer; values at or below 1000 ms show three decimal places. Numbers have no thousands separators. CSV files retain unrounded measurements.
 
-| Benchmark | e-graph | CPU 1t (ms) | CPU 2t (ms) | CPU 4t (ms) | CPU 8t (ms) | CPU 16t (ms) | CPU 32t (ms) |
-|---|---|---:|---:|---:|---:|---:|---:|
-| BoolE | mul16 | 5.090 | 4.940 | 4.037 | 3.583 | 3.948 | 4.147 |
-| BoolE | mul32 | 29.761 | 25.539 | 20.167 | 17.540 | 19.301 | 19.779 |
-| BoolE | mul48 | 89.654 | 77.397 | 62.243 | 53.784 | 58.048 | 59.062 |
-| BoolE | mul64 | 145.020 | 122.333 | 98.715 | 87.027 | 94.124 | 90.579 |
-| BoolE | mul80 | 338.441 | 295.238 | 235.489 | 201.184 | 223.372 | 220.254 |
-| BoolE | mul96 | 674.990 | 625.869 | 531.023 | 463.419 | 474.308 | 463.171 |
-| BoolE | mul112 | 599.335 | 582.872 | 477.165 | 432.775 | 420.874 | 423.277 |
-| BoolE | mul128 | 1,166.064 | 1,046.162 | 897.485 | 792.365 | 780.770 | 770.283 |
-| BoolE | mul16map | 10.152 | 9.757 | 7.528 | 6.379 | 6.780 | 6.922 |
-| BoolE | mul32map | 78.746 | 53.696 | 34.741 | 26.643 | 26.757 | 26.212 |
-| BoolE | mul48map | 212.109 | 142.609 | 89.759 | 62.427 | 60.745 | 57.262 |
-| BoolE | mul64map | 482.525 | 332.896 | 213.872 | 152.916 | 137.269 | 125.000 |
-| BoolE | mul80map | 1,186.704 | 757.651 | 472.093 | 301.922 | 238.422 | 211.145 |
-| BoolE | mul96map | 1,853.817 | 1,275.096 | 767.473 | 510.297 | 403.593 | 347.290 |
-| BoolE | mul112map | 2,829.781 | 2,011.488 | 1,180.980 | 757.653 | 575.880 | 482.280 |
-| BoolE | mul128map | 4,248.804 | 2,956.354 | 1,831.318 | 1,193.986 | 871.746 | 728.363 |
-| ESyn | mul3 | 10.477 | 9.293 | 8.096 | 7.337 | 7.407 | 7.820 |
-| ESyn | c7552 | 2.706 | 2.651 | 2.331 | 2.027 | 2.244 | 2.386 |
-| ESyn | b12 | 4.846 | 4.534 | 3.925 | 3.607 | 3.761 | 3.861 |
-| ESyn | i7 | 4.379 | 4.210 | 3.379 | 2.931 | 3.349 | 3.626 |
-| ESyn | C432 | 8.167 | 7.209 | 6.256 | 5.766 | 5.969 | 6.206 |
-| ESyn | c2670 | 7.130 | 6.849 | 5.752 | 5.118 | 5.285 | 5.556 |
-| ESyn | C5315 | 6.433 | 6.252 | 5.270 | 4.794 | 5.044 | 5.453 |
-| ESyn | mul5 | 10.109 | 9.427 | 8.249 | 7.576 | 7.883 | 8.058 |
-| ESyn | qdiv | 5.140 | 5.117 | 4.263 | 3.759 | 4.178 | 4.398 |
-| ESyn | max | 6.906 | 7.991 | 5.776 | 4.648 | 5.551 | 6.015 |
-| ESyn | bar | 3.586 | 3.694 | 2.957 | 2.588 | 3.335 | 3.629 |
-| ESyn | cavlc | 14.873 | 13.290 | 10.554 | 9.000 | 9.717 | 10.267 |
-| ESyn | adder | 8.641 | 8.339 | 7.165 | 6.592 | 7.292 | 7.944 |
-| ESyn | frg2 | 50.061 | 45.271 | 36.088 | 31.382 | 34.766 | 39.021 |
-| E-morphic | sin | 18.074 | 13.707 | 10.052 | 8.301 | 8.815 | 8.978 |
-| E-morphic | arbiter | 6.790 | 7.220 | 5.886 | 5.297 | 6.241 | 7.055 |
-| E-morphic | square | 29.467 | 31.521 | 22.376 | 18.264 | 18.352 | 18.560 |
-| E-morphic | multiplier | 27.082 | 24.519 | 20.769 | 18.576 | 19.333 | 19.808 |
-| E-morphic | log2 | 262.406 | 174.167 | 106.551 | 67.562 | 71.279 | 59.472 |
-| E-morphic | mem_ctrl | 66.895 | 63.008 | 50.846 | 43.606 | 45.113 | 45.265 |
-| E-morphic | div | 44.651 | 39.040 | 33.703 | 31.264 | 37.717 | 39.801 |
-| IMpress | mul512 | 1.548 | 1.808 | 1.427 | 1.213 | 1.748 | 1.955 |
-| IMpress | mul1024 | 7.803 | 8.998 | 6.617 | 5.252 | 6.326 | 6.754 |
-| IMpress | mul2048 | 16.174 | 17.741 | 13.197 | 10.168 | 11.455 | 11.173 |
-| Tensat | vgg | 0.627 | 0.577 | 0.521 | 0.417 | 0.641 | 0.894 |
-| Tensat | resnet50 | 0.470 | 0.470 | 0.385 | 0.346 | 0.554 | 0.951 |
-| Tensat | bert | 7.931 | 10.614 | 8.769 | 7.632 | 9.193 | 10.092 |
-| Tensat | nasneta | 11.303 | 17.091 | 11.967 | 9.656 | 10.830 | 10.715 |
-| Tensat | nasrnn | 6.616 | 8.527 | 6.853 | 5.797 | 7.312 | 7.916 |
-| Flexc | flexc_75 | 3.645 | 3.252 | 2.517 | 2.055 | 2.259 | 2.101 |
-| Flexc | flexc_67 | 3.614 | 3.158 | 2.411 | 2.019 | 1.956 | 2.051 |
-| Flexc | flexc_db | 3.572 | 3.169 | 2.469 | 2.075 | 2.047 | 2.125 |
-| Flexc | flexc_86 | 3.613 | 3.128 | 2.422 | 2.031 | 1.986 | 1.995 |
-| Flexc | flexc_4a | 3.612 | 3.150 | 2.558 | 2.028 | 2.020 | 2.075 |
-| Flexc | flexc_03 | 3.641 | 3.200 | 2.508 | 2.064 | 2.236 | 2.236 |
-| Flexc | flexc_7b | 11.018 | 9.572 | 7.511 | 6.492 | 6.464 | 6.747 |
-| Flexc | flexc_ff | 8.486 | 7.360 | 6.165 | 5.411 | 5.420 | 5.497 |
-| Flexc | flexc_b8 | 8.727 | 7.543 | 6.273 | 5.515 | 5.595 | 5.755 |
-| Flexc | flexc_a0 | 8.796 | 7.646 | 6.471 | 5.589 | 5.636 | 5.722 |
-| Flexc | flexc_85 | 8.676 | 7.611 | 6.445 | 5.696 | 5.655 | 5.762 |
-| Flexc | flexc_5c | 8.697 | 7.711 | 6.556 | 5.773 | 5.752 | 5.958 |
-| Flexc | flexc_fd | 8.701 | 7.781 | 6.278 | 5.235 | 5.170 | 5.275 |
-| Flexc | flexc_fe | 13.141 | 13.142 | 10.020 | 9.042 | 9.276 | 9.224 |
-| Rover | box5r | 0.677 | 0.653 | 0.672 | 0.622 | 0.664 | 0.660 |
-| Rover | box3r | 1.576 | 1.552 | 1.306 | 1.147 | 1.306 | 1.379 |
-| Rover | fir8t5r | 3.693 | 3.432 | 2.918 | 2.607 | 2.668 | 2.741 |
-| Rover | fir8t6r | 8.577 | 9.003 | 7.531 | 6.604 | 6.540 | 6.694 |
-| Rover | fir8t7r | 13.517 | 21.056 | 14.986 | 11.744 | 11.540 | 11.197 |
-| Rover | box4r | 18.385 | 19.832 | 15.584 | 13.340 | 13.372 | 12.965 |
-| Rover | fir8t8r | 15.689 | 25.607 | 18.259 | 14.331 | 13.657 | 13.326 |
-| Rover | mcm378r | 86.844 | 83.268 | 62.209 | 53.644 | 47.803 | 45.310 |
-| Rover | mcm379r | 87.642 | 83.083 | 66.018 | 57.066 | 50.677 | 47.235 |
-| Diospyros | vaddr7 | 0.017 | 0.013 | 0.011 | 0.011 | 0.012 | 0.011 |
-| Diospyros | vmjmzr14 | 0.099 | 0.067 | 0.063 | 0.062 | 0.062 | 0.062 |
-| Diospyros | vvamr23 | 0.125 | 0.084 | 0.080 | 0.080 | 0.080 | 0.079 |
-| Diospyros | vpmr23 | 0.125 | 0.084 | 0.080 | 0.080 | 0.080 | 0.080 |
-| Diospyros | vmacr21 | 0.539 | 0.331 | 0.216 | 0.199 | 0.256 | 0.328 |
-| Diospyros | vmm22r21 | 0.901 | 0.538 | 0.375 | 0.313 | 0.385 | 0.459 |
-| Diospyros | vmm22r26 | 1.067 | 0.698 | 0.450 | 0.396 | 0.447 | 0.560 |
-| Diospyros | specr26 | 1.066 | 0.694 | 0.463 | 0.370 | 0.455 | 0.523 |
-| Diospyros | vcv22r36 | 1.446 | 0.853 | 0.590 | 0.472 | 0.486 | 0.615 |
-| Diospyros | vmm23r58 | 5.712 | 4.457 | 2.895 | 2.138 | 1.956 | 2.238 |
-| Diospyros | vcv33r168 | 45.151 | 30.159 | 21.742 | 16.629 | 13.829 | 12.170 |
-| Diospyros | drcr2r18 | 547.549 | 291.632 | 172.515 | 122.066 | 74.304 | 51.804 |
-| Diospyros | drcr18 | 950.535 | 528.346 | 314.442 | 229.411 | 158.874 | 89.333 |
-| Maxsat | maxcut39 | 0.143 | 0.142 | 0.127 | 0.122 | 0.171 | 0.193 |
-| Maxsat | maxcut1 | 0.145 | 0.140 | 0.229 | 0.120 | 0.172 | 0.258 |
-| Maxsat | s2v1 | 0.225 | 0.272 | 0.205 | 0.201 | 0.474 | 0.507 |
-| Maxsat | s2v3 | 0.239 | 0.280 | 0.207 | 0.184 | 0.341 | 0.471 |
-| Maxsat | hamming6 | 0.220 | 0.322 | 0.266 | 0.305 | 0.537 | 0.581 |
-| Maxsat | johnson8 | 0.233 | 0.323 | 0.263 | 0.257 | 0.463 | 0.599 |
+Each cell shows **runtime in ms (speedup)**. For each design and each phase, the current CPU implementation at **1 thread** is the baseline, shown as **(1.00x)**. Speedup is the unrounded 1-thread median divided by the unrounded median at the indicated thread count. Values below 1.00x mean a slowdown.
+
+Tree and DAG runtimes are measured separately; each value is the median of three runs on the same parsed graph. DAG timing includes candidate cleanup. Input parsing, validation, and CP-SAT model construction/search are excluded.
+
+Hardware: AMD EPYC 9B45, with a 32-CPU allocation and `OMP_PROC_BIND=close`, `OMP_PLACES=cores`. Threads: 1, 2, 4, 8, 16, 32.
+
+<a id="tree-construction"></a>
+
+## Tree construction runtime
+
+<table>
+<thead><tr><th>Benchmark</th><th>e-graph</th><th>CPU 1t<br>ms (speedup)</th><th>CPU 2t<br>ms (speedup)</th><th>CPU 4t<br>ms (speedup)</th><th>CPU 8t<br>ms (speedup)</th><th>CPU 16t<br>ms (speedup)</th><th>CPU 32t<br>ms (speedup)</th></tr></thead>
+<tbody>
+<tr><td>BoolE</td><td>mul16</td><td align="right">0.779 (1.00x)</td><td align="right">1.109 (0.70x)</td><td align="right">0.685 (1.14x)</td><td align="right">0.464 (1.68x)</td><td align="right">0.732 (1.06x)</td><td align="right">0.805 (0.97x)</td></tr>
+<tr><td>BoolE</td><td>mul32</td><td align="right">8.549 (1.00x)</td><td align="right">6.248 (1.37x)</td><td align="right">3.878 (2.20x)</td><td align="right">2.534 (3.37x)</td><td align="right">3.390 (2.52x)</td><td align="right">3.567 (2.40x)</td></tr>
+<tr><td>BoolE</td><td>mul48</td><td align="right">22.210 (1.00x)</td><td align="right">16.481 (1.35x)</td><td align="right">9.850 (2.25x)</td><td align="right">6.035 (3.68x)</td><td align="right">8.158 (2.72x)</td><td align="right">7.784 (2.85x)</td></tr>
+<tr><td>BoolE</td><td>mul64</td><td align="right">37.966 (1.00x)</td><td align="right">27.351 (1.39x)</td><td align="right">16.519 (2.30x)</td><td align="right">10.485 (3.62x)</td><td align="right">14.504 (2.62x)</td><td align="right">11.095 (3.42x)</td></tr>
+<tr><td>BoolE</td><td>mul80</td><td align="right">64.010 (1.00x)</td><td align="right">50.792 (1.26x)</td><td align="right">28.968 (2.21x)</td><td align="right">16.588 (3.86x)</td><td align="right">24.752 (2.59x)</td><td align="right">19.016 (3.37x)</td></tr>
+<tr><td>BoolE</td><td>mul96</td><td align="right">81.686 (1.00x)</td><td align="right">61.977 (1.32x)</td><td align="right">41.892 (1.95x)</td><td align="right">26.775 (3.05x)</td><td align="right">30.221 (2.70x)</td><td align="right">26.056 (3.14x)</td></tr>
+<tr><td>BoolE</td><td>mul112</td><td align="right">119.153 (1.00x)</td><td align="right">98.236 (1.21x)</td><td align="right">56.798 (2.10x)</td><td align="right">37.054 (3.22x)</td><td align="right">38.002 (3.14x)</td><td align="right">46.156 (2.58x)</td></tr>
+<tr><td>BoolE</td><td>mul128</td><td align="right">157.151 (1.00x)</td><td align="right">135.480 (1.16x)</td><td align="right">73.825 (2.13x)</td><td align="right">49.593 (3.17x)</td><td align="right">49.438 (3.18x)</td><td align="right">50.822 (3.09x)</td></tr>
+<tr><td>BoolE</td><td>mul16map</td><td align="right">2.454 (1.00x)</td><td align="right">2.974 (0.83x)</td><td align="right">1.729 (1.42x)</td><td align="right">1.109 (2.21x)</td><td align="right">1.331 (1.84x)</td><td align="right">1.353 (1.81x)</td></tr>
+<tr><td>BoolE</td><td>mul32map</td><td align="right">50.494 (1.00x)</td><td align="right">28.607 (1.77x)</td><td align="right">13.712 (3.68x)</td><td align="right">7.834 (6.45x)</td><td align="right">7.750 (6.52x)</td><td align="right">7.345 (6.87x)</td></tr>
+<tr><td>BoolE</td><td>mul48map</td><td align="right">150.707 (1.00x)</td><td align="right">88.852 (1.70x)</td><td align="right">45.098 (3.34x)</td><td align="right">22.428 (6.72x)</td><td align="right">20.232 (7.45x)</td><td align="right">17.544 (8.59x)</td></tr>
+<tr><td>BoolE</td><td>mul64map</td><td align="right">330.397 (1.00x)</td><td align="right">199.136 (1.66x)</td><td align="right">103.860 (3.18x)</td><td align="right">53.250 (6.20x)</td><td align="right">39.613 (8.34x)</td><td align="right">29.831 (11.08x)</td></tr>
+<tr><td>BoolE</td><td>mul80map</td><td align="right">935.976 (1.00x)</td><td align="right">543.329 (1.72x)</td><td align="right">293.394 (3.19x)</td><td align="right">143.864 (6.51x)</td><td align="right">79.223 (11.81x)</td><td align="right">55.847 (16.76x)</td></tr>
+<tr><td>BoolE</td><td>mul96map</td><td align="right">1438 (1.00x)</td><td align="right">907.095 (1.59x)</td><td align="right">462.612 (3.11x)</td><td align="right">242.640 (5.93x)</td><td align="right">132.433 (10.86x)</td><td align="right">82.901 (17.34x)</td></tr>
+<tr><td>BoolE</td><td>mul112map</td><td align="right">2351 (1.00x)</td><td align="right">1586 (1.48x)</td><td align="right">822.219 (2.86x)</td><td align="right">430.461 (5.46x)</td><td align="right">249.788 (9.41x)</td><td align="right">153.491 (15.32x)</td></tr>
+<tr><td>BoolE</td><td>mul128map</td><td align="right">3427 (1.00x)</td><td align="right">2224 (1.54x)</td><td align="right">1205 (2.84x)</td><td align="right">651.492 (5.26x)</td><td align="right">347.247 (9.87x)</td><td align="right">214.083 (16.01x)</td></tr>
+<tr><td>ESyn</td><td>mul3</td><td align="right">0.515 (1.00x)</td><td align="right">0.629 (0.82x)</td><td align="right">0.429 (1.20x)</td><td align="right">0.322 (1.60x)</td><td align="right">0.437 (1.18x)</td><td align="right">0.579 (0.89x)</td></tr>
+<tr><td>ESyn</td><td>c7552</td><td align="right">0.450 (1.00x)</td><td align="right">0.580 (0.78x)</td><td align="right">0.444 (1.01x)</td><td align="right">0.271 (1.66x)</td><td align="right">0.409 (1.10x)</td><td align="right">0.496 (0.91x)</td></tr>
+<tr><td>ESyn</td><td>b12</td><td align="right">0.476 (1.00x)</td><td align="right">0.644 (0.74x)</td><td align="right">0.389 (1.23x)</td><td align="right">0.261 (1.82x)</td><td align="right">0.349 (1.37x)</td><td align="right">0.365 (1.30x)</td></tr>
+<tr><td>ESyn</td><td>i7</td><td align="right">0.432 (1.00x)</td><td align="right">0.552 (0.78x)</td><td align="right">0.314 (1.38x)</td><td align="right">0.197 (2.20x)</td><td align="right">0.279 (1.55x)</td><td align="right">0.290 (1.49x)</td></tr>
+<tr><td>ESyn</td><td>C432</td><td align="right">0.606 (1.00x)</td><td align="right">0.714 (0.85x)</td><td align="right">0.455 (1.33x)</td><td align="right">0.333 (1.82x)</td><td align="right">0.503 (1.21x)</td><td align="right">0.571 (1.06x)</td></tr>
+<tr><td>ESyn</td><td>c2670</td><td align="right">0.782 (1.00x)</td><td align="right">1.078 (0.72x)</td><td align="right">0.601 (1.30x)</td><td align="right">0.396 (1.97x)</td><td align="right">0.465 (1.68x)</td><td align="right">0.484 (1.61x)</td></tr>
+<tr><td>ESyn</td><td>C5315</td><td align="right">0.699 (1.00x)</td><td align="right">1.012 (0.69x)</td><td align="right">0.615 (1.14x)</td><td align="right">0.387 (1.81x)</td><td align="right">0.527 (1.33x)</td><td align="right">0.657 (1.06x)</td></tr>
+<tr><td>ESyn</td><td>mul5</td><td align="right">0.871 (1.00x)</td><td align="right">1.200 (0.73x)</td><td align="right">0.709 (1.23x)</td><td align="right">0.506 (1.72x)</td><td align="right">0.693 (1.26x)</td><td align="right">0.736 (1.18x)</td></tr>
+<tr><td>ESyn</td><td>qdiv</td><td align="right">0.693 (1.00x)</td><td align="right">1.092 (0.64x)</td><td align="right">0.667 (1.04x)</td><td align="right">0.442 (1.57x)</td><td align="right">0.621 (1.12x)</td><td align="right">0.716 (0.97x)</td></tr>
+<tr><td>ESyn</td><td>max</td><td align="right">3.271 (1.00x)</td><td align="right">4.685 (0.70x)</td><td align="right">2.808 (1.17x)</td><td align="right">1.847 (1.77x)</td><td align="right">2.561 (1.28x)</td><td align="right">2.888 (1.13x)</td></tr>
+<tr><td>ESyn</td><td>bar</td><td align="right">0.708 (1.00x)</td><td align="right">1.016 (0.70x)</td><td align="right">0.598 (1.18x)</td><td align="right">0.436 (1.63x)</td><td align="right">0.682 (1.04x)</td><td align="right">0.724 (0.98x)</td></tr>
+<tr><td>ESyn</td><td>cavlc</td><td align="right">1.132 (1.00x)</td><td align="right">1.333 (0.85x)</td><td align="right">0.808 (1.40x)</td><td align="right">0.497 (2.28x)</td><td align="right">0.642 (1.76x)</td><td align="right">0.677 (1.67x)</td></tr>
+<tr><td>ESyn</td><td>adder</td><td align="right">1.204 (1.00x)</td><td align="right">1.541 (0.78x)</td><td align="right">1.111 (1.08x)</td><td align="right">0.940 (1.28x)</td><td align="right">1.260 (0.96x)</td><td align="right">1.659 (0.73x)</td></tr>
+<tr><td>ESyn</td><td>frg2</td><td align="right">1.609 (1.00x)</td><td align="right">2.070 (0.78x)</td><td align="right">1.196 (1.35x)</td><td align="right">0.964 (1.67x)</td><td align="right">0.852 (1.89x)</td><td align="right">0.766 (2.10x)</td></tr>
+<tr><td>E-morphic</td><td>sin</td><td align="right">10.321 (1.00x)</td><td align="right">6.605 (1.56x)</td><td align="right">3.595 (2.87x)</td><td align="right">2.189 (4.72x)</td><td align="right">2.685 (3.84x)</td><td align="right">2.728 (3.78x)</td></tr>
+<tr><td>E-morphic</td><td>arbiter</td><td align="right">0.946 (1.00x)</td><td align="right">1.504 (0.63x)</td><td align="right">0.964 (0.98x)</td><td align="right">0.828 (1.14x)</td><td align="right">1.027 (0.92x)</td><td align="right">1.318 (0.72x)</td></tr>
+<tr><td>E-morphic</td><td>square</td><td align="right">9.419 (1.00x)</td><td align="right">13.811 (0.68x)</td><td align="right">7.290 (1.29x)</td><td align="right">4.843 (1.94x)</td><td align="right">4.442 (2.12x)</td><td align="right">4.455 (2.11x)</td></tr>
+<tr><td>E-morphic</td><td>multiplier</td><td align="right">10.317 (1.00x)</td><td align="right">9.019 (1.14x)</td><td align="right">6.783 (1.52x)</td><td align="right">5.502 (1.88x)</td><td align="right">5.685 (1.81x)</td><td align="right">6.019 (1.71x)</td></tr>
+<tr><td>E-morphic</td><td>log2</td><td align="right">219.740 (1.00x)</td><td align="right">135.366 (1.62x)</td><td align="right">70.954 (3.10x)</td><td align="right">33.751 (6.51x)</td><td align="right">37.128 (5.92x)</td><td align="right">25.408 (8.65x)</td></tr>
+<tr><td>E-morphic</td><td>mem_ctrl</td><td align="right">10.577 (1.00x)</td><td align="right">13.836 (0.76x)</td><td align="right">8.481 (1.25x)</td><td align="right">5.369 (1.97x)</td><td align="right">5.883 (1.80x)</td><td align="right">5.073 (2.09x)</td></tr>
+<tr><td>E-morphic</td><td>div</td><td align="right">15.416 (1.00x)</td><td align="right">13.080 (1.18x)</td><td align="right">10.832 (1.42x)</td><td align="right">10.270 (1.50x)</td><td align="right">16.620 (0.93x)</td><td align="right">18.424 (0.84x)</td></tr>
+<tr><td>IMpress</td><td>mul512</td><td align="right">0.230 (1.00x)</td><td align="right">0.418 (0.55x)</td><td align="right">0.294 (0.78x)</td><td align="right">0.200 (1.15x)</td><td align="right">0.283 (0.81x)</td><td align="right">0.348 (0.66x)</td></tr>
+<tr><td>IMpress</td><td>mul1024</td><td align="right">1.378 (1.00x)</td><td align="right">2.250 (0.61x)</td><td align="right">1.353 (1.02x)</td><td align="right">0.814 (1.69x)</td><td align="right">0.972 (1.42x)</td><td align="right">0.979 (1.41x)</td></tr>
+<tr><td>IMpress</td><td>mul2048</td><td align="right">2.404 (1.00x)</td><td align="right">4.415 (0.54x)</td><td align="right">2.945 (0.82x)</td><td align="right">1.649 (1.46x)</td><td align="right">1.746 (1.38x)</td><td align="right">1.299 (1.85x)</td></tr>
+<tr><td>Tensat</td><td>vgg</td><td align="right">0.084 (1.00x)</td><td align="right">0.130 (0.64x)</td><td align="right">0.089 (0.93x)</td><td align="right">0.096 (0.87x)</td><td align="right">0.217 (0.38x)</td><td align="right">0.370 (0.23x)</td></tr>
+<tr><td>Tensat</td><td>resnet50</td><td align="right">0.079 (1.00x)</td><td align="right">0.142 (0.56x)</td><td align="right">0.110 (0.73x)</td><td align="right">0.104 (0.76x)</td><td align="right">0.206 (0.39x)</td><td align="right">0.519 (0.15x)</td></tr>
+<tr><td>Tensat</td><td>bert</td><td align="right">0.489 (1.00x)</td><td align="right">0.673 (0.73x)</td><td align="right">0.469 (1.04x)</td><td align="right">0.263 (1.86x)</td><td align="right">0.295 (1.66x)</td><td align="right">0.335 (1.46x)</td></tr>
+<tr><td>Tensat</td><td>nasneta</td><td align="right">3.996 (1.00x)</td><td align="right">7.495 (0.53x)</td><td align="right">4.048 (0.99x)</td><td align="right">2.656 (1.50x)</td><td align="right">2.530 (1.58x)</td><td align="right">2.025 (1.97x)</td></tr>
+<tr><td>Tensat</td><td>nasrnn</td><td align="right">1.319 (1.00x)</td><td align="right">2.467 (0.53x)</td><td align="right">1.725 (0.77x)</td><td align="right">1.226 (1.08x)</td><td align="right">1.344 (0.98x)</td><td align="right">1.384 (0.95x)</td></tr>
+<tr><td>Flexc</td><td>flexc_75</td><td align="right">0.186 (1.00x)</td><td align="right">0.246 (0.76x)</td><td align="right">0.170 (1.09x)</td><td align="right">0.122 (1.53x)</td><td align="right">0.148 (1.25x)</td><td align="right">0.199 (0.93x)</td></tr>
+<tr><td>Flexc</td><td>flexc_67</td><td align="right">0.189 (1.00x)</td><td align="right">0.237 (0.79x)</td><td align="right">0.172 (1.10x)</td><td align="right">0.125 (1.51x)</td><td align="right">0.145 (1.30x)</td><td align="right">0.212 (0.89x)</td></tr>
+<tr><td>Flexc</td><td>flexc_db</td><td align="right">0.188 (1.00x)</td><td align="right">0.240 (0.78x)</td><td align="right">0.171 (1.10x)</td><td align="right">0.136 (1.38x)</td><td align="right">0.194 (0.97x)</td><td align="right">0.273 (0.69x)</td></tr>
+<tr><td>Flexc</td><td>flexc_86</td><td align="right">0.183 (1.00x)</td><td align="right">0.256 (0.72x)</td><td align="right">0.169 (1.08x)</td><td align="right">0.125 (1.46x)</td><td align="right">0.147 (1.25x)</td><td align="right">0.208 (0.88x)</td></tr>
+<tr><td>Flexc</td><td>flexc_4a</td><td align="right">0.185 (1.00x)</td><td align="right">0.241 (0.77x)</td><td align="right">0.174 (1.06x)</td><td align="right">0.139 (1.33x)</td><td align="right">0.186 (0.99x)</td><td align="right">0.280 (0.66x)</td></tr>
+<tr><td>Flexc</td><td>flexc_03</td><td align="right">0.194 (1.00x)</td><td align="right">0.241 (0.81x)</td><td align="right">0.177 (1.10x)</td><td align="right">0.142 (1.37x)</td><td align="right">0.363 (0.54x)</td><td align="right">0.196 (0.99x)</td></tr>
+<tr><td>Flexc</td><td>flexc_7b</td><td align="right">0.309 (1.00x)</td><td align="right">0.378 (0.82x)</td><td align="right">0.248 (1.25x)</td><td align="right">0.174 (1.78x)</td><td align="right">0.267 (1.16x)</td><td align="right">0.367 (0.84x)</td></tr>
+<tr><td>Flexc</td><td>flexc_ff</td><td align="right">0.366 (1.00x)</td><td align="right">0.539 (0.68x)</td><td align="right">0.324 (1.13x)</td><td align="right">0.207 (1.77x)</td><td align="right">0.256 (1.43x)</td><td align="right">0.271 (1.35x)</td></tr>
+<tr><td>Flexc</td><td>flexc_b8</td><td align="right">0.373 (1.00x)</td><td align="right">0.527 (0.71x)</td><td align="right">0.334 (1.12x)</td><td align="right">0.228 (1.63x)</td><td align="right">0.309 (1.21x)</td><td align="right">0.382 (0.98x)</td></tr>
+<tr><td>Flexc</td><td>flexc_a0</td><td align="right">0.364 (1.00x)</td><td align="right">0.520 (0.70x)</td><td align="right">0.318 (1.14x)</td><td align="right">0.222 (1.64x)</td><td align="right">0.244 (1.49x)</td><td align="right">0.282 (1.29x)</td></tr>
+<tr><td>Flexc</td><td>flexc_85</td><td align="right">0.373 (1.00x)</td><td align="right">0.531 (0.70x)</td><td align="right">0.322 (1.16x)</td><td align="right">0.217 (1.72x)</td><td align="right">0.251 (1.49x)</td><td align="right">0.279 (1.34x)</td></tr>
+<tr><td>Flexc</td><td>flexc_5c</td><td align="right">0.366 (1.00x)</td><td align="right">0.532 (0.69x)</td><td align="right">0.335 (1.09x)</td><td align="right">0.248 (1.48x)</td><td align="right">0.309 (1.19x)</td><td align="right">0.388 (0.94x)</td></tr>
+<tr><td>Flexc</td><td>flexc_fd</td><td align="right">0.321 (1.00x)</td><td align="right">0.398 (0.81x)</td><td align="right">0.252 (1.27x)</td><td align="right">0.174 (1.84x)</td><td align="right">0.232 (1.38x)</td><td align="right">0.302 (1.06x)</td></tr>
+<tr><td>Flexc</td><td>flexc_fe</td><td align="right">0.517 (1.00x)</td><td align="right">0.657 (0.79x)</td><td align="right">0.460 (1.12x)</td><td align="right">0.319 (1.62x)</td><td align="right">0.417 (1.24x)</td><td align="right">0.452 (1.14x)</td></tr>
+<tr><td>Rover</td><td>box5r</td><td align="right">0.039 (1.00x)</td><td align="right">0.033 (1.18x)</td><td align="right">0.032 (1.22x)</td><td align="right">0.031 (1.27x)</td><td align="right">0.030 (1.31x)</td><td align="right">0.030 (1.28x)</td></tr>
+<tr><td>Rover</td><td>box3r</td><td align="right">0.070 (1.00x)</td><td align="right">0.157 (0.45x)</td><td align="right">0.073 (0.97x)</td><td align="right">0.070 (1.00x)</td><td align="right">0.113 (0.62x)</td><td align="right">0.160 (0.44x)</td></tr>
+<tr><td>Rover</td><td>fir8t5r</td><td align="right">0.274 (1.00x)</td><td align="right">0.308 (0.89x)</td><td align="right">0.211 (1.30x)</td><td align="right">0.133 (2.06x)</td><td align="right">0.179 (1.53x)</td><td align="right">0.207 (1.32x)</td></tr>
+<tr><td>Rover</td><td>fir8t6r</td><td align="right">0.447 (1.00x)</td><td align="right">0.378 (1.18x)</td><td align="right">0.247 (1.81x)</td><td align="right">0.184 (2.42x)</td><td align="right">0.214 (2.09x)</td><td align="right">0.295 (1.51x)</td></tr>
+<tr><td>Rover</td><td>fir8t7r</td><td align="right">0.672 (1.00x)</td><td align="right">0.566 (1.19x)</td><td align="right">0.322 (2.09x)</td><td align="right">0.197 (3.42x)</td><td align="right">0.230 (2.92x)</td><td align="right">0.243 (2.76x)</td></tr>
+<tr><td>Rover</td><td>box4r</td><td align="right">0.373 (1.00x)</td><td align="right">0.492 (0.76x)</td><td align="right">0.347 (1.08x)</td><td align="right">0.212 (1.76x)</td><td align="right">0.260 (1.44x)</td><td align="right">0.301 (1.24x)</td></tr>
+<tr><td>Rover</td><td>fir8t8r</td><td align="right">0.705 (1.00x)</td><td align="right">0.637 (1.11x)</td><td align="right">0.358 (1.97x)</td><td align="right">0.253 (2.78x)</td><td align="right">0.240 (2.94x)</td><td align="right">0.251 (2.80x)</td></tr>
+<tr><td>Rover</td><td>mcm378r</td><td align="right">0.322 (1.00x)</td><td align="right">0.527 (0.61x)</td><td align="right">0.322 (1.00x)</td><td align="right">0.226 (1.42x)</td><td align="right">0.279 (1.15x)</td><td align="right">0.312 (1.03x)</td></tr>
+<tr><td>Rover</td><td>mcm379r</td><td align="right">0.370 (1.00x)</td><td align="right">0.513 (0.72x)</td><td align="right">0.323 (1.15x)</td><td align="right">0.253 (1.46x)</td><td align="right">0.294 (1.26x)</td><td align="right">0.351 (1.05x)</td></tr>
+<tr><td>Diospyros</td><td>vaddr7</td><td align="right">0.003 (1.00x)</td><td align="right">0.002 (1.22x)</td><td align="right">0.002 (1.22x)</td><td align="right">0.002 (1.26x)</td><td align="right">0.002 (1.26x)</td><td align="right">0.002 (1.30x)</td></tr>
+<tr><td>Diospyros</td><td>vmjmzr14</td><td align="right">0.005 (1.00x)</td><td align="right">0.003 (1.49x)</td><td align="right">0.003 (1.57x)</td><td align="right">0.003 (1.59x)</td><td align="right">0.003 (1.57x)</td><td align="right">0.003 (1.55x)</td></tr>
+<tr><td>Diospyros</td><td>vvamr23</td><td align="right">0.008 (1.00x)</td><td align="right">0.004 (2.09x)</td><td align="right">0.004 (2.09x)</td><td align="right">0.004 (2.10x)</td><td align="right">0.004 (2.10x)</td><td align="right">0.004 (2.12x)</td></tr>
+<tr><td>Diospyros</td><td>vpmr23</td><td align="right">0.006 (1.00x)</td><td align="right">0.004 (1.54x)</td><td align="right">0.004 (1.68x)</td><td align="right">0.004 (1.66x)</td><td align="right">0.004 (1.70x)</td><td align="right">0.004 (1.68x)</td></tr>
+<tr><td>Diospyros</td><td>vmacr21</td><td align="right">0.016 (1.00x)</td><td align="right">0.019 (0.82x)</td><td align="right">0.017 (0.96x)</td><td align="right">0.019 (0.87x)</td><td align="right">0.046 (0.35x)</td><td align="right">0.075 (0.21x)</td></tr>
+<tr><td>Diospyros</td><td>vmm22r21</td><td align="right">0.021 (1.00x)</td><td align="right">0.025 (0.86x)</td><td align="right">0.018 (1.19x)</td><td align="right">0.021 (1.04x)</td><td align="right">0.044 (0.49x)</td><td align="right">0.074 (0.29x)</td></tr>
+<tr><td>Diospyros</td><td>vmm22r26</td><td align="right">0.026 (1.00x)</td><td align="right">0.037 (0.71x)</td><td align="right">0.024 (1.08x)</td><td align="right">0.025 (1.02x)</td><td align="right">0.055 (0.48x)</td><td align="right">0.072 (0.36x)</td></tr>
+<tr><td>Diospyros</td><td>specr26</td><td align="right">0.026 (1.00x)</td><td align="right">0.036 (0.73x)</td><td align="right">0.023 (1.15x)</td><td align="right">0.027 (0.96x)</td><td align="right">0.046 (0.57x)</td><td align="right">0.071 (0.37x)</td></tr>
+<tr><td>Diospyros</td><td>vcv22r36</td><td align="right">0.026 (1.00x)</td><td align="right">0.032 (0.83x)</td><td align="right">0.021 (1.27x)</td><td align="right">0.024 (1.08x)</td><td align="right">0.044 (0.60x)</td><td align="right">0.062 (0.42x)</td></tr>
+<tr><td>Diospyros</td><td>vmm23r58</td><td align="right">0.117 (1.00x)</td><td align="right">0.151 (0.77x)</td><td align="right">0.085 (1.37x)</td><td align="right">0.067 (1.74x)</td><td align="right">0.111 (1.05x)</td><td align="right">0.152 (0.77x)</td></tr>
+<tr><td>Diospyros</td><td>vcv33r168</td><td align="right">0.757 (1.00x)</td><td align="right">0.772 (0.98x)</td><td align="right">0.467 (1.62x)</td><td align="right">0.342 (2.22x)</td><td align="right">0.362 (2.09x)</td><td align="right">0.390 (1.94x)</td></tr>
+<tr><td>Diospyros</td><td>drcr2r18</td><td align="right">0.886 (1.00x)</td><td align="right">1.019 (0.87x)</td><td align="right">0.646 (1.37x)</td><td align="right">0.382 (2.32x)</td><td align="right">0.297 (2.98x)</td><td align="right">0.285 (3.11x)</td></tr>
+<tr><td>Diospyros</td><td>drcr18</td><td align="right">1.181 (1.00x)</td><td align="right">1.123 (1.05x)</td><td align="right">0.769 (1.54x)</td><td align="right">0.482 (2.45x)</td><td align="right">0.371 (3.18x)</td><td align="right">0.338 (3.49x)</td></tr>
+<tr><td>Maxsat</td><td>maxcut39</td><td align="right">0.025 (1.00x)</td><td align="right">0.020 (1.23x)</td><td align="right">0.017 (1.51x)</td><td align="right">0.016 (1.54x)</td><td align="right">0.016 (1.58x)</td><td align="right">0.017 (1.46x)</td></tr>
+<tr><td>Maxsat</td><td>maxcut1</td><td align="right">0.026 (1.00x)</td><td align="right">0.020 (1.32x)</td><td align="right">0.016 (1.60x)</td><td align="right">0.016 (1.69x)</td><td align="right">0.016 (1.68x)</td><td align="right">0.017 (1.59x)</td></tr>
+<tr><td>Maxsat</td><td>s2v1</td><td align="right">0.036 (1.00x)</td><td align="right">0.071 (0.51x)</td><td align="right">0.052 (0.69x)</td><td align="right">0.057 (0.62x)</td><td align="right">0.077 (0.47x)</td><td align="right">0.102 (0.35x)</td></tr>
+<tr><td>Maxsat</td><td>s2v3</td><td align="right">0.038 (1.00x)</td><td align="right">0.080 (0.47x)</td><td align="right">0.052 (0.72x)</td><td align="right">0.043 (0.88x)</td><td align="right">0.074 (0.51x)</td><td align="right">0.095 (0.39x)</td></tr>
+<tr><td>Maxsat</td><td>hamming6</td><td align="right">0.039 (1.00x)</td><td align="right">0.080 (0.49x)</td><td align="right">0.059 (0.66x)</td><td align="right">0.058 (0.68x)</td><td align="right">0.155 (0.25x)</td><td align="right">0.102 (0.38x)</td></tr>
+<tr><td>Maxsat</td><td>johnson8</td><td align="right">0.041 (1.00x)</td><td align="right">0.081 (0.50x)</td><td align="right">0.063 (0.65x)</td><td align="right">0.059 (0.69x)</td><td align="right">0.106 (0.39x)</td><td align="right">0.137 (0.30x)</td></tr>
+</tbody></table>
+
+<a id="dag-construction"></a>
+
+## DAG construction runtime
+
+<table>
+<thead><tr><th>Benchmark</th><th>e-graph</th><th>CPU 1t<br>ms (speedup)</th><th>CPU 2t<br>ms (speedup)</th><th>CPU 4t<br>ms (speedup)</th><th>CPU 8t<br>ms (speedup)</th><th>CPU 16t<br>ms (speedup)</th><th>CPU 32t<br>ms (speedup)</th></tr></thead>
+<tbody>
+<tr><td>BoolE</td><td>mul16</td><td align="right">4.287 (1.00x)</td><td align="right">3.830 (1.12x)</td><td align="right">3.353 (1.28x)</td><td align="right">3.121 (1.37x)</td><td align="right">3.215 (1.33x)</td><td align="right">3.342 (1.28x)</td></tr>
+<tr><td>BoolE</td><td>mul32</td><td align="right">21.212 (1.00x)</td><td align="right">19.291 (1.10x)</td><td align="right">16.289 (1.30x)</td><td align="right">15.006 (1.41x)</td><td align="right">15.911 (1.33x)</td><td align="right">16.263 (1.30x)</td></tr>
+<tr><td>BoolE</td><td>mul48</td><td align="right">67.443 (1.00x)</td><td align="right">60.941 (1.11x)</td><td align="right">52.326 (1.29x)</td><td align="right">47.750 (1.41x)</td><td align="right">49.951 (1.35x)</td><td align="right">51.278 (1.32x)</td></tr>
+<tr><td>BoolE</td><td>mul64</td><td align="right">107.039 (1.00x)</td><td align="right">94.982 (1.13x)</td><td align="right">82.196 (1.30x)</td><td align="right">76.005 (1.41x)</td><td align="right">79.634 (1.34x)</td><td align="right">79.485 (1.35x)</td></tr>
+<tr><td>BoolE</td><td>mul80</td><td align="right">274.431 (1.00x)</td><td align="right">244.447 (1.12x)</td><td align="right">206.587 (1.33x)</td><td align="right">184.226 (1.49x)</td><td align="right">198.680 (1.38x)</td><td align="right">201.247 (1.36x)</td></tr>
+<tr><td>BoolE</td><td>mul96</td><td align="right">593.304 (1.00x)</td><td align="right">563.891 (1.05x)</td><td align="right">488.958 (1.21x)</td><td align="right">436.644 (1.36x)</td><td align="right">444.203 (1.34x)</td><td align="right">436.474 (1.36x)</td></tr>
+<tr><td>BoolE</td><td>mul112</td><td align="right">480.039 (1.00x)</td><td align="right">484.578 (0.99x)</td><td align="right">420.606 (1.14x)</td><td align="right">395.722 (1.21x)</td><td align="right">382.319 (1.26x)</td><td align="right">376.398 (1.28x)</td></tr>
+<tr><td>BoolE</td><td>mul128</td><td align="right">1009 (1.00x)</td><td align="right">909.820 (1.11x)</td><td align="right">823.028 (1.23x)</td><td align="right">742.230 (1.36x)</td><td align="right">731.332 (1.38x)</td><td align="right">719.461 (1.40x)</td></tr>
+<tr><td>BoolE</td><td>mul16map</td><td align="right">7.699 (1.00x)</td><td align="right">6.795 (1.13x)</td><td align="right">5.799 (1.33x)</td><td align="right">5.277 (1.46x)</td><td align="right">5.449 (1.41x)</td><td align="right">5.569 (1.38x)</td></tr>
+<tr><td>BoolE</td><td>mul32map</td><td align="right">28.248 (1.00x)</td><td align="right">25.144 (1.12x)</td><td align="right">21.048 (1.34x)</td><td align="right">18.809 (1.50x)</td><td align="right">19.007 (1.49x)</td><td align="right">18.867 (1.50x)</td></tr>
+<tr><td>BoolE</td><td>mul48map</td><td align="right">60.998 (1.00x)</td><td align="right">53.757 (1.13x)</td><td align="right">44.685 (1.37x)</td><td align="right">39.999 (1.52x)</td><td align="right">40.530 (1.51x)</td><td align="right">39.812 (1.53x)</td></tr>
+<tr><td>BoolE</td><td>mul64map</td><td align="right">152.450 (1.00x)</td><td align="right">133.737 (1.14x)</td><td align="right">110.242 (1.38x)</td><td align="right">99.008 (1.54x)</td><td align="right">97.656 (1.56x)</td><td align="right">95.234 (1.60x)</td></tr>
+<tr><td>BoolE</td><td>mul80map</td><td align="right">249.585 (1.00x)</td><td align="right">215.091 (1.16x)</td><td align="right">178.699 (1.40x)</td><td align="right">157.866 (1.58x)</td><td align="right">159.184 (1.57x)</td><td align="right">155.959 (1.60x)</td></tr>
+<tr><td>BoolE</td><td>mul96map</td><td align="right">415.936 (1.00x)</td><td align="right">367.677 (1.13x)</td><td align="right">305.476 (1.36x)</td><td align="right">267.657 (1.55x)</td><td align="right">269.831 (1.54x)</td><td align="right">265.380 (1.57x)</td></tr>
+<tr><td>BoolE</td><td>mul112map</td><td align="right">488.774 (1.00x)</td><td align="right">428.834 (1.14x)</td><td align="right">358.761 (1.36x)</td><td align="right">327.192 (1.49x)</td><td align="right">326.092 (1.50x)</td><td align="right">326.797 (1.50x)</td></tr>
+<tr><td>BoolE</td><td>mul128map</td><td align="right">821.933 (1.00x)</td><td align="right">732.724 (1.12x)</td><td align="right">616.435 (1.33x)</td><td align="right">542.495 (1.52x)</td><td align="right">525.129 (1.57x)</td><td align="right">514.280 (1.60x)</td></tr>
+<tr><td>ESyn</td><td>mul3</td><td align="right">9.952 (1.00x)</td><td align="right">8.664 (1.15x)</td><td align="right">7.667 (1.30x)</td><td align="right">7.034 (1.41x)</td><td align="right">6.971 (1.43x)</td><td align="right">7.243 (1.37x)</td></tr>
+<tr><td>ESyn</td><td>c7552</td><td align="right">2.256 (1.00x)</td><td align="right">2.071 (1.09x)</td><td align="right">1.887 (1.20x)</td><td align="right">1.755 (1.29x)</td><td align="right">1.835 (1.23x)</td><td align="right">1.890 (1.19x)</td></tr>
+<tr><td>ESyn</td><td>b12</td><td align="right">4.369 (1.00x)</td><td align="right">3.891 (1.12x)</td><td align="right">3.531 (1.24x)</td><td align="right">3.346 (1.31x)</td><td align="right">3.421 (1.28x)</td><td align="right">3.498 (1.25x)</td></tr>
+<tr><td>ESyn</td><td>i7</td><td align="right">3.947 (1.00x)</td><td align="right">3.660 (1.08x)</td><td align="right">3.066 (1.29x)</td><td align="right">2.734 (1.44x)</td><td align="right">3.071 (1.29x)</td><td align="right">3.337 (1.18x)</td></tr>
+<tr><td>ESyn</td><td>C432</td><td align="right">7.561 (1.00x)</td><td align="right">6.494 (1.16x)</td><td align="right">5.800 (1.30x)</td><td align="right">5.448 (1.39x)</td><td align="right">5.490 (1.38x)</td><td align="right">5.636 (1.34x)</td></tr>
+<tr><td>ESyn</td><td>c2670</td><td align="right">6.348 (1.00x)</td><td align="right">5.787 (1.10x)</td><td align="right">5.165 (1.23x)</td><td align="right">4.724 (1.34x)</td><td align="right">4.820 (1.32x)</td><td align="right">5.072 (1.25x)</td></tr>
+<tr><td>ESyn</td><td>C5315</td><td align="right">5.727 (1.00x)</td><td align="right">5.236 (1.09x)</td><td align="right">4.655 (1.23x)</td><td align="right">4.407 (1.30x)</td><td align="right">4.517 (1.27x)</td><td align="right">4.639 (1.23x)</td></tr>
+<tr><td>ESyn</td><td>mul5</td><td align="right">9.236 (1.00x)</td><td align="right">8.227 (1.12x)</td><td align="right">7.508 (1.23x)</td><td align="right">7.076 (1.31x)</td><td align="right">7.190 (1.28x)</td><td align="right">7.322 (1.26x)</td></tr>
+<tr><td>ESyn</td><td>qdiv</td><td align="right">4.433 (1.00x)</td><td align="right">4.026 (1.10x)</td><td align="right">3.595 (1.23x)</td><td align="right">3.318 (1.34x)</td><td align="right">3.558 (1.25x)</td><td align="right">3.682 (1.20x)</td></tr>
+<tr><td>ESyn</td><td>max</td><td align="right">3.648 (1.00x)</td><td align="right">3.313 (1.10x)</td><td align="right">2.982 (1.22x)</td><td align="right">2.801 (1.30x)</td><td align="right">3.000 (1.22x)</td><td align="right">3.132 (1.16x)</td></tr>
+<tr><td>ESyn</td><td>bar</td><td align="right">2.878 (1.00x)</td><td align="right">2.679 (1.07x)</td><td align="right">2.362 (1.22x)</td><td align="right">2.161 (1.33x)</td><td align="right">2.654 (1.08x)</td><td align="right">2.909 (0.99x)</td></tr>
+<tr><td>ESyn</td><td>cavlc</td><td align="right">13.750 (1.00x)</td><td align="right">11.957 (1.15x)</td><td align="right">9.750 (1.41x)</td><td align="right">8.503 (1.62x)</td><td align="right">9.077 (1.51x)</td><td align="right">9.590 (1.43x)</td></tr>
+<tr><td>ESyn</td><td>adder</td><td align="right">7.438 (1.00x)</td><td align="right">6.798 (1.09x)</td><td align="right">6.054 (1.23x)</td><td align="right">5.654 (1.32x)</td><td align="right">6.037 (1.23x)</td><td align="right">6.293 (1.18x)</td></tr>
+<tr><td>ESyn</td><td>frg2</td><td align="right">48.452 (1.00x)</td><td align="right">43.203 (1.12x)</td><td align="right">34.892 (1.39x)</td><td align="right">30.417 (1.59x)</td><td align="right">33.914 (1.43x)</td><td align="right">38.267 (1.27x)</td></tr>
+<tr><td>E-morphic</td><td>sin</td><td align="right">7.759 (1.00x)</td><td align="right">7.116 (1.09x)</td><td align="right">6.464 (1.20x)</td><td align="right">6.116 (1.27x)</td><td align="right">6.130 (1.27x)</td><td align="right">6.262 (1.24x)</td></tr>
+<tr><td>E-morphic</td><td>arbiter</td><td align="right">5.844 (1.00x)</td><td align="right">5.731 (1.02x)</td><td align="right">4.923 (1.19x)</td><td align="right">4.469 (1.31x)</td><td align="right">5.217 (1.12x)</td><td align="right">5.736 (1.02x)</td></tr>
+<tr><td>E-morphic</td><td>square</td><td align="right">20.040 (1.00x)</td><td align="right">17.710 (1.13x)</td><td align="right">15.087 (1.33x)</td><td align="right">13.421 (1.49x)</td><td align="right">13.913 (1.44x)</td><td align="right">14.133 (1.42x)</td></tr>
+<tr><td>E-morphic</td><td>multiplier</td><td align="right">16.800 (1.00x)</td><td align="right">15.500 (1.08x)</td><td align="right">14.012 (1.20x)</td><td align="right">13.080 (1.28x)</td><td align="right">13.648 (1.23x)</td><td align="right">13.841 (1.21x)</td></tr>
+<tr><td>E-morphic</td><td>log2</td><td align="right">42.666 (1.00x)</td><td align="right">38.879 (1.10x)</td><td align="right">35.725 (1.19x)</td><td align="right">33.855 (1.26x)</td><td align="right">34.205 (1.25x)</td><td align="right">34.063 (1.25x)</td></tr>
+<tr><td>E-morphic</td><td>mem_ctrl</td><td align="right">56.318 (1.00x)</td><td align="right">49.208 (1.14x)</td><td align="right">42.329 (1.33x)</td><td align="right">38.162 (1.48x)</td><td align="right">39.230 (1.44x)</td><td align="right">40.218 (1.40x)</td></tr>
+<tr><td>E-morphic</td><td>div</td><td align="right">29.353 (1.00x)</td><td align="right">25.960 (1.13x)</td><td align="right">22.852 (1.28x)</td><td align="right">20.994 (1.40x)</td><td align="right">21.049 (1.39x)</td><td align="right">21.360 (1.37x)</td></tr>
+<tr><td>IMpress</td><td>mul512</td><td align="right">1.318 (1.00x)</td><td align="right">1.330 (0.99x)</td><td align="right">1.133 (1.16x)</td><td align="right">1.021 (1.29x)</td><td align="right">1.480 (0.89x)</td><td align="right">1.606 (0.82x)</td></tr>
+<tr><td>IMpress</td><td>mul1024</td><td align="right">6.425 (1.00x)</td><td align="right">6.766 (0.95x)</td><td align="right">5.277 (1.22x)</td><td align="right">4.437 (1.45x)</td><td align="right">5.357 (1.20x)</td><td align="right">5.775 (1.11x)</td></tr>
+<tr><td>IMpress</td><td>mul2048</td><td align="right">13.774 (1.00x)</td><td align="right">13.327 (1.03x)</td><td align="right">10.224 (1.35x)</td><td align="right">8.515 (1.62x)</td><td align="right">9.769 (1.41x)</td><td align="right">9.877 (1.39x)</td></tr>
+<tr><td>Tensat</td><td>vgg</td><td align="right">0.543 (1.00x)</td><td align="right">0.448 (1.21x)</td><td align="right">0.384 (1.42x)</td><td align="right">0.321 (1.69x)</td><td align="right">0.424 (1.28x)</td><td align="right">0.524 (1.04x)</td></tr>
+<tr><td>Tensat</td><td>resnet50</td><td align="right">0.390 (1.00x)</td><td align="right">0.330 (1.18x)</td><td align="right">0.275 (1.42x)</td><td align="right">0.246 (1.59x)</td><td align="right">0.350 (1.11x)</td><td align="right">0.432 (0.90x)</td></tr>
+<tr><td>Tensat</td><td>bert</td><td align="right">7.442 (1.00x)</td><td align="right">9.941 (0.75x)</td><td align="right">8.299 (0.90x)</td><td align="right">7.376 (1.01x)</td><td align="right">8.898 (0.84x)</td><td align="right">9.775 (0.76x)</td></tr>
+<tr><td>Tensat</td><td>nasneta</td><td align="right">7.298 (1.00x)</td><td align="right">9.598 (0.76x)</td><td align="right">7.919 (0.92x)</td><td align="right">7.003 (1.04x)</td><td align="right">8.300 (0.88x)</td><td align="right">8.694 (0.84x)</td></tr>
+<tr><td>Tensat</td><td>nasrnn</td><td align="right">5.296 (1.00x)</td><td align="right">6.060 (0.87x)</td><td align="right">5.129 (1.03x)</td><td align="right">4.581 (1.16x)</td><td align="right">5.968 (0.89x)</td><td align="right">6.532 (0.81x)</td></tr>
+<tr><td>Flexc</td><td>flexc_75</td><td align="right">3.457 (1.00x)</td><td align="right">2.989 (1.16x)</td><td align="right">2.297 (1.51x)</td><td align="right">1.927 (1.79x)</td><td align="right">1.908 (1.81x)</td><td align="right">1.866 (1.85x)</td></tr>
+<tr><td>Flexc</td><td>flexc_67</td><td align="right">3.425 (1.00x)</td><td align="right">2.921 (1.17x)</td><td align="right">2.239 (1.53x)</td><td align="right">1.895 (1.81x)</td><td align="right">1.817 (1.89x)</td><td align="right">1.839 (1.86x)</td></tr>
+<tr><td>Flexc</td><td>flexc_db</td><td align="right">3.384 (1.00x)</td><td align="right">2.914 (1.16x)</td><td align="right">2.292 (1.48x)</td><td align="right">1.923 (1.76x)</td><td align="right">1.853 (1.83x)</td><td align="right">1.852 (1.83x)</td></tr>
+<tr><td>Flexc</td><td>flexc_86</td><td align="right">3.427 (1.00x)</td><td align="right">2.885 (1.19x)</td><td align="right">2.253 (1.52x)</td><td align="right">1.906 (1.80x)</td><td align="right">1.839 (1.86x)</td><td align="right">1.794 (1.91x)</td></tr>
+<tr><td>Flexc</td><td>flexc_4a</td><td align="right">3.427 (1.00x)</td><td align="right">2.913 (1.18x)</td><td align="right">2.319 (1.48x)</td><td align="right">1.890 (1.81x)</td><td align="right">1.836 (1.87x)</td><td align="right">1.810 (1.89x)</td></tr>
+<tr><td>Flexc</td><td>flexc_03</td><td align="right">3.459 (1.00x)</td><td align="right">2.943 (1.18x)</td><td align="right">2.305 (1.50x)</td><td align="right">1.931 (1.79x)</td><td align="right">1.843 (1.88x)</td><td align="right">1.852 (1.87x)</td></tr>
+<tr><td>Flexc</td><td>flexc_7b</td><td align="right">10.709 (1.00x)</td><td align="right">9.145 (1.17x)</td><td align="right">7.264 (1.47x)</td><td align="right">6.318 (1.69x)</td><td align="right">6.197 (1.73x)</td><td align="right">6.381 (1.68x)</td></tr>
+<tr><td>Flexc</td><td>flexc_ff</td><td align="right">8.113 (1.00x)</td><td align="right">6.818 (1.19x)</td><td align="right">5.841 (1.39x)</td><td align="right">5.205 (1.56x)</td><td align="right">5.164 (1.57x)</td><td align="right">5.226 (1.55x)</td></tr>
+<tr><td>Flexc</td><td>flexc_b8</td><td align="right">8.363 (1.00x)</td><td align="right">7.019 (1.19x)</td><td align="right">5.938 (1.41x)</td><td align="right">5.287 (1.58x)</td><td align="right">5.286 (1.58x)</td><td align="right">5.373 (1.56x)</td></tr>
+<tr><td>Flexc</td><td>flexc_a0</td><td align="right">8.433 (1.00x)</td><td align="right">7.121 (1.18x)</td><td align="right">6.153 (1.37x)</td><td align="right">5.382 (1.57x)</td><td align="right">5.396 (1.56x)</td><td align="right">5.452 (1.55x)</td></tr>
+<tr><td>Flexc</td><td>flexc_85</td><td align="right">8.310 (1.00x)</td><td align="right">7.087 (1.17x)</td><td align="right">6.125 (1.36x)</td><td align="right">5.479 (1.52x)</td><td align="right">5.404 (1.54x)</td><td align="right">5.495 (1.51x)</td></tr>
+<tr><td>Flexc</td><td>flexc_5c</td><td align="right">8.321 (1.00x)</td><td align="right">7.197 (1.16x)</td><td align="right">6.190 (1.34x)</td><td align="right">5.525 (1.51x)</td><td align="right">5.443 (1.53x)</td><td align="right">5.595 (1.49x)</td></tr>
+<tr><td>Flexc</td><td>flexc_fd</td><td align="right">8.378 (1.00x)</td><td align="right">7.389 (1.13x)</td><td align="right">6.026 (1.39x)</td><td align="right">5.065 (1.65x)</td><td align="right">4.955 (1.69x)</td><td align="right">5.026 (1.67x)</td></tr>
+<tr><td>Flexc</td><td>flexc_fe</td><td align="right">12.621 (1.00x)</td><td align="right">12.485 (1.01x)</td><td align="right">9.560 (1.32x)</td><td align="right">8.723 (1.45x)</td><td align="right">8.902 (1.42x)</td><td align="right">8.772 (1.44x)</td></tr>
+<tr><td>Rover</td><td>box5r</td><td align="right">0.638 (1.00x)</td><td align="right">0.620 (1.03x)</td><td align="right">0.639 (1.00x)</td><td align="right">0.592 (1.08x)</td><td align="right">0.634 (1.01x)</td><td align="right">0.630 (1.01x)</td></tr>
+<tr><td>Rover</td><td>box3r</td><td align="right">1.505 (1.00x)</td><td align="right">1.382 (1.09x)</td><td align="right">1.203 (1.25x)</td><td align="right">1.076 (1.40x)</td><td align="right">1.192 (1.26x)</td><td align="right">1.222 (1.23x)</td></tr>
+<tr><td>Rover</td><td>fir8t5r</td><td align="right">3.412 (1.00x)</td><td align="right">3.032 (1.13x)</td><td align="right">2.707 (1.26x)</td><td align="right">2.480 (1.38x)</td><td align="right">2.489 (1.37x)</td><td align="right">2.534 (1.35x)</td></tr>
+<tr><td>Rover</td><td>fir8t6r</td><td align="right">8.140 (1.00x)</td><td align="right">8.625 (0.94x)</td><td align="right">7.246 (1.12x)</td><td align="right">6.420 (1.27x)</td><td align="right">6.326 (1.29x)</td><td align="right">6.399 (1.27x)</td></tr>
+<tr><td>Rover</td><td>fir8t7r</td><td align="right">12.843 (1.00x)</td><td align="right">20.364 (0.63x)</td><td align="right">14.635 (0.88x)</td><td align="right">11.551 (1.11x)</td><td align="right">11.184 (1.15x)</td><td align="right">10.954 (1.17x)</td></tr>
+<tr><td>Rover</td><td>box4r</td><td align="right">18.018 (1.00x)</td><td align="right">19.340 (0.93x)</td><td align="right">15.140 (1.19x)</td><td align="right">13.143 (1.37x)</td><td align="right">13.112 (1.37x)</td><td align="right">12.670 (1.42x)</td></tr>
+<tr><td>Rover</td><td>fir8t8r</td><td align="right">14.974 (1.00x)</td><td align="right">24.970 (0.60x)</td><td align="right">17.914 (0.84x)</td><td align="right">14.078 (1.06x)</td><td align="right">13.421 (1.12x)</td><td align="right">13.074 (1.15x)</td></tr>
+<tr><td>Rover</td><td>mcm378r</td><td align="right">86.522 (1.00x)</td><td align="right">82.746 (1.05x)</td><td align="right">61.888 (1.40x)</td><td align="right">53.417 (1.62x)</td><td align="right">47.517 (1.82x)</td><td align="right">44.448 (1.95x)</td></tr>
+<tr><td>Rover</td><td>mcm379r</td><td align="right">87.284 (1.00x)</td><td align="right">82.579 (1.06x)</td><td align="right">65.696 (1.33x)</td><td align="right">56.802 (1.54x)</td><td align="right">50.384 (1.73x)</td><td align="right">46.674 (1.87x)</td></tr>
+<tr><td>Diospyros</td><td>vaddr7</td><td align="right">0.015 (1.00x)</td><td align="right">0.010 (1.44x)</td><td align="right">0.009 (1.59x)</td><td align="right">0.009 (1.59x)</td><td align="right">0.009 (1.57x)</td><td align="right">0.009 (1.59x)</td></tr>
+<tr><td>Diospyros</td><td>vmjmzr14</td><td align="right">0.094 (1.00x)</td><td align="right">0.063 (1.48x)</td><td align="right">0.060 (1.57x)</td><td align="right">0.059 (1.59x)</td><td align="right">0.059 (1.60x)</td><td align="right">0.059 (1.60x)</td></tr>
+<tr><td>Diospyros</td><td>vvamr23</td><td align="right">0.109 (1.00x)</td><td align="right">0.080 (1.36x)</td><td align="right">0.076 (1.42x)</td><td align="right">0.076 (1.43x)</td><td align="right">0.076 (1.43x)</td><td align="right">0.076 (1.44x)</td></tr>
+<tr><td>Diospyros</td><td>vpmr23</td><td align="right">0.118 (1.00x)</td><td align="right">0.080 (1.48x)</td><td align="right">0.077 (1.54x)</td><td align="right">0.077 (1.55x)</td><td align="right">0.076 (1.55x)</td><td align="right">0.076 (1.55x)</td></tr>
+<tr><td>Diospyros</td><td>vmacr21</td><td align="right">0.523 (1.00x)</td><td align="right">0.312 (1.68x)</td><td align="right">0.199 (2.62x)</td><td align="right">0.181 (2.90x)</td><td align="right">0.210 (2.49x)</td><td align="right">0.263 (1.99x)</td></tr>
+<tr><td>Diospyros</td><td>vmm22r21</td><td align="right">0.879 (1.00x)</td><td align="right">0.513 (1.71x)</td><td align="right">0.357 (2.46x)</td><td align="right">0.296 (2.98x)</td><td align="right">0.336 (2.62x)</td><td align="right">0.386 (2.28x)</td></tr>
+<tr><td>Diospyros</td><td>vmm22r26</td><td align="right">1.039 (1.00x)</td><td align="right">0.661 (1.57x)</td><td align="right">0.427 (2.44x)</td><td align="right">0.370 (2.81x)</td><td align="right">0.393 (2.64x)</td><td align="right">0.491 (2.12x)</td></tr>
+<tr><td>Diospyros</td><td>specr26</td><td align="right">1.038 (1.00x)</td><td align="right">0.658 (1.58x)</td><td align="right">0.440 (2.36x)</td><td align="right">0.349 (2.98x)</td><td align="right">0.409 (2.54x)</td><td align="right">0.454 (2.29x)</td></tr>
+<tr><td>Diospyros</td><td>vcv22r36</td><td align="right">1.419 (1.00x)</td><td align="right">0.822 (1.73x)</td><td align="right">0.569 (2.49x)</td><td align="right">0.450 (3.15x)</td><td align="right">0.443 (3.20x)</td><td align="right">0.528 (2.69x)</td></tr>
+<tr><td>Diospyros</td><td>vmm23r58</td><td align="right">5.595 (1.00x)</td><td align="right">4.306 (1.30x)</td><td align="right">2.810 (1.99x)</td><td align="right">2.070 (2.70x)</td><td align="right">1.852 (3.02x)</td><td align="right">1.988 (2.81x)</td></tr>
+<tr><td>Diospyros</td><td>vcv33r168</td><td align="right">44.393 (1.00x)</td><td align="right">29.387 (1.51x)</td><td align="right">21.275 (2.09x)</td><td align="right">16.287 (2.73x)</td><td align="right">13.467 (3.30x)</td><td align="right">11.780 (3.77x)</td></tr>
+<tr><td>Diospyros</td><td>drcr2r18</td><td align="right">546.663 (1.00x)</td><td align="right">290.619 (1.88x)</td><td align="right">171.705 (3.18x)</td><td align="right">121.332 (4.51x)</td><td align="right">73.871 (7.40x)</td><td align="right">50.904 (10.74x)</td></tr>
+<tr><td>Diospyros</td><td>drcr18</td><td align="right">949.080 (1.00x)</td><td align="right">527.224 (1.80x)</td><td align="right">313.674 (3.03x)</td><td align="right">228.928 (4.15x)</td><td align="right">158.503 (5.99x)</td><td align="right">89.014 (10.66x)</td></tr>
+<tr><td>Maxsat</td><td>maxcut39</td><td align="right">0.118 (1.00x)</td><td align="right">0.124 (0.95x)</td><td align="right">0.110 (1.07x)</td><td align="right">0.105 (1.12x)</td><td align="right">0.155 (0.76x)</td><td align="right">0.175 (0.67x)</td></tr>
+<tr><td>Maxsat</td><td>maxcut1</td><td align="right">0.119 (1.00x)</td><td align="right">0.120 (0.99x)</td><td align="right">0.213 (0.56x)</td><td align="right">0.104 (1.15x)</td><td align="right">0.156 (0.76x)</td><td align="right">0.241 (0.49x)</td></tr>
+<tr><td>Maxsat</td><td>s2v1</td><td align="right">0.189 (1.00x)</td><td align="right">0.201 (0.94x)</td><td align="right">0.153 (1.23x)</td><td align="right">0.144 (1.31x)</td><td align="right">0.401 (0.47x)</td><td align="right">0.405 (0.47x)</td></tr>
+<tr><td>Maxsat</td><td>s2v3</td><td align="right">0.192 (1.00x)</td><td align="right">0.200 (0.96x)</td><td align="right">0.155 (1.24x)</td><td align="right">0.143 (1.34x)</td><td align="right">0.269 (0.71x)</td><td align="right">0.376 (0.51x)</td></tr>
+<tr><td>Maxsat</td><td>hamming6</td><td align="right">0.180 (1.00x)</td><td align="right">0.241 (0.75x)</td><td align="right">0.207 (0.87x)</td><td align="right">0.249 (0.72x)</td><td align="right">0.388 (0.46x)</td><td align="right">0.479 (0.38x)</td></tr>
+<tr><td>Maxsat</td><td>johnson8</td><td align="right">0.192 (1.00x)</td><td align="right">0.242 (0.79x)</td><td align="right">0.201 (0.96x)</td><td align="right">0.198 (0.97x)</td><td align="right">0.358 (0.54x)</td><td align="right">0.466 (0.41x)</td></tr>
+</tbody></table>

@@ -2,8 +2,8 @@
 
 | Artifact | Contents |
 |---|---|
-| [87-design comparison tables](comparison.md) | Paper XEG versus CPU overall runtime and final cost, including every measured construction thread count |
-| [Construction timing table](construction.md) | Tree plus DAG runtime at 1, 2, 4, 8, 16, and 32 threads |
+| [87-design comparison tables](comparison.md) | Paper XEG versus CPU overall runtime and final cost, followed by separate CPU tree and DAG scaling tables |
+| [Construction timing tables](construction.md) | Separate tree and DAG runtimes at 1, 2, 4, 8, 16, and 32 threads, with speedups relative to 1 thread |
 | [Comparison data](comparison.csv) | Exact values used by the comparison tables |
 | [Paper XEG baseline](paper_xeg.csv) | XEG runtime and final cost transcribed from Table 8 |
 | [Full report](REPORT.txt) | Implementation, measurement settings, correctness checks, results, and limitations |
