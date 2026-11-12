@@ -1,11 +1,13 @@
 # GPU design profiles
 
+**Profiled GPU (default settings)** loads this manifest automatically through `scripts/run_gpu.sh`. For a concise explanation of Profiled versus Fixed GPU, see the [run settings](../../docs/usage.md#gpu-settings).
+
 `87-designs.json` contains measured profiles for the 87 benchmark inputs: 33 override the common Block/64/512 configuration, and 54 inherit its defaults. The [results and selection protocol](../../results/gpu/20261112/profiled.md) show costs, separate construction timings, and rejected trials. These are selected observations, not guaranteed optima; GPU construction and timed parallel solving remain nondeterministic. Empty design objects use the common defaults.
 
 ```bash
 scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json
 # Reproduce the Fixed GPU settings (common original parameters):
-scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json 2 64 512 --no-profile
+scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json 2 64 512 360 8 --no-profile
 # Direct executable; use --design if the input has been moved or renamed:
 build/main/gpu input.json --config configs/gpu/87-designs.json --design boolE/mul32_map.rename --report report.json
 ```
