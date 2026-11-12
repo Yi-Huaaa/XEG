@@ -1072,7 +1072,7 @@ XEG::unittest_gpu_levelize(
   // Preserve the existing unit-test API and behavior.
   //
   // This follows the same compile-time production dispatcher
-  // selected by kEnableGpuDagHybridLevelization.
+  // selected by _gpu_options.hybrid_levelization.
   return _unittest_gpu_levelize_impl(
     selected_state,
     is_top_down,

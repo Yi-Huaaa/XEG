@@ -131,8 +131,19 @@ python3 verification/verify_solution.py dataset/esyn/mul3.rename.json build/runs
 Arguments after the input are kernel (`0` Thread, `1` Warp, `2` Block), DAG threads,
 bitmap bits, solver seconds, and solver workers. Defaults remain `0 1 0 360 8`;
 the example explicitly selects Block/64/512. The existing batch/direct policy,
-bitmap hash, batching, and levelization thresholds are unchanged. GPU construction
+bitmap hash, batching, and levelization defaults are unchanged. GPU construction
 remains nondeterministic; repeated runs can produce different candidate spaces.
+
+Per-design profiles expose batch concurrency and controller parameters without
+recompiling. The supplied manifest lists all 87 benchmark inputs; empty entries
+inherit its Block/64/512 defaults. See the [profile format and parameter meanings](configs/gpu/README.md).
+
+```bash
+scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json --config configs/gpu/87-designs.json
+```
+
+Explicit positional kernel/thread/bitmap arguments override the profile's
+geometry. Reports record every effective DAG option alongside the solution.
 
 Tree construction still relaxes double tree costs with one GPU thread per
 e-node. A per-class gate couples each strict cost improvement to its representative.
@@ -168,8 +179,9 @@ solver worker and a positive wall limit, as for the CPU executable. This fixes
 solver work but does not make GPU candidate construction deterministic.
 
 Implementation files separate `gpu_tree.cu`, `gpu_dag_insert.cu`, `gpu_dag.cu`,
-`gpu_pipeline.cpp`, and `cpsat_solver.cpp`. `gpu_common.cuh` holds the existing GPU
-controller constants. Tests of individual GPU stages are in `gpu_testing.cu`.
+`gpu_pipeline.cpp`, and `cpsat_solver.cpp`. `gpu_config.hpp` defines the controller
+defaults; `gpu_common.cuh` holds CUDA helpers. Tests of individual GPU stages are
+in `gpu_testing.cu`.
 
 ## Requirements
 

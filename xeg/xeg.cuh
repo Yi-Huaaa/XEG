@@ -39,6 +39,7 @@
 #include <cublas_v2.h>
 #include "cuopt_solver.hpp"
 #include "cpu_extraction.hpp"
+#include "gpu_config.hpp"
 
 enum class DagKernel : uint32_t {
   Thread = 0,
@@ -135,6 +136,9 @@ private:
   };
 
 public:
+  XEG() = default;
+  XEG(const XEG&) = delete;
+  XEG& operator=(const XEG&) = delete;
   ~XEG();
   // Read input file
   void read(const std::string input_path) {
@@ -490,7 +494,8 @@ public:
   // policy as run_cpu. A zero time limit runs construction and checks only.
   nlohmann::json run_gpu(double time_limit = 360.0, DagKernel kernel = DagKernel::Thread,
                          uint32_t threads = 1, uint32_t bitmap_bits = 0,
-                         int solver_workers = 8, double deterministic_limit = 0.0);
+                         int solver_workers = 8, double deterministic_limit = 0.0,
+                         const xeg::GpuDagOptions& options = {});
 
   // Run XEG-D on the complete post-read e-graph.
   //
@@ -525,11 +530,12 @@ private:
   cudaError_t _gpu_copy_control(void* destination, const void* source, size_t bytes);
   void* _gpu_control = nullptr;
   int _gpu_num_levels = 0;
+  xeg::GpuDagOptions _gpu_options;
   nlohmann::json _run_gpu_pipeline(
     double time_limit, DagKernel dag_kernel, uint32_t num_thread_dag_constrution,
     uint32_t dag_bitmap_bits, CpsatInitialSolutionMode initial_solution_mode,
     uint32_t random_seed, IlpBackend ilp_backend, CuoptMode cuopt_mode,
-    int solver_workers, double deterministic_limit);
+    int solver_workers, double deterministic_limit, const xeg::GpuDagOptions& options = {});
 
   double _gpu_tree_ms = 0, _gpu_dag_ms = 0;
   xeg::CpuGraph _cpu_graph() const;

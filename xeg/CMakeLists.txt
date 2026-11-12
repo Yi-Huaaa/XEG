@@ -8,6 +8,8 @@ add_library(xeg
   xeg.cu
   gpu_tree.cu
   gpu_pipeline.cpp
+  gpu_config.cpp
+  gpu_config.hpp
   gpu_dag_insert.cu
   gpu_dag.cu
   gpu_testing.cu

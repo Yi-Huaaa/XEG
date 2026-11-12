@@ -322,19 +322,19 @@ void XEG::_gpu_dag_insert_batch(
 
   // Keep the original exact batch-count calculation.
   //
-  // kGpuDagExactBatchSize is both:
+  // _gpu_options.exact_batch_size is both:
   //   1. the number of threads in the single block
   //   2. the number of candidate lanes per transposed batch
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagExactBatchSize - 1u) /
-    kGpuDagExactBatchSize;
+     _gpu_options.exact_batch_size - 1u) /
+    _gpu_options.exact_batch_size;
 
   // Launch one single-block kernel for the entire insertion
   // phase. The kernel processes all batch_index values
   // sequentially and synchronizes after every batch.
   _gpu_dag_insert_batch_kl
-    <<<1u, kGpuDagExactBatchSize>>>(
+    <<<1u, _gpu_options.exact_batch_size>>>(
       _num_ende,
       num_batches,
       is_top_down_insertion,
@@ -1132,13 +1132,13 @@ void XEG::_gpu_dag_insert_block_batch(
   // Preserve the existing 256-lane transposed Batch mapping.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagExactBatchSize - 1u) /
-    kGpuDagExactBatchSize;
+     _gpu_options.exact_batch_size - 1u) /
+    _gpu_options.exact_batch_size;
 
   // Launch only candidate-lane blocks that own at least one
   // valid candidate.
   //
-  // candidate_lanes is at most kGpuDagExactBatchSize.
+  // candidate_lanes is at most _gpu_options.exact_batch_size.
   const uint32_t candidate_lanes =
     (_num_ende +
      num_batches - 1u) /
@@ -1972,8 +1972,8 @@ void XEG::_gpu_dag_insert_block_bitmap_batch(
   // Block candidate still launches with 64 CUDA threads.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBitmapBatchSize - 1u) /
-    kGpuDagBitmapBatchSize;
+     _gpu_options.bitmap_batch_size - 1u) /
+    _gpu_options.bitmap_batch_size;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -2577,8 +2577,8 @@ void XEG::_gpu_dag_insert_warp_batch(
   // Block candidate still launches with 64 CUDA threads.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagExactBatchSize - 1u) /
-    kGpuDagExactBatchSize;
+     _gpu_options.exact_batch_size - 1u) /
+    _gpu_options.exact_batch_size;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -3585,8 +3585,8 @@ void XEG::_gpu_dag_insert_warp_bitmap32_batch(
   // to each candidate warp remain unchanged.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBitmapBatchSize - 1u) /
-    kGpuDagBitmapBatchSize;
+     _gpu_options.bitmap_batch_size - 1u) /
+    _gpu_options.bitmap_batch_size;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -3704,8 +3704,8 @@ void XEG::_gpu_dag_insert_warp_bitmap64_batch(
   // to each candidate warp remain unchanged.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBitmapBatchSize - 1u) /
-    kGpuDagBitmapBatchSize;
+     _gpu_options.bitmap_batch_size - 1u) /
+    _gpu_options.bitmap_batch_size;
 
   const uint32_t candidate_lanes =
     (_num_ende +
@@ -4299,8 +4299,8 @@ void XEG::_gpu_dag_insert_warp_bitmap_shared_batch(
   // Match the current Bitmap Warp Batch mapping.
   const uint32_t num_batches =
     (_num_ende +
-     kGpuDagBitmapBatchSize - 1u) /
-    kGpuDagBitmapBatchSize;
+     _gpu_options.bitmap_batch_size - 1u) /
+    _gpu_options.bitmap_batch_size;
 
   const uint32_t candidate_lanes =
     (_num_ende +

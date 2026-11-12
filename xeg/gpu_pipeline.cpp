@@ -1,18 +1,21 @@
 #include "gpu_common.cuh"
 
 nlohmann::json XEG::run_gpu(double time_limit, DagKernel kernel, uint32_t threads,
-                           uint32_t bitmap_bits, int solver_workers, double deterministic_limit) {
+                           uint32_t bitmap_bits, int solver_workers, double deterministic_limit,
+                           const xeg::GpuDagOptions& options) {
   return _run_gpu_pipeline(time_limit, kernel, threads, bitmap_bits,
     CpsatInitialSolutionMode::GpuTree, 0, IlpBackend::CpSat, CuoptMode::Presolve,
-    solver_workers, deterministic_limit);
+    solver_workers, deterministic_limit, options);
 }
 
 nlohmann::json XEG::_run_gpu_pipeline(
   double time_limit, DagKernel dag_kernel, uint32_t num_thread_dag_constrution,
   uint32_t dag_bitmap_bits, CpsatInitialSolutionMode initial_solution_mode,
   uint32_t random_seed, IlpBackend ilp_backend, CuoptMode cuopt_mode,
-  int solver_workers, double deterministic_limit)
+  int solver_workers, double deterministic_limit, const xeg::GpuDagOptions& options)
 {
+  options.validate();
+  _gpu_options = options;
   if (!std::isfinite(time_limit) || time_limit < 0 || solver_workers < 1)
     throw std::invalid_argument("Invalid GPU solver workers or time limit");
   if (!std::isfinite(deterministic_limit) || deterministic_limit < 0 ||
@@ -102,7 +105,7 @@ nlohmann::json XEG::_run_gpu_pipeline(
   _gpu_allocate_dag_buffers();
   _gpu_initialize_dag_buffers();
   const auto dag_start = Clock::now();
-  _gpu_DAG_construction(GpuDagInsertionPolicy::BatchThenDirect);
+  _gpu_DAG_construction(static_cast<GpuDagInsertionPolicy>(options.insertion_policy));
   const auto dag_end = Clock::now();
   CUDA_CHECK(cudaMemcpy(raw.data(), _dvc_in_subgraph,
                         raw.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost));
@@ -121,7 +124,10 @@ nlohmann::json XEG::_run_gpu_pipeline(
 
   nlohmann::json report = {
     {"kernel",static_cast<uint32_t>(dag_kernel)}, {"dag_threads",num_thread_dag_constrution},
-    {"bitmap_bits",dag_bitmap_bits}, {"insertion_policy","batch-then-direct"},
+    {"bitmap_bits",dag_bitmap_bits},
+    {"insertion_policy", options.insertion_policy == 0 ? "full-batch" :
+                         options.insertion_policy == 1 ? "batch-early-stop" : "batch-then-direct"},
+    {"dag_options",options.to_json()},
     {"solver_workers",solver_workers}, {"time_limit_s",time_limit}, {"deterministic_limit",deterministic_limit},
     {"tree_ms",_gpu_tree_ms}, {"dag_ms",_gpu_dag_ms},
     {"tree_wall_ms",elapsed(start,tree_end)}, {"dag_wall_ms",elapsed(dag_start,dag_end)},

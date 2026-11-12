@@ -48,3 +48,27 @@ TEST_CASE("Repeated GPU extraction releases device buffers") {
   DOCTEST_REQUIRE(cudaMemGetInfo(&after,&total) == cudaSuccess);
   DOCTEST_CHECK(after + 65536 >= before);
 }
+
+TEST_CASE("GPU runtime batch and levelization options preserve legal solutions") {
+  XEG graph; graph.read(fixture("cpu_shared_choice"));
+  for (const auto kernel : {DagKernel::Thread, DagKernel::Warp, DagKernel::Block}) {
+    for (const uint32_t batch : {1u, 7u, 64u}) {
+      xeg::GpuDagOptions options;
+      options.exact_batch_size = batch;
+      options.bitmap_batch_size = batch;
+      options.low_activity_minimum_iterations = 2;
+      options.low_activity_patience = 1;
+      options.low_activity_percent = 10;
+      options.bitmap_max_direct_iterations = 2;
+      options.hybrid_levelization = batch != 7;
+      options.persistent_small_levels = 1;
+      options.persistent_threads = 64;
+      options.insertion_policy = batch == 1 ? 0 : batch == 7 ? 1 : 2;
+      const auto result = graph.run_gpu(30, kernel, kernel == DagKernel::Thread ? 1 : 64,
+        kernel == DagKernel::Thread ? 0 : 512, 1, 0.05, options);
+      DOCTEST_CHECK(result["validated"] == true);
+      DOCTEST_CHECK(result["solution"]["objective"] == 6);
+      DOCTEST_CHECK(result["dag_options"] == options.to_json());
+    }
+  }
+}

@@ -9,6 +9,7 @@ find_package(Threads REQUIRED)
 list(APPEND xeg_UNITTESTS
   test_basics
   test_gpu_extraction
+  test_gpu_config
   test_cpu_extraction
   test_cpu_solver
   test_ilp_backend

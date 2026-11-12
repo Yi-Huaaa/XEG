@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run GPU XEG and export a validated CP-SAT solution.
-# Usage: scripts/run_gpu.sh INPUT [KERNEL=0] [DAG_THREADS=1] [BITMAP_BITS=0] [ILP_SECONDS=360] [SOLVER_WORKERS=8]
+# Usage: scripts/run_gpu.sh INPUT [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS] [SOLVER_WORKERS] [--config FILE.json] [--design FAMILY/STEM]
 # KERNEL: 0=Thread, 1=Warp, 2=Block. ILP_SECONDS=0 skips solving.
 set -euo pipefail
-if [ "$#" -lt 1 ] || [ "$#" -gt 6 ]; then
+if [ "$#" -lt 1 ]; then
   sed -n '2,4s/^# //p' "$0" >&2
   exit 2
 fi
@@ -11,6 +11,19 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${XEG_BUILD_DIR:-${repo_root}/build}"
 binary="$(realpath -m "${build_dir}/main/gpu")"
 input="$(realpath "$1")"
+shift
+# Resolve a relative configuration before entering the isolated run directory.
+arguments=()
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --config ]; then
+    if [ "$#" -lt 2 ]; then echo 'error: --config needs a path' >&2; exit 2; fi
+    arguments+=(--config "$(realpath "$2")")
+    shift 2
+  else
+    arguments+=("$1")
+    shift
+  fi
+done
 if [ ! -x "$binary" ] || [ ! -f "$input" ]; then
   echo "error: input or GPU executable missing; build with scripts/build.sh gpu" >&2
   exit 1
@@ -22,7 +35,7 @@ run_dir="${XEG_RUN_DIR:-${build_dir}/runs/$(date +%Y%m%d_%H%M%S)_gpu_${name}_$$}
 mkdir -p "$run_dir"
 run_dir="$(realpath "$run_dir")"
 cd "$run_dir"
-command=("$binary" "$input" "${2:-0}" "${3:-1}" "${4:-0}" "${5:-360}" "${6:-8}" "$run_dir/report.json")
+command=("$binary" "$input" "${arguments[@]}" --report "$run_dir/report.json")
 {
   printf 'command: '; printf '%q ' "${command[@]}"; printf '\n'
   echo "started: $(date -Is)"

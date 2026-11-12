@@ -481,7 +481,7 @@ __global__ void _gpu_build_in_subgraph_kl(
 void XEG::_gpu_dag_levelize(
   const bool is_top_down)
 {
-  if constexpr (kEnableGpuDagHybridLevelization) {
+  if (_gpu_options.hybrid_levelization) {
     _gpu_dag_levelize_hybrid(is_top_down);
   }
   else {
@@ -693,13 +693,11 @@ void XEG::_gpu_dag_levelize_hybrid(
 
   uint32_t consecutive_small_levels = 0u;
 
-  // The persistent kernel writes _dvc_max_level only when it
-  // completes all remaining frontiers. If the host finishes the
-  // traversal, the host writes _dvc_max_level as before.
+  // The host retains the final level count without a diagnostic H2D copy.
 
   while (queue_count > 0u) {
     if (queue_count <=
-        kGpuDagPersistentEnterFrontierThreshold) {
+        _gpu_options.persistent_enter_frontier) {
       ++consecutive_small_levels;
     }
     else {
@@ -709,7 +707,7 @@ void XEG::_gpu_dag_levelize_hybrid(
     // Enter persistent mode on the Nth consecutive small
     // frontier. The current frontier has not yet been processed.
     if (consecutive_small_levels >=
-        kGpuDagPersistentRequiredSmallLevels) {
+        _gpu_options.persistent_small_levels) {
       if constexpr (kEnableGpuDagIterationLog) {
         printf(
           "[GPU DAG Levelize] dir=%s, "
@@ -724,12 +722,12 @@ void XEG::_gpu_dag_levelize_hybrid(
       // Initial state is passed through kernel arguments, not
       // copied into the state buffer. This avoids one H2D copy.
       _gpu_dag_process_persistent_tail_kl
-        <<<1u, kGpuDagPersistentThreads>>>(
+        <<<1u, _gpu_options.persistent_threads>>>(
           _num_ende,
           queue_begin,
           queue_count,
           static_cast<int32_t>(current_level),
-          kGpuDagPersistentEmergencyExitThreshold,
+          _gpu_options.persistent_exit_frontier,
           _dvc_q,
           _dvc_q_sz,
           _dvc_picked_endes,
@@ -808,7 +806,7 @@ void XEG::_gpu_dag_levelize_hybrid(
           xeg_detail::GpuDagPersistentExitReason::
             FrontierTooWide) {
         if (queue_count <=
-            kGpuDagPersistentEmergencyExitThreshold) {
+            _gpu_options.persistent_exit_frontier) {
           throw std::logic_error(
             "Persistent levelization reported a wide "
             "frontier below the emergency threshold");
@@ -888,11 +886,7 @@ void XEG::_gpu_dag_levelize_hybrid(
     ++current_level;
   }
 
-  // When traversal ended in the host-driven path, preserve the
-  // original H2D max-level update.
-  //
-  // When the persistent kernel completed the traversal, it
-  // already wrote the final value and this copy is skipped.
+  // Both paths already return the final level count to the host.
   _gpu_num_levels = current_level;
 
   // Bottom-up reverse remains the existing multi-block kernel.
@@ -1353,7 +1347,7 @@ void XEG::_gpu_DAG_construction(
   uint32_t peak_survived = 0u;
 
   // Number of consecutive batch iterations whose survived
-  // insertion count is at most kGpuDagLowActivityPercent of
+  // insertion count is at most _gpu_options.low_activity_percent of
   // the historical batch peak.
   uint32_t low_activity_streak = 0u;
 
@@ -1362,7 +1356,7 @@ void XEG::_gpu_DAG_construction(
   //
   // true:
   //   use the one-thread-per-e-node direct insertion kernel.
-  bool use_direct_mode = false; // 0730 我現在再改這裡，原本是 false
+  bool use_direct_mode = false;
 
   // BatchEarlyStop terminates immediately when the
   // low-activity condition is reached.
@@ -1387,7 +1381,7 @@ void XEG::_gpu_DAG_construction(
 
   while (host_u0 > 0u) {
     // Bitmap Warp/Block Direct mode executes at most
-    // kGpuDagBitmapMaxDirectIterations complete outer
+    // _gpu_options.bitmap_max_direct_iterations complete outer
     // iterations.
     //
     // This check is placed at the beginning of the loop so that:
@@ -1401,7 +1395,7 @@ void XEG::_gpu_DAG_construction(
     if (bitmap_direct_limit_enabled &&
         use_direct_mode &&
         direct_iterations >=
-          kGpuDagBitmapMaxDirectIterations) {
+          _gpu_options.bitmap_max_direct_iterations) {
       bitmap_direct_limit_triggered = true;
       break;
     }
@@ -1550,7 +1544,7 @@ void XEG::_gpu_DAG_construction(
             after_both_phases) * 100u <=
           static_cast<uint64_t>(
             peak_survived) *
-            kGpuDagLowActivityPercent;
+            _gpu_options.low_activity_percent;
 
         if (is_low_activity) {
           ++low_activity_streak;
@@ -1561,9 +1555,9 @@ void XEG::_gpu_DAG_construction(
 
         const bool low_activity_condition_reached =
           outer_iteration >=
-            kGpuDagLowActivityMinimumIterations &&
+            _gpu_options.low_activity_minimum_iterations &&
           low_activity_streak >=
-            kGpuDagLowActivityPatience;
+            _gpu_options.low_activity_patience;
 
         if (low_activity_condition_reached) {
           if (insertion_policy ==
@@ -1652,7 +1646,7 @@ void XEG::_gpu_DAG_construction(
     static_cast<uint32_t>(
       (static_cast<uint64_t>(
          peak_survived) *
-       kGpuDagLowActivityPercent) /
+       _gpu_options.low_activity_percent) /
       100u);
 
   const char* insertion_policy_name = "unknown";
