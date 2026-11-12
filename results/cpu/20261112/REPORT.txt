@@ -1,0 +1,79 @@
+XEG CPU optimization and verification — completed experiment report
+Generated: 2026-11-12T01:54:12.719256+00:00
+Repository: /home/yihua_chung_ricursive_com/XEG/gpu_extraction
+Branch: cpu-parallel-extraction
+Delivered commit: 535eeb6529843b97d60ed301daefda9c9d53bb62
+Original baseline: 9518ba8a6c2785d6d535bd69519dd227f05dffcb
+
+Delivered behavior
+CPU tree/DAG construction is parallel and deterministic across construction thread counts. It uses byte masks, atomic monotone tree relaxation, acyclic canonical witnesses, efficient Kahn levelization, parallel bound evaluation and ordered commits.
+Candidate cleanup removes missing-child choices and own-class dependencies recursively. A checked acyclic candidate graph permits omitting CP-SAT level variables on this CPU path. Root, one-choice and child constraints remain. Every returned solution is independently validated; short solves retain the cheaper of the valid seed and solver incumbent. Raw solver status and objective remain in the report.
+The public class/header/directory/library/build options now use XEG/xeg. CUDA algorithms and GPU tests match the original after identifier/whitespace normalization. Earlier experimental GPU fixes are preserved on local backup branch gpu-tree-fix-tested-20261112 and in the earlier checkpoint history.
+
+Construction performance
+87 inputs, same parsed graph and process for old/new construction; 3 repetitions; per-input median then geometric mean. Times include candidate cleanup, exclude parsing, independent validation and solving. Hardware: AMD EPYC 9B45; exact allocation/source hashes: benchmark-machine-v7.json.
+threads | all 87: vs old 1t | all 87: vs new 1t | 17 larger cases: vs new 1t
+      1 |             2.086x |             1.000x |                    1.000x
+      2 |             2.323x |             1.114x |                    1.317x
+      4 |             2.965x |             1.421x |                    1.889x
+      8 |             3.516x |             1.685x |                    2.480x
+     16 |             3.272x |             1.569x |                    2.789x
+     32 |             3.169x |             1.519x |                    3.154x
+All 87 cases are faster than original at 8 threads. The larger subset is defined by original construction >=100 ms. Small cases saturate earlier; scaling is not monotonic for every input.
+
+Overall-runtime/model comparison
+A = no candidate cleanup + levels; B = cleanup + levels; C = cleanup + checked omission of levels. Full 87-case sweeps used 8 construction threads, 8 CP-SAT workers and a 360-second solver cap. They ran concurrent inputs and are quality measurements, not isolated timing measurements.
+A_no_cleanup_levels: 77 OPTIMAL, 6 FEASIBLE, 4 UNKNOWN.
+B_cleanup_levels: 79 OPTIMAL, 6 FEASIBLE, 2 UNKNOWN.
+C_cleanup_no_levels: 82 OPTIMAL, 5 FEASIBLE, 0 UNKNOWN.
+C vs B: 83 identical final costs, 4 lower, 0 higher (including B's explicit seed fallbacks).
+Corrected sequential A/B/C timing: 9 inputs, 81 runs, 3 repetitions; geometric mean C speedup 2.115x over A and 1.868x over B. All objectives matched and all runs were OPTIMAL. This subset uses the largest JSON in each family among cases where all three preliminary sweeps proved OPTIMAL within 20 seconds; it excludes the slow/timed-out cases. It is not an all-87 overall speedup claim.
+An earlier paired run with OMP_PROC_BIND=close was rejected: /proc confirmed CP-SAT workers inherited the primary thread's single-core affinity. Corrected timing uses OMP_PROC_BIND=false. The rejected data and probe are retained separately.
+
+Final delivered quality and reproducibility
+The delivered binary was rerun after adding best-seed retention; its CP-SAT formulation is identical to C. Independent original-JSON checks passed for all 87 quality outputs.
+Delivered solver statuses: {'OPTIMAL': 82, 'FEASIBLE': 5}
+Against the original CPU runs with an incumbent: 72 equal, 9 lower, 2 higher, out of 83 paired cases. Four original runs had no incumbent; delivered results are reported for them separately in quality.csv.
+Higher cost: esyn/cavlc.rename.json: original 1893, delivered 1894; statuses FEASIBLE/FEASIBLE. This is a finite parallel-solver comparison; exact reproducibility uses the fixed configuration below.
+Higher cost: esyn/mul5.rename.json: original 598, delivered 600; statuses FEASIBLE/FEASIBLE. This is a finite parallel-solver comparison; exact reproducibility uses the fixed configuration below.
+Compared with paper Table 8: 51 equal, 18 lower, 18 higher. No parameter search or selection of best repeats was used to claim paper reproduction.
+Material pre-existing paper gap: impress/large_mul2048 is 3671672.0 in the delivered run and 3671672.0 in the unchanged original CPU baseline, versus paper 1305960. This optimization did not close that search-space quality gap. The old rounded stdout was checked by a 17-digit original-baseline rerun; the exact old objective is 3,671,672.
+Supplementary matched repeats (two additional trials per implementation for the two timed-regression cases; primary results above are not replaced):
+  esyn/cavlc.rename.json, original: 1896 (FEASIBLE), 1893 (FEASIBLE)
+  esyn/cavlc.rename.json, delivered: 1894 (FEASIBLE), 1893 (FEASIBLE)
+  esyn/mul5.rename.json, original: 600 (FEASIBLE), 598 (FEASIBLE)
+  esyn/mul5.rename.json, delivered: 600 (FEASIBLE), 600 (FEASIBLE)
+Supplementary with-level fixed-budget checks: 87 inputs completed; comparisons rejected by the safety checks: ['morphic/div.rename.json: wall safety cap may interfere']. These are excluded from the delivered no-level verification claim.
+The fixed baseline uses 1 CP-SAT worker, 1 deterministic work unit and a 360-second safety cap; 1/2/4/8/16/32 construction threads. All 522 solutions are legal, each input has exactly the same final cost/status/construction hashes across threads, and input SHA256 matches the original baseline. These deliberately short-budget costs are separate from the 360-second quality runs.
+Seed fallback retained the better known seed for 27 of 87 inputs in the fixed baseline (including cases without any incumbent).
+
+Legality and cost of validation
+Original candidate diagnostics: 62/87 inputs had missing-child candidates; 30/87 had own-class candidates; 63/87 had some unusable candidates. Existing CP-SAT constraints already excluded them. A bad candidate does not imply a bad final answer. TRACE.txt gives the complete model path and proof that level omission is safe only after the candidate checks.
+Always-on C++ validation median: 0.815 ms; maximum: 90.132 ms; median share of CPU pipeline: 0.273%. The external Python verifier is optional and reads the original JSON independently.
+
+Tests and build
+Delivered CPU C++ tests: 42 cases / 12,359 assertions passed; independent Python checker: 8 cases passed. Core ASan/UBSan: 14 cases / 12,167 assertions passed, exact core hash matches delivery. All targets compiled, including renamed GPU test targets; GPU tests were not rerun for delivery.
+The known original GPU tree/controller failures remain deferred under the requested CPU-only scope. The earlier 122/122 GPU-inclusive test result belongs to the separate experimental checkpoint, not this delivered branch.
+The CPU binary also ran successfully on the login VM without a GPU. Building the current shared library still requires a CUDA toolkit; builds ran through Slurm.
+
+Run and verify on this login VM
+cd /home/yihua_chung_ricursive_com/XEG/gpu_extraction
+build/plan/20261112_cpu_parallel/run_cpu_current.sh INPUT.json 8 360 8 REPORT.json
+python3 verification/verify_solution.py INPUT.json REPORT.json
+python3 verification/check_threads.py INPUT.json --binary build/plan/20261112_cpu_parallel/run_cpu_current.sh --output build/verification
+For a normal source build: scripts/build.sh cpu; scripts/run_cpu.sh INPUT.json 8 360 8. Run substantial datasets in a Slurm allocation, using local scratch.
+
+GitHub setting
+delete_branch_on_merge=true was enabled and read back through the GitHub API. GitHub deletes merged remote source branches automatically, including after squash-and-merge. Local branches are unaffected. Receipt: github-setting.json.
+
+Evidence index
+performance.csv / performance.png / performance.svg — construction timing and scaling
+quality.csv — each input: paper, original CPU, delivered CPU, fixed baseline and statuses
+variants.csv / variants-summary.json — all A/B/C and delivered rerun measurements
+paired-runtime/ — corrected sequential timing, experiment selection and native reports
+verification-delivered/ — all 522 final reports and original-input verification receipts
+quality-delivered-cpu/ — all 87 final quality reports, logs and input hashes
+TRACE.txt / scope_audit.py / scope-audit.json — source paths, correctness proof and deferred-GPU audit
+v10-test_*.log / final-test_cpu_extraction.log / cpu-sanitize-delivered.log / python-tests-final.log — test evidence
+delivery.json / experiment.json / dataset-sha256.json / audit.json — revisions, parameters and audit
+Original/earlier logs, rejected attempts and snapshots are retained with distinct names; they are not substituted for delivered results.

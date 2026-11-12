@@ -462,6 +462,9 @@ ctest \
 
 ## Benchmarks
 
+Published experiment reports, performance plots, and per-input costs are indexed
+in [results/](results/README.md).
+
 The `dataset/` directory holds the benchmark e-graphs, one subdirectory per benchmark:
 
 - `boolE`
