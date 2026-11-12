@@ -38,6 +38,7 @@
 #include <cuda_runtime_api.h>
 #include <cublas_v2.h>
 #include "cuopt_solver.hpp"
+#include "cpu_extraction.hpp"
 
 enum class DagKernel : uint32_t {
   Thread = 0,
@@ -228,6 +229,9 @@ public:
   // These wrappers expose selected internal GPU operations for
   // deterministic unit tests. They are not used by run().
   // ============================================================
+  // Validates the GPU tree independently against CPU minimum costs.
+  nlohmann::json unittest_gpu_tree();
+
   struct CsrGraphSnapshot {
     std::vector<uint32_t> forward_adj;
     std::vector<uint32_t> forward_ptr;
@@ -478,6 +482,11 @@ public:
       cuopt_mode);
   }
 
+  // CPU-only construction and CP-SAT. A zero time limit skips the solver.
+  // Thread count controls construction only; solver_workers is independent.
+  nlohmann::json run_cpu(int threads = 1, double time_limit = 360.0,
+                         int solver_workers = 8);
+
   // Run XEG-D on the complete post-read e-graph.
   //
   // CPU tree construction provides the CP-SAT warm start.
@@ -506,6 +515,10 @@ public:
   }
 
 private:
+  xeg::CpuGraph _cpu_graph() const;
+  int _cpu_solver_workers = 0;
+  bool _cpu_validate_solver = false;
+  nlohmann::json _cpu_solver_result;
   /* Read */
   void _read_input(const std::string input_path);
   // Output-degree ablation only.
@@ -548,12 +561,6 @@ private:
   // skewness
   double _compute_skewness(const std::vector<uint32_t>& degrees);
   void _print_degree_stats();
-  bool _insertion_bitmap_mt(
-    const bool is_td, 
-    std::vector<bool>& picked_endes,
-    std::vector<int>& level);
-
-  void _cpu_DAG_construction_mt_bitmap(std::vector<bool>& picked_endes);
   /* ASPLOS rebuttal ends */
 
   /* Run */
@@ -582,57 +589,12 @@ private:
     std::vector<double>& cost_of_ende,
     std::vector<uint32_t>& best_ende_of_ecls,
     std::vector<bool>& picked_endes); 
-  double _compute_dag_cost(
-    const std::vector<uint32_t>& best_ende_of_ecls,
-    std::vector<bool>& picked_endes,
-    std::vector<std::vector<uint32_t>>& ende_picked_by_ende);
-  void _init_picked_adj(const std::vector<bool>& picked_endes);
   // GPU version
-  std::pair<double, double> _gpu_tree_construction(); 
+  std::pair<double, double> _gpu_tree_construction(bool construct_tree = true);
 
   /* DAG Construction */
   // CPU version 
   void _cpu_DAG_construction(std::vector<bool>& picked_endes);
-  void _construct_deg(
-    const std::vector<bool>& picked_endes,
-    const std::vector<double>& cost_of_ende); 
-  void _top_down_levelize(
-    std::vector<bool>& picked_endes,
-    std::vector<int>& level);
-  void _bottom_up_levelize(
-    std::vector<bool>& picked_endes,
-    std::vector<int>& level);
-    void _update_deg(
-      const bool need_to_update, 
-      const std::vector<bool>& picked_endes);
-    void _BFS(
-      const bool is_td, 
-      std::vector<uint32_t>& deg, 
-      std::vector<bool>& picked_endes, 
-      const std::vector<uint32_t>& global_adj_1D,
-      const std::vector<uint32_t>& global_adj_1D_ptr,
-      const std::vector<bool>& picked_adj,
-      std::vector<int>& level);
-  bool _insertion(
-    const bool is_td, 
-    std::vector<bool>& picked_endes,
-    std::vector<int>& level);
-  void _update_picked_adj(
-    const uint32_t fm_ende, 
-    const uint32_t to_ende);
-  void _clear_redundant_endes(std::vector<bool>& picked_endes);
-    void _mark_reachable(
-      const std::vector<uint32_t>& starts,
-      const std::vector<uint32_t>& global_adj_1D,
-      const std::vector<uint32_t>& global_adj_1D_ptr,
-      const std::vector<bool>& picked_adj,      
-      std::vector<bool>& visited,
-      const std::vector<bool>& picked_endes);
-    void get_nodes_in_subgraph(
-      const std::vector<uint32_t>& roots,
-      const std::vector<uint32_t>& leaves,
-      const std::vector<bool>& picked_endes);
-
   // Validate the runtime Warp configuration.
   //
   // One candidate always uses exactly one 32-lane warp.
@@ -1182,7 +1144,7 @@ private:
   // Do not rename or remove them during the DAG rewrite.
   // ============================================================
   uint32_t* _dvc_best_ende_of_ecls = nullptr;
-  bool* _dvc_update = nullptr;
+  uint32_t* _dvc_update = nullptr;
 
   uint32_t* _dvc_ecls_its_ende_1D = nullptr;
   uint32_t* _dvc_ecls_its_ende_1D_ptr = nullptr;

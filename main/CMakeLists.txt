@@ -37,12 +37,15 @@ add_executable(
 )
 
 
+add_executable(cpu ${g_ext_MAIN_DIR}/cpu.cpp)
+
 find_package(Threads REQUIRED)
 
 
 list(
   APPEND
   g_ext_examples
+  cpu
   simple
   output_degree_ablation
   xeg_d

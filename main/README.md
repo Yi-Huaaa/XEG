@@ -1,10 +1,10 @@
 # XEG Main Programs
 
-This directory contains three main programs.
+This directory contains the GPU driver, the CPU driver, and experimental programs.
 
-## 1. `simple.cpp`
+## 1. `simple.cu`
 
-`simple.cpp` runs the complete XEG flow on the original input e-graph.
+`simple.cu` runs the complete XEG flow on the original input e-graph.
 
 ### Usage
 
@@ -34,7 +34,7 @@ BITMAP_BITS = 0
 
 `xeg_t.cpp` runs the XEG-T flow.
 
-It uses the same input format and command line arguments as `simple.cpp`. The main difference is that it calls `run_xeg_t_exp()` instead of `run()`.
+It uses the same input format and command line arguments as `simple.cu`. The main difference is that it calls `run_xeg_t_exp()` instead of `run()`.
 
 ### Usage
 
@@ -194,3 +194,14 @@ Typical values include:
 32
 64
 ```
+
+## CPU driver (`cpu.cpp`)
+
+```bash
+build/main/cpu INPUT [THREADS=1] [ILP_SECONDS=360] [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1]
+```
+
+This runs CPU tree construction, CPU DAG construction, validation, and CP-SAT
+on the CPU-created search space, using its original tree as the warm start.
+`ILP_SECONDS=0` skips CP-SAT. Repeats reuse the parsed graph but rebuild all
+construction state. See the root README for timing and report semantics.

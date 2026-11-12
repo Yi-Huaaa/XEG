@@ -11,6 +11,8 @@ add_library(g_ext
   cuopt_solver.hpp
   xeg_milp_model.cpp
   xeg_milp_model.hpp
+  cpu_extraction.cpp
+  cpu_extraction.hpp
 )
 
 # Sources compiled by the host C++ compiler (for example main/xeg_d.cpp and

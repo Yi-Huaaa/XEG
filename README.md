@@ -16,12 +16,55 @@ It also provides an optional NVIDIA cuOpt backend for users who want to try GPU 
 
 ## Features
 
+* Deterministic CPU tree and DAG construction with OpenMP
 * GPU tree construction
 * GPU DAG construction with Thread, Warp, and Block kernels
 * Exact overlap detection and optional bitmap overlap detection
 * Google OR-Tools CP-SAT backend
 * Optional NVIDIA cuOpt backend
 * CTest-based unit and integration tests
+
+## CPU extraction
+
+Build and run the CPU pipeline with:
+
+```bash
+scripts/build.sh cpu
+scripts/run_cpu.sh dataset/esyn/mul3.rename.json 8 360 8
+```
+
+The arguments after the input are construction threads, CP-SAT time limit in
+seconds, and CP-SAT workers. Their defaults are `1`, `360`, and `8`. Use a zero
+time limit to run construction and validation without solving. CPU execution
+requires no GPU; the current shared-library build still requires a CUDA toolkit.
+
+The CPU tree uses nonnegative finite local costs and recovers an acyclic optimal
+tree witness with deterministic tie-breaking. DAG insertion evaluates neighbor
+bounds in parallel and commits candidates in node order, so changing construction
+threads preserves the selected nodes and solver input. Small graphs and narrow
+levelization frontiers use serial work to avoid synchronization overhead.
+
+Each run writes `run.log`, `report.json`, and the solver's memory log under
+`build/runs/`. The report contains separate tree/DAG times, construction hashes,
+solver status, and selected e-node names for a feasible solution. Construction
+times exclude JSON parsing, validation, and solving. The final solution is checked
+for root coverage, one choice per active e-class, child closure, acyclicity, and
+agreement with the solver's integer-cost objective. A solver timeout can return
+no solution; check the reported status before comparing costs.
+
+To repeat construction on a parsed graph without repeated JSON loading:
+
+```bash
+build/main/cpu INPUT.json 8 0 8 report.json 3
+```
+
+Use `python3 scripts/benchmark_cpu.py INPUT.json --output build/cpu-benchmark`
+inside an allocation to compare thread counts and check construction hashes.
+
+Keep solver workers and its time limit fixed when comparing construction thread
+counts. CP-SAT's parallel search and a finite time budget can still change its
+incumbent; deterministic construction does not promise identical timed solver
+outcomes or reproduce every published cost from a single run.
 
 ## Requirements
 

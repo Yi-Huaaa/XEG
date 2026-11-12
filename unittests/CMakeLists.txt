@@ -8,6 +8,8 @@ find_package(Threads REQUIRED)
 
 list(APPEND g_ext_UNITTESTS
   test_basics
+  test_cpu_extraction
+  test_gpu_tree
   test_ilp_backend
   test_xeg_milp_model
   test_csr_invariants
