@@ -1,4 +1,5 @@
 #include "gpu_config.hpp"
+#include "gpu_default_profile.hpp"
 
 #include <fstream>
 #include <limits>
@@ -131,6 +132,11 @@ GpuProfile load_gpu_profile(const std::string& path, const std::string& design) 
   if (!input) throw std::runtime_error("Cannot open GPU configuration: " + path);
   nlohmann::json document;
   input >> document;
+  return resolve_gpu_profile(document, design);
+}
+
+GpuProfile default_gpu_profile(const std::string& design) {
+  static const auto document = nlohmann::json::parse(xeg_default_gpu_profiles);
   return resolve_gpu_profile(document, design);
 }
 }  // namespace xeg

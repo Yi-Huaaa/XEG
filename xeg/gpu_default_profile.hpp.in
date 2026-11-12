@@ -1,0 +1,5 @@
+#pragma once
+
+// Generated from the same manifest used by --config. Embedded so relocated
+// executables do not depend on the build machine's source directory.
+inline constexpr char xeg_default_gpu_profiles[] = R"XEG_PROFILE(@XEG_GPU_PROFILE_JSON@)XEG_PROFILE";

@@ -40,5 +40,7 @@ struct GpuProfile {
 // fail explicitly, so a misspelled experiment setting cannot silently run.
 GpuProfile resolve_gpu_profile(const nlohmann::json& document, const std::string& design);
 GpuProfile load_gpu_profile(const std::string& path, const std::string& design);
+// CLI default: measured profiles embedded from configs/gpu/87-designs.json.
+GpuProfile default_gpu_profile(const std::string& design);
 
 }  // namespace xeg

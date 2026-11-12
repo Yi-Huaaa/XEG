@@ -392,7 +392,7 @@ void XEG::_run_impl(
 {
   auto report = _run_gpu_pipeline(ILP_solver ? ILP_time_limit : 0.0,
     dag_kernel, num_thread_dag_constrution, dag_bitmap_bits,
-    initial_solution_mode, random_seed, ilp_backend, cuopt_mode, 8, 0.0);
+    initial_solution_mode, random_seed, ilp_backend, cuopt_mode, 8, 0.0, _gpu_options);
   for (const char* key : {"solver", "solution"})
     if (report.contains(key)) report[key].erase("selected_enodes");
   std::cout << "[GPU Result] " << report.dump() << '\n';

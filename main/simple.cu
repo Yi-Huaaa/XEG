@@ -1,4 +1,5 @@
 #include <chrono>
+#include "gpu_profile_args.hpp"
 #include <iostream>
 #include <xeg/XEG.hpp>
 #include <vector>
@@ -8,14 +9,16 @@
 #include "ortools/base/logging.h" // For LOG(INFO)
 
 int main(int argc, char *argv[]) {
+  try {
+  GpuProfileArgs profile_args(argc, argv);
+  argc = static_cast<int>(profile_args.positional.size());
+  argv = profile_args.positional.data();
   // // Timer
   std::chrono::duration<double> duration_read;
   
-  cudaEvent_t startGPU, stopGPU;
-  cudaEventCreate(&startGPU);
-  cudaEventCreate(&stopGPU);
   if (argc < 2 || argc > 7) {
     std::cerr
+      << "Defaults: measured GPU design profiles. Options: --config FILE.json --design FAMILY/STEM --no-profile\n"
       << "Usage:\n"
       << "  ./main/simple "
       << "<input_file> "
@@ -58,7 +61,8 @@ int main(int argc, char *argv[]) {
   
   // === Parse arguments ===
   std::string input_path = argv[1];
-  int dag_kernel_value = (argc > 2) ? std::stoi(argv[2]) : 0;
+  const auto profile = profile_args.resolve(input_path);
+  int dag_kernel_value = (argc > 2) ? std::stoi(argv[2]) : static_cast<int>(profile.kernel);
 
   if (dag_kernel_value < 0 || dag_kernel_value > 2) {
     std::cerr
@@ -74,10 +78,10 @@ int main(int argc, char *argv[]) {
 
   uint32_t num_thread_dag_constr = (argc > 3)
       ? static_cast<uint32_t>(std::stoul(argv[3]))
-      : 1u;
+      : profile.dag_threads;
   uint32_t bitmap_bits = (argc > 4)
       ? static_cast<uint32_t>(std::stoul(argv[4]))
-      : 0u;  
+      : profile.bitmap_bits;
 
   uint32_t ilp_backend_value = (argc > 5)
       ? static_cast<uint32_t>(std::stoul(argv[5]))
@@ -242,6 +246,7 @@ int main(int argc, char *argv[]) {
   duration_read = end - start;
   std::cout << "Read Time: " << xeg.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
+  xeg.set_gpu_dag_options(profile.dag);
   xeg.run(
     true,
     360,
@@ -252,5 +257,9 @@ int main(int argc, char *argv[]) {
     cuopt_mode);
 
   return 0;
+  } catch (const std::exception& error) {
+    std::cerr << "GPU extraction failed: " << error.what() << '\n';
+    return 1;
+  }
 }
 

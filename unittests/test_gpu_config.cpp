@@ -1,6 +1,28 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>
 #include <xeg/gpu_config.hpp>
+#include <filesystem>
+#include <fstream>
+
+TEST_CASE("Embedded GPU defaults match every measured design and the unlisted fallback") {
+  const auto path = std::filesystem::path(__FILE__).parent_path().parent_path()
+    / "configs/gpu/87-designs.json";
+  std::ifstream input(path);
+  DOCTEST_REQUIRE(input.good());
+  nlohmann::json document;
+  input >> document;
+  DOCTEST_REQUIRE(document["designs"].size() == 87);
+  for (const auto& [design, overrides] : document["designs"].items()) {
+    (void)overrides;
+    DOCTEST_CHECK(xeg::default_gpu_profile(design).to_json() ==
+                  xeg::resolve_gpu_profile(document, design).to_json());
+  }
+  const auto fallback = xeg::default_gpu_profile("unlisted/example");
+  DOCTEST_CHECK(fallback.to_json() == xeg::resolve_gpu_profile(document, "unlisted/example").to_json());
+  DOCTEST_CHECK(fallback.kernel == 2);
+  DOCTEST_CHECK(fallback.dag_threads == 64);
+  DOCTEST_CHECK(fallback.bitmap_bits == 512);
+}
 
 TEST_CASE("GPU profiles inherit defaults and override only the chosen design") {
   const nlohmann::json config = {

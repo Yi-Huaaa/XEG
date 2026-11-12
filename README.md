@@ -124,15 +124,17 @@ for the separately measured multi-threaded CPU results.
 
 ```bash
 scripts/build.sh gpu
-scripts/run_gpu.sh dataset/esyn/mul3.rename.json 2 64 512 360 8
+scripts/run_gpu.sh dataset/esyn/mul3.rename.json
 python3 verification/verify_solution.py dataset/esyn/mul3.rename.json build/runs/RUN/report.json
 ```
 
 Arguments after the input are kernel (`0` Thread, `1` Warp, `2` Block), DAG threads,
-bitmap bits, solver seconds, and solver workers. Defaults remain `0 1 0 360 8`;
-the example explicitly selects Block/64/512. The existing batch/direct policy,
-bitmap hash, batching, and levelization defaults are unchanged. GPU construction
-remains nondeterministic; repeated runs can produce different candidate spaces.
+bitmap bits, solver seconds, and solver workers. The CUDA executables (`gpu`,
+`simple`, `xeg_t`) now select the measured design profile by default. Unlisted
+designs use Block/64/512 with the common controller settings. Solver defaults
+remain 360 seconds and 8 workers. Use `--no-profile` for the original Thread/1/0
+and controller defaults, or `2 64 512 --no-profile` for the Fixed GPU experiment
+settings. GPU construction remains nondeterministic.
 
 Per-design profiles expose batch concurrency and controller parameters without
 recompiling. The supplied manifest includes measured overrides for 33 of the 87
@@ -141,11 +143,18 @@ benchmark inputs; empty entries inherit its Block/64/512 defaults. See the
 [87-design quality and construction results](results/gpu/20261112/README.md).
 
 ```bash
-scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json --config configs/gpu/87-designs.json
+scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json
+# Optional replacement configuration:
+scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json --config my-profiles.json
 ```
 
 Explicit positional kernel/thread/bitmap arguments override the profile's
 geometry. Reports record every effective DAG option alongside the solution.
+The wrappers load `configs/gpu/87-designs.json` from this checkout. Direct
+executables embed the same manifest at build time, so their defaults also work
+from another directory or after relocation; rebuild to refresh embedded defaults,
+or use `--config` to read an updated file without rebuilding. `--design FAMILY/STEM`
+selects a profile when the input has been renamed or moved.
 
 Tree construction still relaxes double tree costs with one GPU thread per
 e-node. A per-class gate couples each strict cost improvement to its representative.
@@ -366,14 +375,12 @@ cmake --build build-cuopt -j "$(nproc)"
 ## Run With Scripts
 
 The run scripts use `build/main/simple` from `scripts/build.sh`.
-Both pass any arguments after the input options to `main/simple` unchanged (see [Runtime Options](#runtime-options)).
-With no such arguments, they use `2 64 512`: the Block kernel, 64 threads per candidate, and a 512-bit bitmap.
-This differs from the `main/simple` defaults (`0 1 0`).
+Both load the measured design profiles and forward explicit options to `main/simple` (see [Runtime Options](#runtime-options)). Use `--config FILE.json` to replace the profile manifest, or `--no-profile` to use the original defaults.
 
 ### Run One Input
 
 ```bash
-scripts/run.sh dataset/maxsat/maxcut-140-630-0.7-1.rename.json           # 2 64 512
+scripts/run.sh dataset/maxsat/maxcut-140-630-0.7-1.rename.json           # measured design profile
 scripts/run.sh dataset/maxsat/maxcut-140-630-0.7-1.rename.json 0 1 0     # Thread kernel
 ```
 
@@ -423,9 +430,9 @@ It reads one input JSON file and runs GPU tree construction, GPU DAG constructio
 
 | Argument | Values | Default | Meaning |
 |---|---|---:|---|
-| `DAG_KERNEL` | `0`, `1`, `2` | `0` | Thread, Warp, or Block DAG construction |
-| `NUM_THREAD_DAG_CONSTR` | Positive integer | `1` | Threads used by DAG construction |
-| `BITMAP_BITS` | See table below | `0` | Exact or bitmap overlap detection |
+| `DAG_KERNEL` | `0`, `1`, `2` | Profile (`2` for unlisted inputs) | Thread, Warp, or Block DAG construction |
+| `NUM_THREAD_DAG_CONSTR` | Positive integer | Profile (`64` for unlisted inputs) | Threads used by DAG construction |
+| `BITMAP_BITS` | See table below | Profile (`512` for unlisted inputs) | Exact or bitmap overlap detection |
 | `ILP_BACKEND` | `0`, `1` | `0` | CP-SAT or cuOpt |
 | `CUOPT_MODE` | `0`, `1` | `0` | cuOpt presolve or GPU tree warm start |
 

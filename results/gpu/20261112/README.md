@@ -14,3 +14,5 @@ Selected quality versus the CPU reference: 17 lower, 51 equal, 19 higher; 0 with
 ![GPU construction speedups](performance.png)
 
 Validation: 139 C++/CUDA tests, 15 Python tests, 87 CPU regression comparisons, and GPU memcheck on tree/repeated-extraction tests. Raw experiment/review logs remain under `build/plan/20261112_gpu_alignment/` on the experiment server.
+
+The CUDA CLI now uses these measured profiles by default. The tables retain their original recorded runs; this default-selection change does not rerun or replace the measurements. To request the Fixed GPU settings, pass `2 64 512 --no-profile`.

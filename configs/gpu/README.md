@@ -3,12 +3,16 @@
 `87-designs.json` contains measured profiles for the 87 benchmark inputs: 33 override the common Block/64/512 configuration, and 54 inherit its defaults. The [results and selection protocol](../../results/gpu/20261112/profiled.md) show costs, separate construction timings, and rejected trials. These are selected observations, not guaranteed optima; GPU construction and timed parallel solving remain nondeterministic. Empty design objects use the common defaults.
 
 ```bash
-scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json --config configs/gpu/87-designs.json
+scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json
+# Reproduce the Fixed GPU settings (common original parameters):
+scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json 2 64 512 --no-profile
 # Direct executable; use --design if the input has been moved or renamed:
 build/main/gpu input.json --config configs/gpu/87-designs.json --design boolE/mul32_map.rename --report report.json
 ```
 
-The design key is the immediate parent directory plus the filename without `.json`. Resolution order is built-in defaults, configuration `defaults`, then the matching `designs` entry. Explicit positional kernel/thread/bitmap arguments override the resolved geometry. Without a configuration, the program retains Thread/1/0 and the original controller defaults. Unlisted inputs inherit the configuration defaults. Unknown keys, invalid values, and malformed entries fail before construction.
+The design key is the immediate parent directory plus the filename without `.json`. Resolution order is built-in defaults, configuration `defaults`, then the matching `designs` entry. Explicit positional kernel/thread/bitmap arguments override the resolved geometry. Without an explicit configuration, the CUDA executables use the measured manifest. `--no-profile` selects Thread/1/0 and the original controller defaults and cannot be combined with `--config` or `--design`. To reproduce the Fixed GPU comparison, pass `2 64 512 --no-profile`. Unlisted inputs inherit the configuration defaults. Unknown keys, invalid values, and malformed entries fail before construction.
+
+`scripts/run_gpu.sh` and `scripts/run.sh` read the checkout's `configs/gpu/87-designs.json` automatically. Direct `gpu`, `simple`, and `xeg_t` executables use a build-time copy embedded from this same file, so defaults work from any working directory and after moving the executable. Rebuild to refresh embedded defaults, or pass `--config` for runtime changes. The low-level C++ API continues to accept explicit geometry/options; the automatic selection belongs to the CLI.
 
 The JSON format uses the project's existing parser. Every report records the effective kernel, thread count, bitmap size, and all `dag_options`; changing a profile never changes the saved report.
 

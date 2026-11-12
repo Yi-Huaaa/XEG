@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run GPU XEG and export a validated CP-SAT solution.
-# Usage: scripts/run_gpu.sh INPUT [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS] [SOLVER_WORKERS] [--config FILE.json] [--design FAMILY/STEM]
+# Usage: scripts/run_gpu.sh INPUT [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS] [SOLVER_WORKERS] [--config FILE.json] [--design FAMILY/STEM] [--no-profile]
 # KERNEL: 0=Thread, 1=Warp, 2=Block. ILP_SECONDS=0 skips solving.
 set -euo pipefail
 if [ "$#" -lt 1 ]; then
@@ -14,16 +14,22 @@ input="$(realpath "$1")"
 shift
 # Resolve a relative configuration before entering the isolated run directory.
 arguments=()
+profile_selected=false
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --config ]; then
     if [ "$#" -lt 2 ]; then echo 'error: --config needs a path' >&2; exit 2; fi
+    profile_selected=true
     arguments+=(--config "$(realpath "$2")")
     shift 2
   else
+    if [ "$1" = --no-profile ]; then profile_selected=true; fi
     arguments+=("$1")
     shift
   fi
 done
+if ! "$profile_selected"; then
+  arguments+=(--config "$repo_root/configs/gpu/87-designs.json")
+fi
 if [ ! -x "$binary" ] || [ ! -f "$input" ]; then
   echo "error: input or GPU executable missing; build with scripts/build.sh gpu" >&2
   exit 1

@@ -9,7 +9,7 @@
 # full local dataset and a clone with only the published files both work.
 # Pass a subdirectory, e.g. --dataset dataset/maxsat, to run one suite.
 # Arguments after the options are passed to main/simple for every input;
-# with none, run.sh's default (the paper's setting "2 64 512") applies.
+# with none, run.sh loads the measured profile for each design.
 #
 # Each input runs through scripts/run.sh, in
 #   <build>/runs/<timestamp>_all/<path under DIR>/run.log

@@ -459,6 +459,13 @@ public:
   unittest_gpu_filter_root_to_leaf(
     const std::vector<uint32_t>& selected_state);
 
+  // Controller options for the legacy run/run_xeg_t_exp entry points.
+  // run_gpu takes its options explicitly in the call instead.
+  void set_gpu_dag_options(const xeg::GpuDagOptions& options) {
+    options.validate();
+    _gpu_options = options;
+  }
+
   /* run */
   double round_to(double value, double precision = 1.0) {
     return std::round(value / precision) * precision;
