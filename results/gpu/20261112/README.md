@@ -1,6 +1,6 @@
 # GPU extraction results
 
-- [CPU 8 threads / Fixed GPU / Profiled GPU: overall runtime across 87 designs](overall_runtime.md), with [matching costs, statuses, and source paths](overall_runtime.csv)
+- [CPU 8 threads / Fixed GPU / Profiled GPU: overall runtime and solution quality across 87 designs](overall_runtime.md), with [matching costs, statuses, and source paths](overall_runtime.csv)
 - [Selected design profiles: quality and separate tree/DAG tables](profiled.md)
 - [Fixed original parameters: implementation-only comparison](comparison.md)
 - [Full report and experiment limits](REPORT.txt)
