@@ -6,6 +6,11 @@ enable_language(CUDA)
 add_library(xeg
   XEG.hpp
   xeg.cu
+  gpu_tree.cu
+  gpu_dag_insert.cu
+  gpu_dag.cu
+  gpu_testing.cu
+  cpsat_solver.cpp
   xeg.cuh
   cuopt_solver.cpp
   cuopt_solver.hpp
