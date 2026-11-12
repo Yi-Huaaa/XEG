@@ -1,0 +1,11 @@
+{
+  "nodes": {
+    "root": {"op": "root", "eclass": "0", "cost": 0, "children": ["left_leaf", "right_leaf"]},
+    "left_leaf": {"op": "leaf", "eclass": "1", "cost": 5, "children": []},
+    "left_shared": {"op": "use", "eclass": "1", "cost": 0, "children": ["shared"]},
+    "right_leaf": {"op": "leaf", "eclass": "2", "cost": 5, "children": []},
+    "right_shared": {"op": "use", "eclass": "2", "cost": 0, "children": ["shared"]},
+    "shared": {"op": "leaf", "eclass": "3", "cost": 6, "children": []}
+  },
+  "root_eclasses": ["0"]
+}

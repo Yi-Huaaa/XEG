@@ -1,4 +1,4 @@
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -97,7 +97,7 @@ public:
         .count();
 
     _path =
-      "/tmp/g_ext_gpu_dag_hybrid_fixed_mask_" +
+      "/tmp/xeg_gpu_dag_hybrid_fixed_mask_" +
       std::to_string(timestamp) +
       ".json";
 
@@ -173,8 +173,8 @@ private:
 };
 
 void expect_same_levelization(
-  const G_EXT::GpuLevelizationResult& host_result,
-  const G_EXT::GpuLevelizationResult& hybrid_result,
+  const XEG::GpuLevelizationResult& host_result,
+  const XEG::GpuLevelizationResult& hybrid_result,
   const std::string& test_name)
 {
   expect_vector_equal(
@@ -208,7 +208,7 @@ void expect_same_levelization(
 }
 
 void expect_chain_result(
-  const G_EXT::GpuLevelizationResult& result,
+  const XEG::GpuLevelizationResult& result,
   const uint32_t total_nodes,
   const uint32_t selected_prefix_length,
   const std::string& test_name)
@@ -296,7 +296,7 @@ void expect_chain_result(
 }
 
 void run_long_chain_test(
-  G_EXT& graph,
+  XEG& graph,
   const bool is_top_down)
 {
   const std::string direction =
@@ -314,14 +314,14 @@ void run_long_chain_test(
     graph.unittest_gpu_levelize_with_backend(
       selected_state,
       is_top_down,
-      G_EXT::GpuLevelizationBackend::
+      XEG::GpuLevelizationBackend::
         HostDriven);
 
   const auto hybrid_result =
     graph.unittest_gpu_levelize_with_backend(
       selected_state,
       is_top_down,
-      G_EXT::GpuLevelizationBackend::
+      XEG::GpuLevelizationBackend::
         Hybrid);
 
   expect_same_levelization(
@@ -372,7 +372,7 @@ void run_long_chain_test(
 }
 
 void run_short_prefix_test(
-  G_EXT& graph,
+  XEG& graph,
   const bool is_top_down)
 {
   const std::string direction =
@@ -396,14 +396,14 @@ void run_short_prefix_test(
     graph.unittest_gpu_levelize_with_backend(
       selected_state,
       is_top_down,
-      G_EXT::GpuLevelizationBackend::
+      XEG::GpuLevelizationBackend::
         HostDriven);
 
   const auto hybrid_result =
     graph.unittest_gpu_levelize_with_backend(
       selected_state,
       is_top_down,
-      G_EXT::GpuLevelizationBackend::
+      XEG::GpuLevelizationBackend::
         Hybrid);
 
   expect_same_levelization(
@@ -462,7 +462,7 @@ int main()
     TemporaryChainJson chain_json(
       kChainLength);
 
-    G_EXT graph;
+    XEG graph;
     graph.read(chain_json.path());
 
     const auto csr =

@@ -1,10 +1,10 @@
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 #include <iomanip>
 
 int main(int argc, char** argv) {
-  if (argc < 2 || argc > 7) {
+  if (argc < 2 || argc > 8) {
     std::cerr << "Usage: " << argv[0]
-              << " INPUT [THREADS=1] [ILP_SECONDS=360] [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1]\n"
+              << " INPUT [THREADS=1] [ILP_SECONDS=360] [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1] [DETERMINISTIC_SECONDS=0]\n"
               << "ILP_SECONDS=0 runs construction and validation only.\n";
     return 2;
   }
@@ -21,13 +21,19 @@ int main(int argc, char** argv) {
     if (argc > 3 && end != std::string(argv[3]).size()) throw std::invalid_argument("Invalid time limit");
     const int workers = argc > 4 ? integer(argv[4]) : 8;
     const int repeats = argc > 6 ? integer(argv[6]) : 1;
-    G_EXT graph;
+    end = 0;
+    const double deterministic = argc > 7 ? std::stod(argv[7],&end) : 0;
+    if (argc > 7 && end != std::string(argv[7]).size()) throw std::invalid_argument("Invalid deterministic limit");
+    XEG graph;
     graph.read(argv[1]);
     auto reports = nlohmann::json::array();
     for (int i=0;i<repeats;++i) {
-      auto report = graph.run_cpu(threads,seconds,workers);
+      auto report = graph.run_cpu(threads,seconds,workers,deterministic);
       report["input"] = argv[1]; report["repeat"] = i;
-      std::cout << "[CPU Result] " << report.dump() << '\n';
+      auto summary = report;
+      for (const char* key : {"solver", "solution"})
+        if (summary.contains(key)) summary[key].erase("selected_enodes");
+      std::cout << "[CPU Result] " << summary.dump() << '\n';
       reports.push_back(std::move(report));
       if (argc > 5) {
         std::ofstream output(argv[5]);

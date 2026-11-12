@@ -1,6 +1,6 @@
 #include <chrono>
 #include <iostream>
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 #include <vector>
 #include "ortools/sat/cp_model.h"
 #include "ortools/sat/cp_model.pb.h"
@@ -234,15 +234,15 @@ int main(int argc, char *argv[]) {
   std::cout << "-------------------------------------\n";
 
 
-  G_EXT g_ext;
+  XEG xeg;
 
   auto start = std::chrono::steady_clock::now();
-    g_ext.read(input_path); 
+    xeg.read(input_path);
   auto end = std::chrono::steady_clock::now();
   duration_read = end - start;
-  std::cout << "Read Time: " << g_ext.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
+  std::cout << "Read Time: " << xeg.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
-  g_ext.run(
+  xeg.run(
     true,
     360,
     dag_kernel,

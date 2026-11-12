@@ -1,5 +1,5 @@
 build/
-g_ext/20260630_test_used.sh
+xeg/20260630_test_used.sh
 tmp.log
 tmp.*
 ablation_benchmarks/*

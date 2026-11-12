@@ -198,7 +198,7 @@ Typical values include:
 ## CPU driver (`cpu.cpp`)
 
 ```bash
-build/main/cpu INPUT [THREADS=1] [ILP_SECONDS=360] [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1]
+build/main/cpu INPUT [THREADS=1] [ILP_SECONDS=360] [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1] [DETERMINISTIC_SECONDS=0]
 ```
 
 This runs CPU tree construction, CPU DAG construction, validation, and CP-SAT

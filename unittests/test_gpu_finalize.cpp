@@ -8,14 +8,14 @@
 #include <string>
 #include <vector>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
 std::string test_data_path(
   const std::string& filename)
 {
-  return std::string(G_EXT_TEST_DATA_DIR)
+  return std::string(XEG_TEST_DATA_DIR)
     + "/"
     + filename;
 }
@@ -55,13 +55,13 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("chain.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize_and_finalize(
+      xeg.unittest_gpu_levelize_and_finalize(
         initial_state,
         is_top_down,
         1u);
@@ -113,13 +113,13 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("mixed_cycle.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize_and_finalize(
+      xeg.unittest_gpu_levelize_and_finalize(
         initial_state,
         is_top_down,
         3u);
@@ -167,13 +167,13 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("overlap_cycle.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize_and_finalize(
+      xeg.unittest_gpu_levelize_and_finalize(
         initial_state,
         is_top_down,
         1u);
@@ -208,13 +208,13 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("overlap_cycle.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize_and_finalize(
+      xeg.unittest_gpu_levelize_and_finalize(
         initial_state,
         is_top_down,
         4u);

@@ -13,14 +13,14 @@
 #include <string>
 #include <vector>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
 std::string test_data_path(
   const std::string& filename)
 {
-  return std::string(G_EXT_TEST_DATA_DIR)
+  return std::string(XEG_TEST_DATA_DIR)
     + "/"
     + filename;
 }
@@ -60,7 +60,7 @@ public:
   explicit TemporaryFanoutGraph(
     const uint32_t total_nodes)
     : path_(
-        "/tmp/g_ext_direct_boundary_"
+        "/tmp/xeg_direct_boundary_"
         + std::to_string(total_nodes)
         + ".json")
   {
@@ -174,9 +174,9 @@ private:
 TEST_CASE(
   "GPU direct top-down insertion uses a selected parent")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path("single_edge.json"));
 
   const std::vector<uint32_t> initial_state = {
@@ -188,7 +188,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_direct_once(
+    xeg.unittest_gpu_insert_direct_once(
       initial_state,
       initial_level,
       true);
@@ -208,9 +208,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU direct bottom-up insertion uses a selected child")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path("single_edge.json"));
 
   const std::vector<uint32_t> initial_state = {
@@ -222,7 +222,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_direct_once(
+    xeg.unittest_gpu_insert_direct_once(
       initial_state,
       initial_level,
       false);
@@ -245,9 +245,9 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("single_edge.json"));
 
     const std::vector<uint32_t> initial_state = {
@@ -259,7 +259,7 @@ TEST_CASE(
     };
 
     const auto result =
-      g_ext.unittest_gpu_insert_direct_once(
+      xeg.unittest_gpu_insert_direct_once(
         initial_state,
         initial_level,
         is_top_down);
@@ -291,13 +291,13 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("chain.json"));
 
     const auto result =
-      g_ext.unittest_gpu_insert_direct_once(
+      xeg.unittest_gpu_insert_direct_once(
         initial_state,
         initial_level,
         is_top_down);
@@ -329,13 +329,13 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("overlap_cycle.json"));
 
     const auto result =
-      g_ext.unittest_gpu_insert_direct_once(
+      xeg.unittest_gpu_insert_direct_once(
         initial_state,
         initial_level,
         is_top_down);
@@ -356,9 +356,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU direct insertion treats state 2 as a selected neighbor")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path("single_edge.json"));
 
   const std::vector<uint32_t> initial_state = {
@@ -370,7 +370,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_direct_once(
+    xeg.unittest_gpu_insert_direct_once(
       initial_state,
       initial_level,
       true);
@@ -390,9 +390,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU direct insertion ignores selected neighbors with invalid levels")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path("single_edge.json"));
 
   const std::vector<uint32_t> initial_state = {
@@ -404,7 +404,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_direct_once(
+    xeg.unittest_gpu_insert_direct_once(
       initial_state,
       initial_level,
       true);
@@ -423,9 +423,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU direct insertion handles multiple independent candidates")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "parallel_candidates.json"));
 
@@ -438,7 +438,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_direct_once(
+    xeg.unittest_gpu_insert_direct_once(
       initial_state,
       initial_level,
       false);
@@ -462,9 +462,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU direct live optimistic insertion permits valid concurrent outcomes")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "optimistic_cycle_pair.json"));
 
@@ -477,7 +477,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_insert_direct_once(
+    xeg.unittest_gpu_insert_direct_once(
       initial_state,
       initial_level,
       false);
@@ -570,9 +570,9 @@ TEST_CASE(
     TemporaryFanoutGraph graph(
       total_nodes);
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       graph.path());
 
     std::vector<uint32_t> initial_state(
@@ -587,7 +587,7 @@ TEST_CASE(
     initial_level[0] = 0;
 
     const auto result =
-      g_ext.unittest_gpu_insert_direct_once(
+      xeg.unittest_gpu_insert_direct_once(
         initial_state,
         initial_level,
         true);

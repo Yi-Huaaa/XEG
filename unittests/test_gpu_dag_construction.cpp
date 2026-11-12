@@ -8,14 +8,14 @@
 #include <string>
 #include <vector>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
 std::string test_data_path(
   const std::string& filename)
 {
-  return std::string(G_EXT_TEST_DATA_DIR)
+  return std::string(XEG_TEST_DATA_DIR)
     + "/"
     + filename;
 }
@@ -62,7 +62,7 @@ void check_no_tentative_state(
 
 
 void check_selected_edges_respect_levels(
-  const G_EXT::CsrGraphSnapshot& csr,
+  const XEG::CsrGraphSnapshot& csr,
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& level)
 {
@@ -147,9 +147,9 @@ void check_in_subgraph_is_selected_subset(
 TEST_CASE(
   "GPU DAG construction inserts a node during the bottom-up phase")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path("diamond.json"));
 
   // Selected subgraph before insertion:
@@ -178,7 +178,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_construct_dag(
+    xeg.unittest_gpu_construct_dag(
       initial_state);
 
   check_vector_equal(
@@ -211,9 +211,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU DAG construction inserts a node during the top-down phase")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path("single_edge.json"));
 
   // Initial selected graph:
@@ -232,7 +232,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_construct_dag(
+    xeg.unittest_gpu_construct_dag(
       initial_state);
 
   check_vector_equal(
@@ -265,9 +265,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU DAG construction leaves a complete DAG unchanged")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path("chain.json"));
 
   const std::vector<uint32_t> initial_state = {
@@ -275,7 +275,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_construct_dag(
+    xeg.unittest_gpu_construct_dag(
       initial_state);
 
   check_vector_equal(
@@ -305,9 +305,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU DAG construction inserts multiple independent candidates")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "parallel_candidates.json"));
 
@@ -316,7 +316,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_construct_dag(
+    xeg.unittest_gpu_construct_dag(
       initial_state);
 
   check_vector_equal(
@@ -338,7 +338,7 @@ TEST_CASE(
     result.selected_state);
 
   const auto csr =
-    g_ext.unittest_get_csr_snapshot();
+    xeg.unittest_get_csr_snapshot();
 
   check_selected_edges_respect_levels(
     csr,
@@ -357,9 +357,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU DAG construction resolves concurrent tentative cycle safely")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "optimistic_cycle_pair.json"));
 
@@ -368,7 +368,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_construct_dag(
+    xeg.unittest_gpu_construct_dag(
       initial_state);
 
   DOCTEST_REQUIRE(
@@ -440,7 +440,7 @@ TEST_CASE(
     result.residual_degree);
 
   const auto csr =
-    g_ext.unittest_get_csr_snapshot();
+    xeg.unittest_get_csr_snapshot();
 
   check_selected_edges_respect_levels(
     csr,
@@ -458,9 +458,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU root-to-leaf filtering removes both kinds of redundant nodes")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "filter_branches.json"));
 
@@ -477,7 +477,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_filter_root_to_leaf(
+    xeg.unittest_gpu_filter_root_to_leaf(
       selected_state);
 
   // Filtering must not modify the DAG-construction result.
@@ -507,9 +507,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU root-to-leaf filtering retains a complete selected graph")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "filter_branches.json"));
 
@@ -519,7 +519,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_filter_root_to_leaf(
+    xeg.unittest_gpu_filter_root_to_leaf(
       selected_state);
 
   const std::vector<uint32_t> all_selected(
@@ -546,9 +546,9 @@ TEST_CASE(
 TEST_CASE(
   "GPU DAG construction filters a disconnected selected component")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "filter_branches.json"));
 
@@ -580,7 +580,7 @@ TEST_CASE(
   };
 
   const auto result =
-    g_ext.unittest_gpu_construct_dag(
+    xeg.unittest_gpu_construct_dag(
       initial_state);
 
   // DAG construction preserves the disconnected selected

@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
@@ -42,7 +42,7 @@ const char* block_mode_name(
 std::string test_data_path(
   const std::string& filename)
 {
-  return std::string(G_EXT_TEST_DATA_DIR)
+  return std::string(XEG_TEST_DATA_DIR)
     + "/"
     + filename;
 }
@@ -67,8 +67,8 @@ void check_vector_equal(
 }
 
 
-G_EXT::GpuInsertionResult run_block_insertion(
-  G_EXT& g_ext,
+XEG::GpuInsertionResult run_block_insertion(
+  XEG& xeg,
   const BlockInsertionMode mode,
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& level,
@@ -78,7 +78,7 @@ G_EXT::GpuInsertionResult run_block_insertion(
   switch (mode) {
     case BlockInsertionMode::Batch:
       return
-        g_ext.unittest_gpu_insert_block_batch_once(
+        xeg.unittest_gpu_insert_block_batch_once(
           selected_state,
           level,
           is_top_down_insertion,
@@ -86,7 +86,7 @@ G_EXT::GpuInsertionResult run_block_insertion(
 
     case BlockInsertionMode::Direct:
       return
-        g_ext.unittest_gpu_insert_block_direct_once(
+        xeg.unittest_gpu_insert_block_direct_once(
           selected_state,
           level,
           is_top_down_insertion,
@@ -121,7 +121,7 @@ public:
     const BlockInsertionMode mode,
     const uint32_t total_nodes)
     : path_(
-        "/tmp/g_ext_block_"
+        "/tmp/xeg_block_"
         + std::string(block_mode_name(mode))
         + "_boundary_"
         + std::to_string(total_nodes)
@@ -249,14 +249,14 @@ TEST_CASE(
         threads_per_candidate);
 
       {
-        G_EXT g_ext;
+        XEG xeg;
 
-        g_ext.read(
+        xeg.read(
           test_data_path("single_edge.json"));
 
         const auto result =
           run_block_insertion(
-            g_ext,
+            xeg,
             mode,
             std::vector<uint32_t>{1u, 0u},
             std::vector<int>{0, -1},
@@ -276,14 +276,14 @@ TEST_CASE(
       }
 
       {
-        G_EXT g_ext;
+        XEG xeg;
 
-        g_ext.read(
+        xeg.read(
           test_data_path("single_edge.json"));
 
         const auto result =
           run_block_insertion(
-            g_ext,
+            xeg,
             mode,
             std::vector<uint32_t>{0u, 1u},
             std::vector<int>{-1, 1},
@@ -320,9 +320,9 @@ TEST_CASE(
       DOCTEST_CAPTURE(
         is_top_down);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         test_data_path("single_edge.json"));
 
       const std::vector<uint32_t> initial_state = {
@@ -335,7 +335,7 @@ TEST_CASE(
 
       const auto result =
         run_block_insertion(
-          g_ext,
+          xeg,
           mode,
           initial_state,
           initial_level,
@@ -371,9 +371,9 @@ TEST_CASE(
       DOCTEST_CAPTURE(
         is_top_down);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         test_data_path("chain.json"));
 
       const std::vector<uint32_t> initial_state = {
@@ -386,7 +386,7 @@ TEST_CASE(
 
       const auto result =
         run_block_insertion(
-          g_ext,
+          xeg,
           mode,
           initial_state,
           initial_level,
@@ -422,9 +422,9 @@ TEST_CASE(
       DOCTEST_CAPTURE(
         is_top_down);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         test_data_path("overlap_cycle.json"));
 
       const std::vector<uint32_t> initial_state = {
@@ -437,7 +437,7 @@ TEST_CASE(
 
       const auto result =
         run_block_insertion(
-          g_ext,
+          xeg,
           mode,
           initial_state,
           initial_level,
@@ -468,14 +468,14 @@ TEST_CASE(
     DOCTEST_CAPTURE(
       block_mode_name(mode));
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("single_edge.json"));
 
     const auto result =
       run_block_insertion(
-        g_ext,
+        xeg,
         mode,
         std::vector<uint32_t>{2u, 0u},
         std::vector<int>{0, -1},
@@ -505,9 +505,9 @@ TEST_CASE(
     DOCTEST_CAPTURE(
       block_mode_name(mode));
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("single_edge.json"));
 
     const std::vector<uint32_t> initial_state = {
@@ -520,7 +520,7 @@ TEST_CASE(
 
     const auto result =
       run_block_insertion(
-        g_ext,
+        xeg,
         mode,
         initial_state,
         initial_level,
@@ -550,15 +550,15 @@ TEST_CASE(
     DOCTEST_CAPTURE(
       block_mode_name(mode));
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path(
         "parallel_candidates.json"));
 
     const auto result =
       run_block_insertion(
-        g_ext,
+        xeg,
         mode,
         std::vector<uint32_t>{
           1u, 1u, 1u, 0u, 0u
@@ -614,9 +614,9 @@ TEST_CASE(
         mode,
         total_nodes);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         graph.path());
 
       std::vector<uint32_t> initial_state(
@@ -632,7 +632,7 @@ TEST_CASE(
 
       const auto result =
         run_block_insertion(
-          g_ext,
+          xeg,
           mode,
           initial_state,
           initial_level,
@@ -687,14 +687,14 @@ TEST_CASE(
       DOCTEST_CAPTURE(
         invalid_threads);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         test_data_path("single_edge.json"));
 
       DOCTEST_CHECK_THROWS_AS(
         run_block_insertion(
-          g_ext,
+          xeg,
           mode,
           std::vector<uint32_t>{1u, 0u},
           std::vector<int>{0, -1},

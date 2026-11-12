@@ -2,6 +2,7 @@
 #define XEG_CPU_EXTRACTION_HPP
 
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 
 namespace xeg {
@@ -28,9 +29,12 @@ struct CpuTree {
   uint32_t iterations = 0;
 };
 struct CpuDag {
+  // selected is the expansion before filtering; in_subgraph is the final
+  // reachable, child-closed candidate set supplied to the solver.
   std::vector<uint8_t> selected, in_subgraph;
   uint32_t iterations = 0;
   uint64_t proposals = 0, neighbor_updates = 0, reverted = 0;
+  uint64_t invalid_candidates_removed = 0;
 };
 
 CpuTree cpu_tree(const CpuGraph& graph, int threads);
@@ -43,5 +47,10 @@ double validate_cpu_solution(const CpuGraph& graph,
                              bool integer_cost = false);
 void validate_cpu_dag(const CpuGraph& graph,
                       const std::vector<uint8_t>& selected);
+// Removing the last available choice of a class invalidates its dependents.
+size_t prune_cpu_candidates(const CpuGraph& graph, std::vector<uint8_t>& candidates,
+                            int threads);
+void validate_cpu_candidates(const CpuGraph& graph,
+                             const std::vector<uint8_t>& candidates);
 } // namespace xeg
 #endif

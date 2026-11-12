@@ -1,5 +1,5 @@
-#ifndef EXT_GPU_H
-#define EXT_GPU_H
+#ifndef XEG_CUH
+#define XEG_CUH
 #include <algorithm>
 #include <climits>
 #include <fstream>
@@ -94,7 +94,7 @@ inline const char* ilp_backend_name(
   }
 }
 
-namespace g_ext_detail {
+namespace xeg_detail {
 
 enum class GpuDagPersistentExitReason : uint32_t
 {
@@ -124,9 +124,9 @@ static_assert(
   sizeof(GpuDagPersistentState) == 16u,
   "GpuDagPersistentState must remain a compact 16-byte POD");
 
-}  // namespace g_ext_detail
+}  // namespace xeg_detail
 
-class G_EXT {
+class XEG {
 
 private:
   enum class CpsatInitialSolutionMode : uint32_t {
@@ -173,7 +173,7 @@ public:
   // The actual multiplier may be smaller when legal
   // source-target pairs become difficult to find.
   //
-  // This interface must be called on a fresh G_EXT object.
+  // This interface must be called on a fresh XEG object.
   void read_output_degree_exp(
     const std::string& input_path,
     const uint32_t output_degree_multiplier,
@@ -182,7 +182,7 @@ public:
   {
     if (!_ende_name.empty()) {
       throw std::logic_error(
-        "read_output_degree_exp requires a fresh G_EXT object");
+        "read_output_degree_exp requires a fresh XEG object");
     }
 
     if (output_degree_multiplier == 0u) {
@@ -229,9 +229,6 @@ public:
   // These wrappers expose selected internal GPU operations for
   // deterministic unit tests. They are not used by run().
   // ============================================================
-  // Validates the GPU tree independently against CPU minimum costs.
-  nlohmann::json unittest_gpu_tree();
-
   struct CsrGraphSnapshot {
     std::vector<uint32_t> forward_adj;
     std::vector<uint32_t> forward_ptr;
@@ -429,7 +426,7 @@ public:
   // branches, counters, or callbacks to the production
   // controller.
   //
-  // A fresh G_EXT object must be used so _dvc_picked_endes
+  // A fresh XEG object must be used so _dvc_picked_endes
   // still contains the unmodified GPU tree when DAG
   // construction begins.
   GpuDagConstructionResult
@@ -485,7 +482,7 @@ public:
   // CPU-only construction and CP-SAT. A zero time limit skips the solver.
   // Thread count controls construction only; solver_workers is independent.
   nlohmann::json run_cpu(int threads = 1, double time_limit = 360.0,
-                         int solver_workers = 8);
+                         int solver_workers = 8, double deterministic_limit = 0.0);
 
   // Run XEG-D on the complete post-read e-graph.
   //
@@ -517,6 +514,8 @@ public:
 private:
   xeg::CpuGraph _cpu_graph() const;
   int _cpu_solver_workers = 0;
+  double _cpu_deterministic_limit = 0.0;
+  bool _cpu_omit_level_constraints = false;
   bool _cpu_validate_solver = false;
   nlohmann::json _cpu_solver_result;
   /* Read */
@@ -590,7 +589,7 @@ private:
     std::vector<uint32_t>& best_ende_of_ecls,
     std::vector<bool>& picked_endes); 
   // GPU version
-  std::pair<double, double> _gpu_tree_construction(bool construct_tree = true);
+  std::pair<double, double> _gpu_tree_construction();
 
   /* DAG Construction */
   // CPU version 
@@ -1144,7 +1143,7 @@ private:
   // Do not rename or remove them during the DAG rewrite.
   // ============================================================
   uint32_t* _dvc_best_ende_of_ecls = nullptr;
-  uint32_t* _dvc_update = nullptr;
+  bool* _dvc_update = nullptr;
 
   uint32_t* _dvc_ecls_its_ende_1D = nullptr;
   uint32_t* _dvc_ecls_its_ende_1D_ptr = nullptr;
@@ -1194,9 +1193,9 @@ private:
   uint32_t* _dvc_dag_insert_decision = nullptr;
   int* _dvc_dag_candidate_level = nullptr;
   uint32_t* _dvc_dag_u0 = nullptr;
-  g_ext_detail::GpuDagPersistentState*
+  xeg_detail::GpuDagPersistentState*
     _dvc_dag_persistent_state = nullptr;  
-}; // class G_EXT
+}; // class XEG
 
 
 #endif

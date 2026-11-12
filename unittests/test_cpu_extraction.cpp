@@ -1,6 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>
-#include <g_ext/cpu_extraction.hpp>
+#include <xeg/cpu_extraction.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -73,6 +73,7 @@ void compare(const Graph& g) {
   CHECK(xeg::validate_cpu_solution(g.view(),a.selected)==doctest::Approx(a.dag_cost));
   auto d=xeg::cpu_dag(g.view(),a.selected,1);
   CHECK_NOTHROW(xeg::validate_cpu_dag(g.view(),d.selected));
+  CHECK_NOTHROW(xeg::validate_cpu_candidates(g.view(),d.in_subgraph));
   for(size_t u=0;u<a.selected.size();++u)
     if(a.selected[u]) CHECK(d.in_subgraph[u]);
   for(int threads:{2,4,8}) {
@@ -165,4 +166,45 @@ TEST_CASE("rounded cost ties still have an acyclic finite witness") {
   const float large=std::ldexp(1.0f,80);
   g.add(0,1,{0});g.add(0,large);g.add(1,large,{0});
   g.roots={1};g.finish();compare(g);
+}
+TEST_CASE("candidate closure removes missing children and cascading parents") {
+  Graph g;
+  g.add(0,1,{1});g.add(0,7);g.add(1,1,{2});g.add(2,1);
+  g.roots={0};g.finish();
+  for (int threads : {1,8}) {
+    std::vector<uint8_t> candidates{1,1,1,0};
+    CHECK_THROWS(xeg::validate_cpu_candidates(g.view(),candidates));
+    CHECK(xeg::prune_cpu_candidates(g.view(),candidates,threads)==2);
+    CHECK(candidates==std::vector<uint8_t>{0,1,0,0});
+    CHECK_NOTHROW(xeg::validate_cpu_candidates(g.view(),candidates));
+  }
+}
+TEST_CASE("closure keeps a child class with another valid choice") {
+  Graph g;
+  g.add(0,1,{1});g.add(1,1,{2});g.add(1,2);g.add(2,1);
+  g.roots={0};g.finish();
+  std::vector<uint8_t> candidates{1,1,1,0};
+  CHECK(xeg::prune_cpu_candidates(g.view(),candidates,1)==1);
+  CHECK(candidates==std::vector<uint8_t>{1,0,1,0});
+  CHECK_NOTHROW(xeg::validate_cpu_candidates(g.view(),candidates));
+}
+TEST_CASE("root-to-leaf reachability alone does not imply child closure") {
+  Graph g;
+  const auto invalid=g.add(0,1,{1,2});g.add(0,10);g.add(1,1);
+  g.add(2,0,{2});g.add(3,1,{1});g.roots={0,3};g.finish();
+  auto tree=xeg::cpu_tree(g.view(),1);
+  auto dag=xeg::cpu_dag(g.view(),tree.selected,1);
+  CHECK(dag.selected[invalid]); // It has a path to a leaf through class 1.
+  CHECK_FALSE(dag.in_subgraph[invalid]); // Class 2 has no finite choice.
+  CHECK(dag.invalid_candidates_removed>0);
+  CHECK_NOTHROW(xeg::validate_cpu_candidates(g.view(),dag.in_subgraph));
+  compare(g);
+}
+TEST_CASE("closure excludes e-nodes that depend on their own class") {
+  Graph g;g.add(0,0,{0});g.add(0,1);g.roots={0};g.finish();
+  std::vector<uint8_t> candidates{1,1};
+  CHECK_THROWS(xeg::validate_cpu_candidates(g.view(),candidates));
+  CHECK(xeg::prune_cpu_candidates(g.view(),candidates,1)==1);
+  CHECK(candidates==std::vector<uint8_t>{0,1});
+  CHECK_NOTHROW(xeg::validate_cpu_candidates(g.view(),candidates));
 }

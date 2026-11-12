@@ -359,7 +359,66 @@ CpuDag cpu_dag(const CpuGraph& g, const std::vector<uint8_t>& tree_selected, int
   #pragma omp parallel for num_threads(threads) schedule(static) if(n >= 2048)
   for (size_t u = 0; u < n; ++u)
     result.in_subgraph[u] = forward[u] && inverse[u];
+  result.invalid_candidates_removed = prune_cpu_candidates(g, result.in_subgraph, threads);
+  if (result.invalid_candidates_removed)
+    result.in_subgraph = reachable(g, result.in_subgraph, true);
   return result;
+}
+
+size_t prune_cpu_candidates(const CpuGraph& g, std::vector<uint8_t>& candidates, int threads) {
+  check_threads(threads);
+  if (candidates.size() != g.cost.size()) throw std::invalid_argument("Candidate mask size mismatch");
+  const size_t n = candidates.size(), classes = g.members.size();
+  std::vector<uint32_t> choices(classes, 0);
+  #pragma omp parallel for num_threads(threads) schedule(static) if(classes >= 2048)
+  for (size_t c = 0; c < classes; ++c)
+    for (uint32_t u : g.members[c]) choices[c] += candidates[u] != 0;
+  std::vector<uint8_t> queued(n, 0);
+  #pragma omp parallel for num_threads(threads) schedule(static) if(n >= 2048)
+  for (size_t u = 0; u < n; ++u) if (candidates[u])
+    for (uint32_t k = g.child_ptr[u]; k < g.child_ptr[u + 1]; ++k)
+      if (!choices[g.children[k]] || g.children[k] == g.node_class[u]) {
+        queued[u] = 1; break;
+      }
+  std::vector<uint32_t> queue;
+  for (uint32_t u = 0; u < n; ++u) if (queued[u]) queue.push_back(u);
+  if (queue.empty()) return 0;
+
+  // Build class-to-parent incidence only when repair is needed. This uses
+  // original child references, not the much larger expanded e-node graph.
+  std::vector<size_t> ptr(classes + 1, 0);
+  for (uint32_t u = 0; u < n; ++u) if (candidates[u])
+    for (uint32_t k = g.child_ptr[u]; k < g.child_ptr[u + 1]; ++k) ++ptr[g.children[k] + 1];
+  std::partial_sum(ptr.begin(), ptr.end(), ptr.begin());
+  auto cursor = ptr;
+  std::vector<uint32_t> parents(ptr.back());
+  for (uint32_t u = 0; u < n; ++u) if (candidates[u])
+    for (uint32_t k = g.child_ptr[u]; k < g.child_ptr[u + 1]; ++k)
+      parents[cursor[g.children[k]]++] = u;
+  for (size_t i = 0; i < queue.size(); ++i) {
+    const uint32_t u = queue[i], c = g.node_class[u];
+    candidates[u] = 0;
+    if (--choices[c]) continue;
+    for (size_t k = ptr[c]; k < ptr[c + 1]; ++k) {
+      const uint32_t parent = parents[k];
+      if (!queued[parent]) { queued[parent] = 1; queue.push_back(parent); }
+    }
+  }
+  return queue.size();
+}
+
+void validate_cpu_candidates(const CpuGraph& g, const std::vector<uint8_t>& candidates) {
+  if (candidates.size() != g.cost.size()) throw std::invalid_argument("Candidate mask size mismatch");
+  std::vector<uint32_t> choices(g.members.size(), 0);
+  for (uint32_t u = 0; u < candidates.size(); ++u) if (candidates[u]) ++choices[g.node_class[u]];
+  for (uint32_t c : g.roots)
+    if (!choices[c]) throw std::runtime_error("Candidate graph has no root choice");
+  for (uint32_t u = 0; u < candidates.size(); ++u) if (candidates[u])
+    for (uint32_t k = g.child_ptr[u]; k < g.child_ptr[u + 1]; ++k) {
+      if (!choices[g.children[k]]) throw std::runtime_error("Candidate has an unavailable child class");
+      if (g.children[k] == g.node_class[u]) throw std::runtime_error("Candidate depends on its own class");
+    }
+  validate_cpu_dag(g, candidates);
 }
 
 void validate_cpu_dag(const CpuGraph& g, const std::vector<uint8_t>& selected) {

@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
@@ -77,7 +77,7 @@ const char* warp_mode_name(
 std::string test_data_path(
   const std::string& filename)
 {
-  return std::string(G_EXT_TEST_DATA_DIR)
+  return std::string(XEG_TEST_DATA_DIR)
     + "/"
     + filename;
 }
@@ -102,8 +102,8 @@ void check_vector_equal(
 }
 
 
-G_EXT::GpuInsertionResult run_warp_insertion(
-  G_EXT& g_ext,
+XEG::GpuInsertionResult run_warp_insertion(
+  XEG& xeg,
   const WarpInsertionMode mode,
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& level,
@@ -113,7 +113,7 @@ G_EXT::GpuInsertionResult run_warp_insertion(
   switch (mode) {
     case WarpInsertionMode::Batch:
       return
-        g_ext.unittest_gpu_insert_warp_batch_once(
+        xeg.unittest_gpu_insert_warp_batch_once(
           selected_state,
           level,
           is_top_down_insertion,
@@ -121,7 +121,7 @@ G_EXT::GpuInsertionResult run_warp_insertion(
 
     case WarpInsertionMode::Direct:
       return
-        g_ext.unittest_gpu_insert_warp_direct_once(
+        xeg.unittest_gpu_insert_warp_direct_once(
           selected_state,
           level,
           is_top_down_insertion,
@@ -156,7 +156,7 @@ public:
     const WarpInsertionMode mode,
     const uint32_t total_nodes)
     : path_(
-        "/tmp/g_ext_warp_"
+        "/tmp/xeg_warp_"
         + std::string(warp_mode_name(mode))
         + "_boundary_"
         + std::to_string(total_nodes)
@@ -294,14 +294,14 @@ TEST_CASE(
       //   selected parent -> candidate
       // --------------------------------------------------------
       {
-        G_EXT g_ext;
+        XEG xeg;
 
-        g_ext.read(
+        xeg.read(
           test_data_path("single_edge.json"));
 
         const auto result =
           run_warp_insertion(
-            g_ext,
+            xeg,
             mode,
             std::vector<uint32_t>{1u, 0u},
             std::vector<int>{0, -1},
@@ -326,14 +326,14 @@ TEST_CASE(
       //   candidate -> selected child
       // --------------------------------------------------------
       {
-        G_EXT g_ext;
+        XEG xeg;
 
-        g_ext.read(
+        xeg.read(
           test_data_path("single_edge.json"));
 
         const auto result =
           run_warp_insertion(
-            g_ext,
+            xeg,
             mode,
             std::vector<uint32_t>{0u, 1u},
             std::vector<int>{-1, 1},
@@ -365,14 +365,14 @@ TEST_CASE(
     DOCTEST_CAPTURE(
       warp_mode_name(mode));
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("single_edge.json"));
 
     const auto result =
       run_warp_insertion(
-        g_ext,
+        xeg,
         mode,
         std::vector<uint32_t>{1u, 0u},
         std::vector<int>{0, -1},
@@ -408,9 +408,9 @@ TEST_CASE(
       DOCTEST_CAPTURE(
         is_top_down);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         test_data_path("single_edge.json"));
 
       const std::vector<uint32_t> initial_state = {
@@ -425,7 +425,7 @@ TEST_CASE(
 
       const auto result =
         run_warp_insertion(
-          g_ext,
+          xeg,
           mode,
           initial_state,
           initial_level,
@@ -462,9 +462,9 @@ TEST_CASE(
       DOCTEST_CAPTURE(
         is_top_down);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         test_data_path("chain.json"));
 
       const std::vector<uint32_t> initial_state = {
@@ -481,7 +481,7 @@ TEST_CASE(
 
       const auto result =
         run_warp_insertion(
-          g_ext,
+          xeg,
           mode,
           initial_state,
           initial_level,
@@ -518,9 +518,9 @@ TEST_CASE(
       DOCTEST_CAPTURE(
         is_top_down);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         test_data_path("overlap_cycle.json"));
 
       const std::vector<uint32_t> initial_state = {
@@ -535,7 +535,7 @@ TEST_CASE(
 
       const auto result =
         run_warp_insertion(
-          g_ext,
+          xeg,
           mode,
           initial_state,
           initial_level,
@@ -566,14 +566,14 @@ TEST_CASE(
     DOCTEST_CAPTURE(
       warp_mode_name(mode));
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("single_edge.json"));
 
     const auto result =
       run_warp_insertion(
-        g_ext,
+        xeg,
         mode,
         std::vector<uint32_t>{2u, 0u},
         std::vector<int>{0, -1},
@@ -603,9 +603,9 @@ TEST_CASE(
     DOCTEST_CAPTURE(
       warp_mode_name(mode));
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path("single_edge.json"));
 
     const std::vector<uint32_t> initial_state = {
@@ -620,7 +620,7 @@ TEST_CASE(
 
     const auto result =
       run_warp_insertion(
-        g_ext,
+        xeg,
         mode,
         initial_state,
         initial_level,
@@ -650,15 +650,15 @@ TEST_CASE(
     DOCTEST_CAPTURE(
       warp_mode_name(mode));
 
-    G_EXT g_ext;
+    XEG xeg;
 
-    g_ext.read(
+    xeg.read(
       test_data_path(
         "parallel_candidates.json"));
 
     const auto result =
       run_warp_insertion(
-        g_ext,
+        xeg,
         mode,
         std::vector<uint32_t>{
           1u,
@@ -741,9 +741,9 @@ TEST_CASE(
           mode,
           total_nodes);
 
-        G_EXT g_ext;
+        XEG xeg;
 
-        g_ext.read(
+        xeg.read(
           graph.path());
 
         std::vector<uint32_t> initial_state(
@@ -759,7 +759,7 @@ TEST_CASE(
 
         const auto result =
           run_warp_insertion(
-            g_ext,
+            xeg,
             mode,
             initial_state,
             initial_level,
@@ -825,14 +825,14 @@ TEST_CASE(
       DOCTEST_CAPTURE(
         invalid_threads_per_block);
 
-      G_EXT g_ext;
+      XEG xeg;
 
-      g_ext.read(
+      xeg.read(
         test_data_path("single_edge.json"));
 
       DOCTEST_CHECK_THROWS_AS(
         run_warp_insertion(
-          g_ext,
+          xeg,
           mode,
           std::vector<uint32_t>{1u, 0u},
           std::vector<int>{0, -1},

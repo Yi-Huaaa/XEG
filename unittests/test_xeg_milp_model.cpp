@@ -2,7 +2,7 @@
 
 #include <doctest.h>
 
-#include <g_ext/xeg_milp_model.hpp>
+#include <xeg/xeg_milp_model.hpp>
 
 #include <cstdint>
 #include <vector>
