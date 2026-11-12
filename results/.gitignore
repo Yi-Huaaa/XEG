@@ -2,7 +2,12 @@
 *
 !*/
 !.gitignore
+!.gitattributes
 !README.md
 !REPORT.txt
 !performance.png
 !quality.csv
+!comparison.md
+!comparison.csv
+!construction.md
+!paper_xeg.csv
