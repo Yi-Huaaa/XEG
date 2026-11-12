@@ -1,0 +1,41 @@
+phase,benchmark,mean,designs,speedup
+tree,BoolE,Arithmetic mean,16,0.9061673228266041
+tree,BoolE,Geometric mean,16,0.8999899552334111
+tree,ESyn,Arithmetic mean,14,1.0470290287610662
+tree,ESyn,Geometric mean,14,1.0408489745801686
+tree,E-morphic,Arithmetic mean,7,1.015622385813576
+tree,E-morphic,Geometric mean,7,1.0096880357754603
+tree,IMpress,Arithmetic mean,3,1.1526721020793644
+tree,IMpress,Geometric mean,3,1.151858256826203
+tree,Tensat,Arithmetic mean,5,1.061486694475301
+tree,Tensat,Geometric mean,5,1.0561328832804289
+tree,Flexc,Arithmetic mean,14,1.0501640255861646
+tree,Flexc,Geometric mean,14,1.0492268343126268
+tree,Rover,Arithmetic mean,9,1.6277931866627298
+tree,Rover,Geometric mean,9,1.5059884768245577
+tree,Diospyros,Arithmetic mean,13,2.3765527226388
+tree,Diospyros,Geometric mean,13,1.7750752903406968
+tree,Maxsat,Arithmetic mean,6,1.0231216810661052
+tree,Maxsat,Geometric mean,6,1.0225893478170294
+tree,Across 87 designs,Arithmetic mean,87,1.2806694317938176
+tree,Across 87 designs,Geometric mean,87,1.1425130903780714
+dag,BoolE,Arithmetic mean,16,0.9753730168395784
+dag,BoolE,Geometric mean,16,0.9721579385933621
+dag,ESyn,Arithmetic mean,14,0.9891122551203558
+dag,ESyn,Geometric mean,14,0.9743541555381883
+dag,E-morphic,Arithmetic mean,7,0.9621101666741368
+dag,E-morphic,Geometric mean,7,0.9614717501651822
+dag,IMpress,Arithmetic mean,3,1.1152459102986125
+dag,IMpress,Geometric mean,3,1.1063112225272396
+dag,Tensat,Arithmetic mean,5,1.0376978648358512
+dag,Tensat,Geometric mean,5,1.0347804019873388
+dag,Flexc,Arithmetic mean,14,0.9773806474414948
+dag,Flexc,Geometric mean,14,0.9708646951463108
+dag,Rover,Arithmetic mean,9,0.9339005882489775
+dag,Rover,Geometric mean,9,0.9282904113284599
+dag,Diospyros,Arithmetic mean,13,0.9962159153514076
+dag,Diospyros,Geometric mean,13,0.9915201606156042
+dag,Maxsat,Arithmetic mean,6,0.9984229874839795
+dag,Maxsat,Geometric mean,6,0.9980569352190182
+dag,Across 87 designs,Arithmetic mean,87,0.9856588189173126
+dag,Across 87 designs,Geometric mean,87,0.9792692024000298
