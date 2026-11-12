@@ -17,10 +17,10 @@ The full report distinguishes construction timing, timed solver quality, and
 fixed-budget reproducibility. It also records the remaining differences from the
 paper's costs.
 
-The existing `xeg_d`, `simple`, and `xeg_t` CPU stages still use one construction
-thread. The recorded comparison has 16 changed seed masks and 9 designs with
+`xeg_d` retains single-thread CPU tree construction. The current `simple` and
+`xeg_t` drivers use CUDA construction. The recorded comparison has 16 changed seed masks and 9 designs with
 slower single-thread tree-plus-DAG construction than the original. See the
-[entry-point notes](../../../README.md#existing-entry-points) for the measured
+[entry-point notes](../../../main/README.md#xeg-d-and-compatibility) for the measured
 example and implications for historical logs.
 
 Construction measurements used `OMP_PROC_BIND=close` and `OMP_PLACES=cores`.
