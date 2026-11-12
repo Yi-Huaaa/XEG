@@ -86,16 +86,17 @@ BoolE inputs: it includes ten and links the six large cases to
 The [e-boost README](https://github.com/Yu-Maryland/e-boost#-benchmarks) also
 links that complete collection.
 
-**Release status:** the 16 BoolE inputs, including the six large compressed
-archives, are included with Jiaqi Yin's permission. Sources and declared
-reference-repository licenses for the other eight families are listed above.
+**Redistribution permission:** the full 87-design benchmark collection,
+including the six large compressed BoolE archives, is redistributed with
+Jiaqi Yin's permission. Public source and license information for the benchmark
+families is listed above.
 XEG's [Apache-2.0 license](../LICENSE) applies to XEG code and does not relicense
 this external collection.
 
 ## Acknowledgments
 
-The BoolE inputs in `boolE/`, including the six large compressed archives, are
-redistributed with the permission of Jiaqi Yin, first author of
+The full 87-design benchmark collection, including the six large compressed
+BoolE archives, is redistributed with the permission of Jiaqi Yin, first author of
 [BoolE: Exact Symbolic Reasoning via Boolean Equality Saturation](https://arxiv.org/abs/2504.05577).
-We sincerely thank Jiaqi Yin for sharing the full benchmark collection and
-allowing us to include the BoolE inputs.
+We sincerely thank Jiaqi Yin for sharing this collection and allowing us to
+include it.

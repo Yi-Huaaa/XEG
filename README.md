@@ -165,5 +165,6 @@ For questions about XEG, please email Yi-Hua Chung at
 XEG code is released under the [Apache License 2.0](LICENSE).
 Third-party components and benchmark data retain their respective licenses.
 
-Acknowledgments: we thank Jiaqi Yin for permission to redistribute the BoolE
-benchmarks; see the [dataset acknowledgments](dataset/README.md#acknowledgments).
+Acknowledgments: we thank Jiaqi Yin for sharing and permitting redistribution of
+the full 87-design benchmark collection; see the
+[dataset acknowledgments](dataset/README.md#acknowledgments).
