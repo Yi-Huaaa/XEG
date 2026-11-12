@@ -22,7 +22,7 @@ The recommended GPU runner is `scripts/run_gpu.sh`:
 
 ```text
 scripts/run_gpu.sh INPUT.json [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS] [SOLVER_WORKERS]
-                             [--config FILE.json] [--design FAMILY/STEM]
+                             [--config FILE.json] [--design FAMILY/STEM] [--solver-seconds SECONDS] [--workers N]
 ```
 
 ### Automatic settings
@@ -51,12 +51,15 @@ scripts/run_gpu.sh path/to/your-design.json 2 128 1024 60 4
 | `ILP_SECONDS` | `360` | CP-SAT time limit in seconds |
 | `SOLVER_WORKERS` | `8` | CP-SAT worker count |
 
-Explicit arguments override the corresponding selected values. Controller
+Use `--solver-seconds SECONDS --workers N` to change solver limits without
+overriding saved geometry. An explicit positional kernel starts from canonical
+Thread/1/0, Warp/32/0, or Block/64/512 geometry; subsequent positional values
+override it. Invalid geometry is rejected before reading the graph. Controller
 settings still come from the configuration file. A solver limit of `0` skips
 CP-SAT and runs construction and validation only:
 
 ```bash
-scripts/run_gpu.sh dataset/boolE/mul16.rename.json 2 64 512 0 8
+scripts/run_gpu.sh dataset/boolE/mul16.rename.json --solver-seconds 0 --workers 8
 ```
 
 ### Custom JSON settings
@@ -83,9 +86,13 @@ Both recommended runners save `run.log`, `report.json`, and solver memory logs.
 Without `XEG_RUN_DIR`, each run gets a timestamped directory under `build/runs/`.
 Reusing an explicit run directory replaces its `run.log` and `report.json`.
 The JSON report is an array with one entry per repetition.
+CP-SAT currently writes `cpsat_memory_<pid>.log` in its working directory even
+for direct executable calls; that directory must be writable. The runners
+provide a writable run directory. Memory logging has not been made optional.
 
 | Report field | Meaning |
 |---|---|
+| `profile_matched` (GPU CLI) | Whether automatic/explicit selection found a listed design; false means common defaults |
 | `solution.objective` | Final returned cost, including every selected node |
 | `solution.source` | `solver` or `tree_fallback` |
 | `solver.status` | Solver outcome; `OPTIMAL` applies within the constructed candidate space |

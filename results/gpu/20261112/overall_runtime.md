@@ -119,6 +119,6 @@ Runtime values above 1000 ms are rounded to integers; values at or below 1000 ms
 
 The CPU column matches the accepted [CPU quality-run pipeline times](../../cpu/20261112/comparison.md#quality-run). Both GPU columns' times come from the same quality reports that produced their published final costs. `profile_construction_pipeline_ms` in `profiles.csv` is solver-disabled and is **not** the source for this table.
 
-Raw report paths in the CSV are relative to the repository on the experiment server. They remain under `build/plan/20261112_cpu_parallel/quality-delivered-cpu/`, `build/plan/20261112_gpu_alignment/v9-quality/`, and the selected `v9-tuning/` trial directories. Raw experiment logs remain local; the table and CSV are published for review.
+Raw report paths in the CSV are relative to the repository on the experiment server. They are not included in a public clone. They remain under `build/plan/20261112_cpu_parallel/quality-delivered-cpu/`, `build/plan/20261112_gpu_alignment/v9-quality/`, and the selected `v9-tuning/` trial directories. Raw experiment logs remain local; the table and CSV are published for review.
 
 [Back to GPU results](README.md)

@@ -98,7 +98,7 @@ void print_usage(
     << "  JSON file, and exits without calling run().\n\n"
 
     << "  Output directory:\n"
-    << "    /home/ychung79/gpu_extraction/"
+    << "    ./"
     << "ablation_benchmarks\n\n"
 
     << "DAG_KERNEL:\n"
@@ -317,7 +317,7 @@ int main(
 
       std::cout
         << "Output directory: "
-        << "/home/ychung79/gpu_extraction/"
+        << "./"
         << "ablation_benchmarks\n";
 
       std::cout

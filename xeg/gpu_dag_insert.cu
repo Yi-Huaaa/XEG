@@ -268,12 +268,8 @@ __global__ void _gpu_dag_insert_batch_kl(
         break;
       }
 
-      // Publish the proposed level before publishing state 2.
-      //
-      // Keep __threadfence() because another thread in the same
-      // batch may observe state 2 before the end-of-batch
-      // __syncthreads(). The level must already be visible when
-      // state 2 becomes visible.
+      // Preserve the live optimistic proposal: relaxed atomic accesses
+      // avoid data races, while levelization later validates proposals.
       gpu_atomic_store_relaxed(&level[u], proposed_level);
 
       // __threadfence(); // Note: open this will have worse soln Q than close it. So we close it
@@ -332,7 +328,7 @@ void XEG::_gpu_dag_insert_batch(
 
   // Launch one single-block kernel for the entire insertion
   // phase. The kernel processes all batch_index values
-  // sequentially and synchronizes after every batch.
+  // in order per thread, without an end-of-batch block barrier.
   _gpu_dag_insert_batch_kl
     <<<1u, _gpu_options.exact_batch_size>>>(
       _num_ende,
@@ -731,9 +727,10 @@ void gpu_dag_process_block_candidate(
 
   __syncthreads();
 
-  // This return is uniform because every thread reads the same
-  // shared candidate_active value.
-  if (*candidate_active == 0u) {
+  // Finish every read before the next batch can overwrite the flag.
+  const bool active = *candidate_active != 0u;
+  __syncthreads();
+  if (!active) {
     return;
   }
 
@@ -1507,9 +1504,10 @@ void gpu_dag_process_block_bitmap_candidate(
 
   __syncthreads();
 
-  // Uniform return because all threads read the same shared
-  // candidate_active value.
-  if (*candidate_active == 0u) {
+  // Finish every read before the next batch can overwrite the flag.
+  const bool active = *candidate_active != 0u;
+  __syncthreads();
+  if (!active) {
     return;
   }
 

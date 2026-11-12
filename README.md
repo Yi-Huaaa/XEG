@@ -25,7 +25,7 @@ numbers from measurements of the current code.
   the candidate space for extraction.
 - **Automatic GPU settings.** Known inputs use their saved parameters; other
   inputs use common defaults. Custom settings are optional.
-- **Checked solutions.** Both implementations share CP-SAT solving and final
+- **Checked solutions.** Both CPU/GPU CP-SAT paths share solving and final
   checks, with a separate Python verifier for exported solutions.
 - **87-design evaluation.** [Runtime and quality tables](results/gpu/20261112/overall_runtime.md)
   compare CPU and GPU results, including a common-settings reference.

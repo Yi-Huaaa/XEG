@@ -31,6 +31,7 @@ struct GpuProfile {
   uint32_t dag_threads = 1;
   uint32_t bitmap_bits = 0;
   GpuDagOptions dag;
+  bool matched = false;  // Selection metadata, not a configuration key.
 
   void validate() const;
   nlohmann::json to_json() const;

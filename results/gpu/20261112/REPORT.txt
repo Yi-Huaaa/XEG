@@ -64,10 +64,12 @@ use atomic loads and concurrent stores use atomic stores where required.
 Pinned control transfers reduce repeated host/device synchronization overhead.
 The original numeric defaults remain available; profiles are explicit inputs.
 
-Every repaired run validates its seed before expansion, recursively removes
+Every repaired CP-SAT run validates its seed before expansion, recursively removes
 impossible candidates after the original DAG filter, checks child closure and
-cycles, and confirms that the legal seed survived. CPU and GPU share CP-SAT
+cycles, and confirms that the legal seed survived. The CPU and GPU CP-SAT paths share
 formulation, search settings, final checks, and valid cheaper-seed fallback.
+The optional cuOpt path retains its separate model and does not provide these
+shared final checks, fallback, or exported solution report; it was not tested.
 Level constraints are omitted only when the candidate graph is checked acyclic;
 cyclic spaces retain them. Final selected nodes are independently checked against
 the original JSON for roots, unique choice per class, children, cycles, and cost.
@@ -76,7 +78,7 @@ formulation. Their costs remain included; there is no post-hoc cost trimming.
 
 EXPERIMENT CONTRACT
 Hardware: NVIDIA RTX PRO 6000 Blackwell Server Edition, AMD EPYC 9B45,
-ri-gpu-e1d-2. CUDA 12.9, GCC 12, Release build, architecture 120.
+CUDA 12.9, GCC 12, Release build, architecture 120.
 The original baseline is main after the CPU PR was merged. Its instrumentation
 exports masks, native timings, and solutions and explicitly uses 8 solver
 workers; it retains the original GPU algorithms and level-constrained model.
@@ -110,7 +112,9 @@ and the original allocation receipt are preserved locally.
 PROFILE SEARCH
 The JSON configuration covers all 87 input keys. Empty entries inherit the
 common defaults. Unlisted inputs also inherit defaults. Built-in no-config
-geometry remains Thread/1/0; the experiment manifest explicitly uses Block/64/512.
+geometry was Thread/1/0 in the measured snapshot; the experiment manifest used
+Block/64/512. The current CLI automatically selects the saved per-design
+settings and uses Block/64/512 for unlisted inputs.
 See configs/gpu/README.md for options, precedence, and validation rules.
 
 Every design received an isolated persistent_small_levels=1 construction screen.
@@ -180,7 +184,11 @@ Largest remaining selected-GPU / CPU-reference cost ratios:
   morphic/sin.rename.json: GPU 14230, CPU 14102, ratio 1.0091
 
 VALIDATION
-139/139 C++/CUDA CTest entries passed. 15/15 Python tests passed.
+Measured core snapshot: 139/139 C++/CUDA CTest entries and 15/15 Python
+tests passed. A later default-selection update passed 140/140 CTest entries.
+The subsequent CLI/ZIP update passed targeted configuration tests (5 cases,
+150 assertions), 22 Python tests, and 30 actual CLI/wrapper fixture cases;
+these are not additional 87-design measurements.
 87/87 CPU regression cases match the accepted implementation for construction
 hashes, final cost, status, source, reason and selected names (1 solver worker,
 0.1 deterministic solver units, 60-second safety cap, 8 construction threads).
@@ -192,6 +200,11 @@ All fixed/profiled construction repetitions validate seed and candidate spaces.
 Source audit confirms shared CP-SAT parity, unchanged fixed-run parameters, and
 unchanged DAG algorithms outside synchronization/runtime-option changes.
 cuOpt, ThreadSanitizer and exhaustive global-memory race detection were not run.
+Those historical memcheck results cover only tree/repeated-extraction tests,
+not the insertion binaries or the full designs. Historical synccheck logs for
+the rejected reduction experiment are not validation of the delivered code.
+Later review-fix testing is documented separately; the measurements above
+remain the original recorded observations.
 
 FILES AND REPRODUCTION
 comparison.md/csv: fixed-parameter results.
@@ -208,13 +221,17 @@ Build and run one configured input:
   scripts/build.sh gpu
   scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json --config configs/gpu/87-designs.json
   python3 verification/verify_solution.py INPUT.json REPORT.json
-Direct construction-only repetition:
-  env -u OMP_PLACES OMP_PROC_BIND=false build/main/gpu INPUT.json 2 64 512 0 8 timing.json 3 --config configs/gpu/87-designs.json --design FAMILY/STEM
+Direct construction-only run preserving the selected geometry:
+  env -u OMP_PLACES OMP_PROC_BIND=false build/main/gpu INPUT.json --solver-seconds 0 --workers 8 --report timing.json --config configs/gpu/87-designs.json --design FAMILY/STEM
 
 Raw logs, rejected attempts, frozen masks, complete reproduction scripts and
 source snapshots are intentionally not tracked in the code base. On the server:
-  /home/yihua_chung_ricursive_com/XEG/gpu_extraction/build/plan/20261112_gpu_alignment/
-Use run_baseline.py/run_current.py and tune_profiles.py with the saved Slurm
+  build/plan/20261112_gpu_alignment/ (relative to the experiment checkout)
+The original run_baseline.py/run_current.py, tune_profiles.py and Slurm recipes
+are not distributed in this repository. A public clone can run the supplied
+settings, but cannot reproduce the complete historical profile-selection search
+or resolve the raw report paths in the CSVs. Authorized access to the retained
+experiment records is needed for that audit. Use those scripts with the saved Slurm
 recipes. Their recorded absolute scratch paths describe the original jobs;
 restage the preserved source/dependencies and inputs before reproducing after
 scratch cleanup. Input hashes must match dataset-sha256.json.

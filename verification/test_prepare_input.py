@@ -28,6 +28,17 @@ class PrepareInputTest(unittest.TestCase):
             self.assertEqual(prepare_input(archive).read_bytes(), b'edited by the user')
             self.assertFalse(list(root.glob('*.part')))
 
+    def test_input_symlink_preserves_design_path(self):
+        with tempfile.TemporaryDirectory(prefix='xeg-zip-link-') as directory:
+            root = Path(directory)
+            target = root / 'target.json'
+            target.write_text('{}')
+            link = root / 'family/design.json'
+            link.parent.mkdir()
+            link.symlink_to(target)
+            self.assertEqual(prepare_input(link), link)
+            self.assertEqual(prepare_dataset(link.parent), [link])
+
     def test_rejects_nested_extra_and_symlink_members(self):
         with tempfile.TemporaryDirectory(prefix='xeg-zip-') as directory:
             root = Path(directory)

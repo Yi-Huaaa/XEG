@@ -49,8 +49,8 @@ int main(int argc, char *argv[]) {
   
   // === Parse arguments ===
   std::string input_path = argv[1];
-  const auto profile = profile_args.resolve(input_path);
-  int dag_kernel_value = (argc > 2) ? std::stoi(argv[2]) : static_cast<int>(profile.kernel);
+  const auto profile = GpuProfileArgs::geometry(profile_args.resolve(input_path), argc, argv);
+  int dag_kernel_value = static_cast<int>(profile.kernel);
 
   if (dag_kernel_value < 0 || dag_kernel_value > 2) {
     std::cerr
@@ -64,12 +64,8 @@ int main(int argc, char *argv[]) {
 
   DagKernel dag_kernel = static_cast<DagKernel>(dag_kernel_value);
 
-  uint32_t num_thread_dag_constr = (argc > 3)
-      ? static_cast<uint32_t>(std::stoul(argv[3]))
-      : profile.dag_threads;
-  uint32_t bitmap_bits = (argc > 4)
-      ? static_cast<uint32_t>(std::stoul(argv[4]))
-      : profile.bitmap_bits;
+  uint32_t num_thread_dag_constr = profile.dag_threads;
+  uint32_t bitmap_bits = profile.bitmap_bits;
       
   bool valid_bitmap_bits =
     false;

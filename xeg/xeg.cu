@@ -52,12 +52,9 @@ static_assert(
   kOutputDegreeExpMaxConsecutiveFailures > 0u,
   "Output-degree failure limit must be positive");
 
-// Fixed output directory for generated output-degree ablation
-// benchmark JSON files.
-// Note: when open source this part must be updated!!!
+// Output-degree ablation JSONs are written relative to the working directory.
 constexpr char
   kOutputDegreeExpDumpDirectory[] =
-    "/home/ychung79/gpu_extraction/"
     "ablation_benchmarks";
 
 }  // namespace

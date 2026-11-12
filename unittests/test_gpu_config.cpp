@@ -91,3 +91,57 @@ TEST_CASE("GPU profiles reject typos and unsafe launch or controller values") {
   DOCTEST_CHECK_THROWS_AS(xeg::resolve_gpu_profile({{"defaults", nlohmann::json::object()}}, ""), std::invalid_argument);
   DOCTEST_CHECK_THROWS_AS(xeg::resolve_gpu_profile({{"schema_version", 2}}, ""), std::invalid_argument);
 }
+
+
+TEST_CASE("GPU geometry overrides are canonical and validated before input loading") {
+  const auto saved = xeg::default_gpu_profile("morphic/arbiter.rename");
+  DOCTEST_REQUIRE(saved.bitmap_bits == 2048);
+  auto geometry = [&](std::vector<std::string> words) {
+    std::vector<char*> argv;
+    for (auto& word : words) argv.push_back(word.data());
+    return GpuProfileArgs::geometry(saved, static_cast<int>(argv.size()), argv.data());
+  };
+  DOCTEST_CHECK(geometry({"gpu", "input"}).bitmap_bits == 2048);
+  const auto thread = geometry({"gpu", "input", "0"});
+  DOCTEST_CHECK(thread.kernel == 0);
+  DOCTEST_CHECK(thread.dag_threads == 1);
+  DOCTEST_CHECK(thread.bitmap_bits == 0);
+  DOCTEST_CHECK(geometry({"gpu", "input", "1"}).dag_threads == 32);
+  DOCTEST_CHECK(geometry({"gpu", "input", "2"}).bitmap_bits == 512);
+  DOCTEST_CHECK_THROWS_AS(geometry({"gpu", "input", "2", "48"}), std::invalid_argument);
+  DOCTEST_CHECK_THROWS_AS(geometry({"gpu", "input", "2junk"}), std::invalid_argument);
+}
+
+TEST_CASE("Named solver budgets retain saved geometry and explicit design typos fail") {
+  std::vector<std::string> words{"gpu", "input", "--solver-seconds", "0", "--workers", "1"};
+  std::vector<char*> argv;
+  for (auto& word : words) argv.push_back(word.data());
+  GpuProfileArgs args(static_cast<int>(argv.size()), argv.data(), true);
+  auto profile = args.resolve("/inputs/morphic/arbiter.rename.json");
+  profile = GpuProfileArgs::geometry(profile, args.positional.size(), args.positional.data());
+  DOCTEST_CHECK(args.solver_seconds == "0");
+  DOCTEST_CHECK(args.workers == "1");
+  DOCTEST_CHECK(profile.bitmap_bits == 2048);
+  DOCTEST_CHECK(args.profile_matched);
+  args.design = "typo/missing";
+  DOCTEST_CHECK_THROWS_AS(args.resolve("input.json"), std::invalid_argument);
+  args.design.clear();
+  args.resolve("/inputs/unlisted/design.json");
+  DOCTEST_CHECK_FALSE(args.profile_matched);
+  args.design.clear();
+  args.resolve("./local.json");
+  DOCTEST_CHECK(args.design == std::filesystem::current_path().filename().string() + "/local");
+}
+
+TEST_CASE("Custom files require explicit geometry") {
+  const auto path = std::filesystem::current_path() / "gpu-config-test.json";
+  struct Cleanup { std::filesystem::path path; ~Cleanup() { std::filesystem::remove(path); } } cleanup{path};
+  const nlohmann::json geometry{{"kernel",2},{"dag_threads",64},{"bitmap_bits",512}};
+  for (const char* missing : {"kernel", "dag_threads", "bitmap_bits"}) {
+    auto defaults = geometry; defaults.erase(missing);
+    { std::ofstream out(path); out << nlohmann::json{{"schema_version",1},{"defaults",defaults}}; }
+    DOCTEST_CHECK_THROWS_AS(xeg::load_gpu_profile(path.string(), "new/input"), std::invalid_argument);
+  }
+  { std::ofstream out(path); out << nlohmann::json{{"schema_version",1},{"defaults",geometry}}; }
+  DOCTEST_CHECK(xeg::load_gpu_profile(path.string(), "new/input").bitmap_bits == 512);
+}

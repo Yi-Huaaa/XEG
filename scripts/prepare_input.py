@@ -11,7 +11,8 @@ import zipfile
 
 
 def prepare_input(path):
-    source = Path(path).expanduser().resolve()
+    # Keep the caller's lexical path: symlinks must not change design keys.
+    source = Path(os.path.abspath(Path(path).expanduser()))
     if source.name.endswith('.json.zip'):
         source = source.with_suffix('')
     if source.is_file():

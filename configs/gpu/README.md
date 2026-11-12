@@ -59,13 +59,16 @@ scripts/run_gpu.sh my-designs/adder.json --config my-gpu-settings.json
   copy `configs/gpu/87-designs.json` and edit the copy instead.
 - Include `kernel`, `dag_threads`, and `bitmap_bits` explicitly in your custom
   `defaults`, as above. Controller fields omitted from `defaults` use the
-  built-in values listed below. For compatibility, omitted geometry fields in
-  a custom file fall back to Thread / 1 / 0; the bundled file explicitly sets
-  Block / 64 / 512.
+  built-in values listed below. Custom files missing any of the three geometry
+  keys are rejected before input loading.
 
 For one configuration shared by every input, remove the `designs` section or
 set it to `{}`. The examples demonstrate the format; their parameter choices
 are not measured recommendations for your input.
+
+An explicit `--design` must match a listed key; typos are rejected. Automatic
+selection can use unlisted inputs and reports `profile_matched=false`. Symlink
+inputs keep the caller's filename and parent folder for selection.
 
 If you move or rename an input, select its settings explicitly:
 
@@ -82,7 +85,19 @@ scripts/run_gpu.sh my-designs/adder.json 2 128 1024 60 4 --config my-gpu-setting
 The five numbers are **kernel, DAG threads, bitmap bits, solver seconds, solver
 workers**. This example overrides the geometry to Block / 128 / 1024, keeps the
 adder's JSON controller settings, and gives CP-SAT 60 seconds and 4 workers.
-A solver limit of `0` skips solving.
+A solver limit of `0` skips solving. To change only solver limits while preserving
+all saved geometry and controller settings, use named options:
+
+```bash
+scripts/run_gpu.sh my-designs/adder.json --solver-seconds 60 --workers 4 --config my-gpu-settings.json
+```
+
+These named options are supported by `gpu` / `run_gpu.sh`; legacy `simple` keeps
+its backend arguments. Specifying the same solver setting both positionally and
+by name is an error. An explicit kernel resets geometry to its canonical values:
+Thread / 1 / 0, Warp / 32 / 0, or Block / 64 / 512. Later positional geometry
+arguments override those values. With no geometry arguments the saved settings
+are unchanged. All geometry is validated before reading the input graph.
 
 Solver limits and worker counts belong to CLI arguments, not this JSON schema.
 Unknown JSON keys, invalid types, and incompatible geometry are rejected before
@@ -127,7 +142,8 @@ Explicit geometry arguments have highest priority. The report records the
 actual kernel, DAG threads, bitmap size, and every `dag_options` value.
 
 Correctness checks and CP-SAT constraints are independent of these choices.
-Every run validates its seed, removes candidates with impossible child
-dependencies, checks candidate acyclicity, preserves the seed, and validates the
-final solution. GPU scheduling can change candidate selection between runs;
+The CPU/GPU CP-SAT pipelines validate their seed, remove candidates with
+impossible child dependencies, check candidate acyclicity, preserve the seed,
+and validate the final solution. The optional cuOpt path does not share the
+final checks/fallback. GPU scheduling can change candidate selection between runs;
 compare repeated runs with the same solver budget and verify exported solutions.

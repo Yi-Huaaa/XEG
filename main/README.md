@@ -42,6 +42,7 @@ comparisons; both runs must finish before the wall-time safety cap.
 ```text
 build/main/gpu INPUT.json [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS=360]
                          [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1] [DETERMINISTIC_SECONDS=0]
+                         [--solver-seconds SECONDS] [--workers N]
 ```
 
 Known designs automatically use their saved parameters; unlisted inputs use
@@ -134,9 +135,8 @@ build/main/output_degree_ablation INPUT.json KERNEL DAG_THREADS BITMAP_BITS MULT
 ```
 
 Dump-only mode augments the graph and writes JSON without running extraction.
-The output directory is currently hard-coded in `xeg/xeg.cu` to
-`/home/ychung79/gpu_extraction/ablation_benchmarks`; adapt it before using this
-experimental tool on another machine. Names follow
+Output goes to `ablation_benchmarks/` under the current working directory.
+Run from a writable directory when using this experimental tool. Names follow
 `<input-stem>_sf<multiplier>_<index>.json`, using the smallest available index.
 
 The second form augments the graph in memory using seed 113 and runs GPU tree

@@ -151,7 +151,7 @@ public:
   //
   // The output directory is fixed to:
   //
-  //   /home/ychung79/gpu_extraction/ablation_benchmarks
+  //   ./ablation_benchmarks
   //
   // The generated filename has the form:
   //
@@ -532,6 +532,7 @@ public:
   }
 
 private:
+  friend struct XegSolverTestAccess;
   void _gpu_free_buffers() noexcept;
   void _gpu_allocate_graph_buffers();
   cudaError_t _gpu_copy_control(void* destination, const void* source, size_t bytes);
@@ -1204,7 +1205,6 @@ private:
 
 
   int* _dvc_level = nullptr;
-  int* _dvc_max_level = nullptr;
 
   uint32_t* _dvc_in_subgraph = nullptr;
   uint32_t* _dvc_roots = nullptr;

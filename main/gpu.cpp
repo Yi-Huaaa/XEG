@@ -6,12 +6,12 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0]
       << " INPUT [KERNEL] [DAG_THREADS] [BITMAP_BITS] [ILP_SECONDS=360] [SOLVER_WORKERS=8] [REPORT.json] [REPEATS=1] [DETERMINISTIC_SECONDS=0]\n"
-      << "Options: --config FILE.json --design FAMILY/STEM --report FILE.json\n"
+      << "Options: --config FILE.json --design FAMILY/STEM --report FILE.json --solver-seconds SECONDS --workers N\n"
       << "Defaults: automatic design settings; unlisted inputs use Block/64/512, 360 seconds, 8 solver workers.\nKERNEL: 0=Thread, 1=Warp, 2=Block. ILP_SECONDS=0 skips solving.\n";
     return 2;
   }
   try {
-    GpuProfileArgs profile_args(argc, argv);
+    GpuProfileArgs profile_args(argc, argv, true);
     std::vector<char*> args{argv[0]};
     std::string report_path;
     const auto& positional = profile_args.positional;
@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
     if (args.size() < 2 || args.size() > 10) throw std::invalid_argument("Invalid number of positional arguments");
     argc = static_cast<int>(args.size());
     argv = args.data();
-    const auto profile = profile_args.resolve(argv[1]);
+    const auto profile = GpuProfileArgs::geometry(profile_args.resolve(argv[1]), argc, argv);
     auto integer = [](const char* text, bool zero) {
       size_t end = 0; const int value = std::stoi(text,&end);
       if (end != std::string(text).size() || value < (zero ? 0 : 1))
@@ -40,11 +40,16 @@ int main(int argc, char** argv) {
       if (end != std::string(text).size()) throw std::invalid_argument("Invalid numeric argument");
       return value;
     };
-    const auto kernel = static_cast<DagKernel>(argc > 2 ? integer(argv[2],true) : profile.kernel);
-    const int threads = argc > 3 ? integer(argv[3],false) : profile.dag_threads;
-    const int bits = argc > 4 ? integer(argv[4],true) : profile.bitmap_bits;
-    const double seconds = argc > 5 ? number(argv[5]) : 360;
-    const int workers = argc > 6 ? integer(argv[6],false) : 8;
+    const auto kernel = static_cast<DagKernel>(profile.kernel);
+    const int threads = profile.dag_threads;
+    const int bits = profile.bitmap_bits;
+    if ((argc > 5 && !profile_args.solver_seconds.empty()) ||
+        (argc > 6 && !profile_args.workers.empty()))
+      throw std::invalid_argument("Solver limits specified both positionally and by name");
+    const double seconds = !profile_args.solver_seconds.empty() ? number(profile_args.solver_seconds.c_str()) :
+                           argc > 5 ? number(argv[5]) : 360;
+    const int workers = !profile_args.workers.empty() ? integer(profile_args.workers.c_str(),false) :
+                        argc > 6 ? integer(argv[6],false) : 8;
     const int repeats = argc > 8 ? integer(argv[8],false) : 1;
     const double deterministic = argc > 9 ? number(argv[9]) : 0;
     if (argc > 7) {
@@ -58,6 +63,7 @@ int main(int argc, char** argv) {
       report["input"] = argv[1]; report["repeat"] = i;
       report["configuration_source"] = profile_args.config_path.empty() ? "built-in-profile" : "file";
       report["design_profile"] = profile_args.design;
+      report["profile_matched"] = profile_args.profile_matched;
       if (!profile_args.config_path.empty()) report["configuration_file"] = profile_args.config_path;
       auto summary = report;
       for (const char* key : {"solver", "solution"})

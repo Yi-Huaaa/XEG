@@ -51,5 +51,48 @@ matched the original JSON files byte for byte. Sizes below use MiB (1024² bytes
 | [mul128_map.rename.json](boolE/mul128_map.rename.json.zip) | 174.77 | 13.42 |
 | **Total** | **662.06** | **50.89** |
 
-Benchmark data retain their respective licenses. The repository's [Apache 2.0
-license](../LICENSE) applies to XEG code.
+## Sources and licensing status
+
+Yi-Hua Chung received this collection directly from the E-Syn authors. The
+`.rename.json` files are the versions used in XEG's recorded evaluation. The
+links below identify the originating work and public reference collections;
+they do not assert byte-for-byte identity with the author's supplied files.
+
+| Local family | Designs | Originating work | Public reference | Declared reference-repository license |
+|---|---:|---|---|---|
+| `boolE/` | 16 | [BoolE](https://arxiv.org/abs/2504.05577) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/boole) | Apache-2.0; six large cases are only in the HF collection below |
+| `diospyros/` | 13 | [Diospyros](https://doi.org/10.1145/3445814.3446707) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/diospyros) | Apache-2.0; older artifact is BSD-3-Clause |
+| `esyn/` | 14 | [E-Syn](https://doi.org/10.1145/3649329.3656246) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/esyn) | Apache-2.0 |
+| `flexc/` | 14 | [FlexC](https://arxiv.org/abs/2309.09112) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/flexc) | Apache-2.0; older artifact is BSD-3-Clause |
+| `impress/` | 3 | [IMpress](https://ieeexplore.ieee.org/document/9786123) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/impress) | Apache-2.0; older artifact is BSD-3-Clause |
+| `maxsat/` | 6 | [MaxSAT](https://doi.org/10.1145/3669940.3707262) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/maxsat) | Apache-2.0; older artifact is BSD-3-Clause |
+| `morphic/` | 7 | [E-morphic](https://arxiv.org/abs/2504.11574) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/emorphic) | Apache-2.0 |
+| `rover/` | 9 | [Rover](https://ieeexplore.ieee.org/document/10579443) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/rover) | Apache-2.0; older artifact is BSD-3-Clause |
+| `tensat/` | 5 | [Tensat](https://proceedings.mlsys.org/paper_files/paper/2021/hash/cc427d934a7f6c0663e5923f49eba531-Abstract.html) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/tensat) | Apache-2.0; older artifact is BSD-3-Clause |
+
+The current [SmoothE repository](https://github.com/cornell-zhang/SmoothE)
+publishes these benchmark families and declares
+[Apache-2.0](https://github.com/cornell-zhang/SmoothE/blob/main/LICENSE) at its root.
+Its dataset tree has no separate license file. The older
+[ASPLOS artifact](https://github.com/yaohuicai/smoothe-artifact/tree/main/dataset)
+contains an earlier subset and declares
+[BSD-3-Clause](https://github.com/yaohuicai/smoothe-artifact/blob/main/LICENSE.txt).
+These are distinct published versions, not interchangeable license statements.
+Copies of their notices are retained in [licenses/](licenses/).
+
+SmoothE states that GitHub file-size limits prevent it from including all
+BoolE inputs: it includes ten and links the six large cases to
+[SeaSkysz/eboost_dataset](https://huggingface.co/datasets/SeaSkysz/eboost_dataset/tree/main/boole).
+The [e-boost README](https://github.com/Yu-Maryland/e-boost#-benchmarks) also
+links that complete collection. At the licensing check on 2026-11-12, the HF
+collection had no LICENSE or dataset card declaring a license, and the e-boost
+repository had no root LICENSE. **The six large BoolE files are therefore not
+covered by the SmoothE repository's license merely because it links to them.**
+
+**Release status:** sources and published repository licenses are documented;
+permission to redistribute every author-supplied file, especially those six
+large BoolE files, has not been independently confirmed. Public availability
+alone is not recorded as an explicit grant. Before public release, obtain the
+applicable terms/permission from the provider or replace/omit files whose
+redistribution rights remain unresolved. XEG's [Apache-2.0 license](../LICENSE)
+applies to XEG code and does not relicense this external collection.

@@ -121,7 +121,7 @@ GpuProfile resolve_gpu_profile(const nlohmann::json& document, const std::string
       auto profile = defaults;
       apply(profile, values);
       profile.validate();
-      if (key == design) result = profile;
+      if (key == design) { result = profile; result.matched = true; }
     }
   }
   return result;
@@ -132,6 +132,11 @@ GpuProfile load_gpu_profile(const std::string& path, const std::string& design) 
   if (!input) throw std::runtime_error("Cannot open GPU configuration: " + path);
   nlohmann::json document;
   input >> document;
+  require(document.contains("defaults") && document["defaults"].is_object(),
+          "Custom GPU configuration requires defaults with kernel, dag_threads, and bitmap_bits");
+  for (const char* key : {"kernel", "dag_threads", "bitmap_bits"})
+    require(document["defaults"].contains(key),
+            "Custom GPU defaults must explicitly specify kernel, dag_threads, and bitmap_bits");
   return resolve_gpu_profile(document, design);
 }
 

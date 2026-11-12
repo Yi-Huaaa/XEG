@@ -114,7 +114,7 @@ __global__ void _gpu_dag_process_queue_slice_kl(
 // The kernel exits in one of three ways:
 //
 //   Completed:
-//     No next frontier remains. max_level is final.
+//     No next frontier remains. current_level is final.
 //
 //   FrontierTooWide:
 //     The next frontier has not been processed. The host may
@@ -136,7 +136,6 @@ __global__ void _gpu_dag_process_persistent_tail_kl(
   const uint32_t* traversal_adj_ptr,
   uint32_t* degree,
   int* level,
-  int* max_level,
   xeg_detail::GpuDagPersistentState* persistent_state)
 {
   __shared__ uint32_t frontier_begin;
@@ -170,7 +169,6 @@ __global__ void _gpu_dag_process_persistent_tail_kl(
         persistent_state->exit_reason =
           xeg_detail::GpuDagPersistentExitReason::Completed;
 
-        *max_level = current_level;
       }
 
       return;
@@ -735,7 +733,6 @@ void XEG::_gpu_dag_levelize_hybrid(
           traversal_adj_ptr,
           degree,
           _dvc_level,
-          _dvc_max_level,
           _dvc_dag_persistent_state);
 
       cudaCheckErrors(
@@ -1175,7 +1172,6 @@ void XEG::_gpu_allocate_dag_buffers()
       _dvc_indegree == nullptr ||
       _dvc_inv_indegree == nullptr ||
       _dvc_level == nullptr ||
-      _dvc_max_level == nullptr ||
       _dvc_in_subgraph == nullptr ||
       _dvc_from_roots == nullptr ||
       _dvc_from_leaves == nullptr) {
@@ -1232,8 +1228,6 @@ void XEG::_gpu_initialize_dag_buffers()
   CUDA_CHECK(cudaMemset(_dvc_inv_indegree, 0,
     static_cast<size_t>(_num_ende) * sizeof(uint32_t)));
 
-  CUDA_CHECK(cudaMemset(_dvc_max_level, 0,
-    sizeof(int)));
 
   // Initialize DAG-only insertion state.
   CUDA_CHECK(cudaMemset(_dvc_dag_new_inserted, 0,
@@ -1288,6 +1282,12 @@ void XEG::_gpu_DAG_construction(
   cudaEvent_t start_gpu = nullptr;
   cudaEvent_t stop_gpu = nullptr;
 
+  cudaEvent_t after_core_gpu = nullptr;
+  auto release_events = gpu_scope_exit([&] {
+    if (after_core_gpu) cudaEventDestroy(after_core_gpu);
+    if (stop_gpu) cudaEventDestroy(stop_gpu);
+    if (start_gpu) cudaEventDestroy(start_gpu);
+  });
   CUDA_CHECK(cudaEventCreate(&start_gpu));
   CUDA_CHECK(cudaEventCreate(&stop_gpu));
 
@@ -1301,7 +1301,6 @@ void XEG::_gpu_DAG_construction(
   [[maybe_unused]] float gpu_dag_core_time_ms = 0.0f;
   [[maybe_unused]] float gpu_filter_time_ms = 0.0f;
 
-  [[maybe_unused]] cudaEvent_t after_core_gpu = nullptr;
 
   if constexpr (kEnableGpuDagIterationLog) {
     CUDA_CHECK(cudaEventCreate(&after_core_gpu));
@@ -1711,14 +1710,5 @@ void XEG::_gpu_DAG_construction(
     "GPU DAG total runtime: %.2f (ms)\n",
     gpu_dag_total_time_ms);
 
-  // ============================================================
-  // Destroy timing events
-  // ============================================================
-  if constexpr (kEnableGpuDagIterationLog) {
-    CUDA_CHECK(cudaEventDestroy(after_core_gpu));
-  }
-
-  CUDA_CHECK(cudaEventDestroy(start_gpu));
-  CUDA_CHECK(cudaEventDestroy(stop_gpu));
+  // Events are released on normal return and on exceptions.
 }
-

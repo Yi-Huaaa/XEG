@@ -310,7 +310,6 @@ void XEG::_gpu_free_buffers() noexcept {
   cuda_free_and_null(_dvc_indegree);
   cuda_free_and_null(_dvc_inv_indegree);
   cuda_free_and_null(_dvc_level);
-  cuda_free_and_null(_dvc_max_level);
   cuda_free_and_null(_dvc_in_subgraph);
   cuda_free_and_null(_dvc_roots);
   cuda_free_and_null(_dvc_leaves);
@@ -340,7 +339,6 @@ void XEG::_gpu_allocate_graph_buffers() {
   CUDA_CHECK(cudaMalloc(&_dvc_global_inv_adj_1D, _global_inv_adj_1D.size()*sizeof(uint32_t)));
   CUDA_CHECK(cudaMalloc(&_dvc_global_inv_adj_1D_ptr, _global_inv_adj_1D_ptr.size()*sizeof(uint32_t)));
   CUDA_CHECK(cudaMalloc(&_dvc_level, _num_ende*sizeof(int)));
-  CUDA_CHECK(cudaMalloc(&_dvc_max_level, 1*sizeof(int)));
   CUDA_CHECK(cudaMalloc(&_dvc_in_subgraph, _num_ende*sizeof(uint32_t)));
   CUDA_CHECK(cudaMalloc(&_dvc_roots, _roots.size()*sizeof(uint32_t)));
   CUDA_CHECK(cudaMalloc(&_dvc_leaves, _leaves.size()*sizeof(uint32_t)));
@@ -359,7 +357,6 @@ void XEG::_gpu_allocate_graph_buffers() {
   CUDA_CHECK(cudaMemcpy(_dvc_global_adj_1D_ptr, _global_adj_1D_ptr.data(), _global_adj_1D_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(_dvc_global_inv_adj_1D, _global_inv_adj_1D.data(), _global_inv_adj_1D.size()*sizeof(uint32_t), cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(_dvc_global_inv_adj_1D_ptr, _global_inv_adj_1D_ptr.data(), _global_inv_adj_1D_ptr.size()*sizeof(uint32_t), cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemset(_dvc_max_level, 0, 1*sizeof(int)));
   CUDA_CHECK(cudaMemset(_dvc_in_subgraph, 0, _num_ende*sizeof(uint32_t)));
   CUDA_CHECK(cudaMemcpy(_dvc_roots, _roots.data(), _roots.size()*sizeof(uint32_t), cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(_dvc_leaves, _leaves.data(), _leaves.size()*sizeof(uint32_t), cudaMemcpyHostToDevice));

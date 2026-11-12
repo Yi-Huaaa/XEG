@@ -23,8 +23,11 @@ pathlib.Path('report.json').write_text(json.dumps(sys.argv[1:]))
             (root / 'custom.json').write_text('{"schema_version": 1}')
             for wrapper in ['run_gpu.sh', 'run.sh']:
                 for mode, args in [('default', []), ('geometry', ['2', '128', '1024']),
-                                   ('custom', ['--config', 'custom.json'])]:
+                                   ('custom', ['--config', 'custom.json']),
+                                   ('budget', ['--solver-seconds', '0', '--workers', '1'])]:
                     with self.subTest(wrapper=wrapper, mode=mode):
+                        if wrapper == 'run.sh' and mode == 'budget':
+                            continue
                         output = root / f'{wrapper}-{mode}'
                         env = dict(os.environ, XEG_BUILD_DIR=str(root / 'build'), XEG_RUN_DIR=str(output))
                         result = subprocess.run([str(repo / 'scripts' / wrapper), 'input.json', *args],
@@ -35,8 +38,8 @@ pathlib.Path('report.json').write_text(json.dumps(sys.argv[1:]))
                         self.assertEqual(actual.count('--config'), 1)
                         expected = root / 'custom.json' if mode == 'custom' else repo / 'configs/gpu/87-designs.json'
                         self.assertEqual(actual[actual.index('--config') + 1], str(expected))
-                        if mode == 'geometry':
-                            self.assertEqual(actual[1:4], args)
+                        if mode in ['geometry', 'budget']:
+                            self.assertEqual(actual[1:1+len(args)], args)
 
     def test_wrapper_disables_inherited_binding_with_and_without_solver(self):
         wrapper = Path(__file__).resolve().parents[1] / 'scripts/run_gpu.sh'

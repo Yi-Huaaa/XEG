@@ -71,3 +71,7 @@ ctest --test-dir build-cuopt --output-on-failure
 The current CP-SAT validation report does not establish cuOpt correctness or
 performance for a different installed cuOpt version. See the
 [program reference](../main/README.md) and [results index](../results/README.md).
+
+The shared CPU/GPU final-solution checker, cheaper-seed fallback, and exported
+`solution` report apply to CP-SAT. cuOpt currently bypasses that checked result
+path and has not been validated by the GPU experiments published here.
