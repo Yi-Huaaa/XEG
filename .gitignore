@@ -21,3 +21,6 @@ dataset/boolE/mul80_map.rename.json
 dataset/boolE/mul96_map.rename.json
 dataset/boolE/mul112_map.rename.json
 dataset/boolE/mul128_map.rename.json
+
+# Python bytecode created by the scripts and tests
+__pycache__/
