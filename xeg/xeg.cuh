@@ -522,6 +522,9 @@ public:
 private:
   void _gpu_free_buffers() noexcept;
   void _gpu_allocate_graph_buffers();
+  cudaError_t _gpu_copy_control(void* destination, const void* source, size_t bytes);
+  void* _gpu_control = nullptr;
+  int _gpu_num_levels = 0;
   nlohmann::json _run_gpu_pipeline(
     double time_limit, DagKernel dag_kernel, uint32_t num_thread_dag_constrution,
     uint32_t dag_bitmap_bits, CpsatInitialSolutionMode initial_solution_mode,

@@ -1,4 +1,5 @@
 #include "gpu_common.cuh"
+#include <cstring>
 
 // =========================== GPU functions =========================== //
 
@@ -177,7 +178,7 @@ std::pair<double, double> XEG::_gpu_tree_construction()
       _num_ende, dvc_ende_cost, dvc_ende_class, dvc_ende_child, dvc_ende_child_ptr,
       _dvc_update, dvc_cost_of_ecls, _dvc_best_ende_of_ecls, _dvc_tree_locks);
     cudaCheckErrors("_gpu_tree_construction_kernel failed");
-    CUDA_CHECK(cudaMemcpy(&h_update, _dvc_update, sizeof(h_update), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(_gpu_copy_control(&h_update, _dvc_update, sizeof(h_update)));
   }
 
   // Get the best tree cost on GPU
@@ -185,7 +186,7 @@ std::pair<double, double> XEG::_gpu_tree_construction()
 
   // Get best tree cost
   double tree_ret = 0.0;
-  cudaMemcpy(&tree_ret, dvc_tree_ret, 1*sizeof(double), cudaMemcpyDeviceToHost);
+  _gpu_copy_control(&tree_ret, dvc_tree_ret, 1*sizeof(double));
 
   if (!std::isfinite(tree_ret))
     throw std::runtime_error("GPU tree has no finite witness for every root");
@@ -201,7 +202,7 @@ std::pair<double, double> XEG::_gpu_tree_construction()
   double dag_ret = 0.0;
 
   uint32_t q_sz = 0;
-  cudaMemcpy(&q_sz, _dvc_q_sz, 1*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+  _gpu_copy_control(&q_sz, _dvc_q_sz, 1*sizeof(uint32_t));
   uint32_t q_sp = 0;
   uint32_t num = q_sz - q_sp;
 
@@ -219,11 +220,11 @@ std::pair<double, double> XEG::_gpu_tree_construction()
       _dvc_picked_endes,
       dvc_dag_ret);
     cudaCheckErrors("_get_dag_cost failed");
-    cudaMemcpy(&q_sz, _dvc_q_sz, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    _gpu_copy_control(&q_sz, _dvc_q_sz, sizeof(uint32_t));
     q_sp += num;
     num = q_sz - q_sp;
   }
-  cudaMemcpy(&dag_ret, dvc_dag_ret, sizeof(double), cudaMemcpyDeviceToHost);
+  _gpu_copy_control(&dag_ret, dvc_dag_ret, sizeof(double));
   cudaCheckErrors("DAG cost memcpy failed");
 
   cudaEventRecord(stopGPU);
@@ -294,6 +295,7 @@ void XEG::_copy_best_ende_of_ecls_back(
 XEG::~XEG() { _gpu_free_buffers(); }
 
 void XEG::_gpu_free_buffers() noexcept {
+  if (_gpu_control) { cudaFreeHost(_gpu_control); _gpu_control = nullptr; }
   cuda_free_and_null(_dvc_best_ende_of_ecls);
   cuda_free_and_null(_dvc_update);
   cuda_free_and_null(_dvc_tree_locks);
@@ -323,6 +325,7 @@ void XEG::_gpu_free_buffers() noexcept {
 
 void XEG::_gpu_allocate_graph_buffers() {
   _gpu_free_buffers();
+  CUDA_CHECK(cudaMallocHost(&_gpu_control, 32));
   CUDA_CHECK(cudaMalloc(&_dvc_best_ende_of_ecls, _num_ecls*sizeof(uint32_t)));
   CUDA_CHECK(cudaMalloc(&_dvc_update, 1*sizeof(uint32_t)));
   CUDA_CHECK(cudaMalloc(&_dvc_tree_locks, _num_ecls*sizeof(uint32_t)));
@@ -362,4 +365,14 @@ void XEG::_gpu_allocate_graph_buffers() {
   CUDA_CHECK(cudaMemcpy(_dvc_leaves, _leaves.data(), _leaves.size()*sizeof(uint32_t), cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemset(_dvc_from_roots, 0, _num_ende*sizeof(uint32_t)));
   CUDA_CHECK(cudaMemset(_dvc_from_leaves, 0, _num_ende*sizeof(uint32_t)));
+}
+
+// Queue sizes, progress flags, and the persistent-state snapshot are small,
+// synchronous control messages. Reuse registered host storage instead of
+// staging a pageable stack destination at each traversal frontier.
+cudaError_t XEG::_gpu_copy_control(void* destination, const void* source, size_t bytes) {
+  if (!_gpu_control || bytes > 32) throw std::logic_error("Invalid GPU control copy");
+  CUDA_CHECK(cudaMemcpy(_gpu_control, source, bytes, cudaMemcpyDeviceToHost));
+  std::memcpy(destination, _gpu_control, bytes);
+  return cudaSuccess;
 }

@@ -711,11 +711,7 @@ XEG::unittest_gpu_levelize_and_finalize(
         sizeof(int),
       cudaMemcpyDeviceToHost));
 
-    CUDA_CHECK(cudaMemcpy(
-      &result.num_levels,
-      _dvc_max_level,
-      sizeof(int),
-      cudaMemcpyDeviceToHost));
+    result.num_levels = _gpu_num_levels;
 
     CUDA_CHECK(cudaMemcpy(
       &result.u0,
@@ -834,11 +830,7 @@ XEG::unittest_gpu_construct_dag(
         sizeof(uint32_t),
       cudaMemcpyDeviceToHost));
 
-    CUDA_CHECK(cudaMemcpy(
-      &result.num_levels,
-      _dvc_max_level,
-      sizeof(int),
-      cudaMemcpyDeviceToHost));
+    result.num_levels = _gpu_num_levels;
 
     CUDA_CHECK(cudaMemcpy(
       &result.final_u0,
@@ -956,11 +948,7 @@ XEG::unittest_gpu_construct_dag_from_tree_with_policy(
         sizeof(uint32_t),
       cudaMemcpyDeviceToHost));
 
-    CUDA_CHECK(cudaMemcpy(
-      &result.num_levels,
-      _dvc_max_level,
-      sizeof(int),
-      cudaMemcpyDeviceToHost));
+    result.num_levels = _gpu_num_levels;
 
     CUDA_CHECK(cudaMemcpy(
       &result.final_u0,
@@ -1243,11 +1231,7 @@ XEG::_unittest_gpu_levelize_impl(
         sizeof(int),
       cudaMemcpyDeviceToHost));
 
-    CUDA_CHECK(cudaMemcpy(
-      &result.num_levels,
-      _dvc_max_level,
-      sizeof(int),
-      cudaMemcpyDeviceToHost));
+    result.num_levels = _gpu_num_levels;
 
     // ----------------------------------------------------------
     // Detect whether the persistent kernel was actually used.

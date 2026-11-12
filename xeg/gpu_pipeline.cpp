@@ -88,10 +88,12 @@ nlohmann::json XEG::_run_gpu_pipeline(
   const auto costs = _gpu_tree_construction();
   const auto tree_end = Clock::now();
   std::vector<uint32_t> best;
-  std::vector<bool> picked;
   _copy_best_ende_of_ecls_back(best);
-  _copy_pickedende_back(picked);
-  const std::vector<uint8_t> seed(picked.begin(), picked.end());
+  std::vector<uint32_t> raw(_num_ende);
+  CUDA_CHECK(cudaMemcpy(raw.data(), _dvc_picked_endes,
+                        raw.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost));
+  std::vector<uint8_t> seed(raw.size());
+  for (size_t u = 0; u < raw.size(); ++u) seed[u] = raw[u] != 0;
   const double seed_cost = xeg::validate_cpu_solution(graph, seed);
   if (std::abs(seed_cost-costs.second) > 1e-6 * std::max(1.0, seed_cost))
     throw std::runtime_error("GPU tree DAG cost does not match its selected nodes");
@@ -102,7 +104,6 @@ nlohmann::json XEG::_run_gpu_pipeline(
   const auto dag_start = Clock::now();
   _gpu_DAG_construction(GpuDagInsertionPolicy::BatchThenDirect);
   const auto dag_end = Clock::now();
-  std::vector<uint32_t> raw(_num_ende);
   CUDA_CHECK(cudaMemcpy(raw.data(), _dvc_in_subgraph,
                         raw.size()*sizeof(uint32_t), cudaMemcpyDeviceToHost));
   _gpu_free_dag_buffers();
@@ -135,6 +136,7 @@ nlohmann::json XEG::_run_gpu_pipeline(
   if (time_limit > 0) {
     // XEG-T keeps its randomized hint experiment; the legal seed is retained
     // separately for final fallback, independent of which hints are supplied.
+    const std::vector<bool> picked(seed.begin(), seed.end());
     auto hint_best = best;
     auto hint_selected = picked;
     if (initial_solution_mode == CpsatInitialSolutionMode::Random || ilp_backend == IlpBackend::CuOpt) {

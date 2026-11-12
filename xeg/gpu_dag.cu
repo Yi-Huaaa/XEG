@@ -551,11 +551,7 @@ void XEG::_gpu_dag_levelize_host_driven(
 
   uint32_t queue_size = 0u;
 
-  CUDA_CHECK(cudaMemcpy(
-    &queue_size,
-    _dvc_q_sz,
-    sizeof(uint32_t),
-    cudaMemcpyDeviceToHost));
+  CUDA_CHECK(_gpu_copy_control(&queue_size, _dvc_q_sz, sizeof(uint32_t)));
 
   uint32_t queue_begin = 0u;
   uint32_t queue_count = queue_size;
@@ -583,11 +579,7 @@ void XEG::_gpu_dag_levelize_host_driven(
 
     uint32_t new_queue_size = 0u;
 
-    CUDA_CHECK(cudaMemcpy(
-      &new_queue_size,
-      _dvc_q_sz,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
+    CUDA_CHECK(_gpu_copy_control(&new_queue_size, _dvc_q_sz, sizeof(uint32_t)));
 
     if (new_queue_size > _num_ende) {
       throw std::logic_error(
@@ -600,11 +592,7 @@ void XEG::_gpu_dag_levelize_host_driven(
     ++current_level;
   }
 
-  CUDA_CHECK(cudaMemcpy(
-    _dvc_max_level,
-    &current_level,
-    sizeof(int),
-    cudaMemcpyHostToDevice));
+  _gpu_num_levels = current_level;
 
   if (!is_top_down && current_level > 0) {
     _gpu_dag_reverse_level_kl
@@ -690,11 +678,7 @@ void XEG::_gpu_dag_levelize_hybrid(
 
   uint32_t initial_queue_size = 0u;
 
-  CUDA_CHECK(cudaMemcpy(
-    &initial_queue_size,
-    _dvc_q_sz,
-    sizeof(uint32_t),
-    cudaMemcpyDeviceToHost));
+  CUDA_CHECK(_gpu_copy_control(&initial_queue_size, _dvc_q_sz, sizeof(uint32_t)));
 
   if (initial_queue_size > _num_ende) {
     throw std::logic_error(
@@ -712,7 +696,6 @@ void XEG::_gpu_dag_levelize_hybrid(
   // The persistent kernel writes _dvc_max_level only when it
   // completes all remaining frontiers. If the host finishes the
   // traversal, the host writes _dvc_max_level as before.
-  bool device_max_level_is_final = false;
 
   while (queue_count > 0u) {
     if (queue_count <=
@@ -765,11 +748,7 @@ void XEG::_gpu_dag_levelize_hybrid(
       xeg_detail::GpuDagPersistentState
         host_state{};
 
-      CUDA_CHECK(cudaMemcpy(
-        &host_state,
-        _dvc_dag_persistent_state,
-        sizeof(host_state),
-        cudaMemcpyDeviceToHost));
+      CUDA_CHECK(_gpu_copy_control(&host_state, _dvc_dag_persistent_state, sizeof(host_state)));
 
       if (host_state.current_level < 0) {
         throw std::logic_error(
@@ -812,7 +791,6 @@ void XEG::_gpu_dag_levelize_hybrid(
             "returned a non-empty frontier");
         }
 
-        device_max_level_is_final = true;
 
         if constexpr (kEnableGpuDagIterationLog) {
           printf(
@@ -885,11 +863,7 @@ void XEG::_gpu_dag_levelize_hybrid(
 
     uint32_t new_queue_size = 0u;
 
-    CUDA_CHECK(cudaMemcpy(
-      &new_queue_size,
-      _dvc_q_sz,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
+    CUDA_CHECK(_gpu_copy_control(&new_queue_size, _dvc_q_sz, sizeof(uint32_t)));
 
     const uint32_t processed_queue_end =
       queue_begin + queue_count;
@@ -919,13 +893,7 @@ void XEG::_gpu_dag_levelize_hybrid(
   //
   // When the persistent kernel completed the traversal, it
   // already wrote the final value and this copy is skipped.
-  if (!device_max_level_is_final) {
-    CUDA_CHECK(cudaMemcpy(
-      _dvc_max_level,
-      &current_level,
-      sizeof(int),
-      cudaMemcpyHostToDevice));
-  }
+  _gpu_num_levels = current_level;
 
   // Bottom-up reverse remains the existing multi-block kernel.
   if (!is_top_down && current_level > 0) {
@@ -1038,11 +1006,7 @@ void XEG::_gpu_mark_reachable(
 
   uint32_t queue_size = 0u;
 
-  CUDA_CHECK(cudaMemcpy(
-    &queue_size,
-    _dvc_q_sz,
-    sizeof(uint32_t),
-    cudaMemcpyDeviceToHost));
+  CUDA_CHECK(_gpu_copy_control(&queue_size, _dvc_q_sz, sizeof(uint32_t)));
 
   if (queue_size > _num_ende) {
     throw std::logic_error(
@@ -1077,11 +1041,7 @@ void XEG::_gpu_mark_reachable(
 
     uint32_t new_queue_size = 0u;
 
-    CUDA_CHECK(cudaMemcpy(
-      &new_queue_size,
-      _dvc_q_sz,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
+    CUDA_CHECK(_gpu_copy_control(&new_queue_size, _dvc_q_sz, sizeof(uint32_t)));
 
     if (new_queue_size < queue_size) {
       throw std::logic_error(
@@ -1468,11 +1428,7 @@ void XEG::_gpu_DAG_construction(
     [[maybe_unused]] uint32_t bottom_up_proposed = 0u;
 
     if constexpr (kEnableGpuDagIterationLog) {
-      CUDA_CHECK(cudaMemcpy(
-        &bottom_up_proposed,
-        _dvc_dag_u0,
-        sizeof(uint32_t),
-        cudaMemcpyDeviceToHost));
+      CUDA_CHECK(_gpu_copy_control(&bottom_up_proposed, _dvc_dag_u0, sizeof(uint32_t)));
     }
 
     _gpu_dag_levelize(false);
@@ -1482,11 +1438,7 @@ void XEG::_gpu_DAG_construction(
     [[maybe_unused]] uint32_t bottom_up_survived = 0u;
 
     if constexpr (kEnableGpuDagIterationLog) {
-      CUDA_CHECK(cudaMemcpy(
-        &bottom_up_survived,
-        _dvc_dag_u0,
-        sizeof(uint32_t),
-        cudaMemcpyDeviceToHost));
+      CUDA_CHECK(_gpu_copy_control(&bottom_up_survived, _dvc_dag_u0, sizeof(uint32_t)));
     }
 
     // ==========================================================
@@ -1500,11 +1452,7 @@ void XEG::_gpu_DAG_construction(
     [[maybe_unused]] uint32_t after_top_down_insert = 0u;
 
     if constexpr (kEnableGpuDagIterationLog) {
-      CUDA_CHECK(cudaMemcpy(
-        &after_top_down_insert,
-        _dvc_dag_u0,
-        sizeof(uint32_t),
-        cudaMemcpyDeviceToHost));
+      CUDA_CHECK(_gpu_copy_control(&after_top_down_insert, _dvc_dag_u0, sizeof(uint32_t)));
     }
 
     _gpu_dag_levelize(true);
@@ -1518,11 +1466,7 @@ void XEG::_gpu_DAG_construction(
     // ==========================================================
     uint32_t after_both_phases = 0u;
 
-    CUDA_CHECK(cudaMemcpy(
-      &after_both_phases,
-      _dvc_dag_u0,
-      sizeof(uint32_t),
-      cudaMemcpyDeviceToHost));
+    CUDA_CHECK(_gpu_copy_control(&after_both_phases, _dvc_dag_u0, sizeof(uint32_t)));
 
     host_u0 = after_both_phases;
     ++outer_iteration;

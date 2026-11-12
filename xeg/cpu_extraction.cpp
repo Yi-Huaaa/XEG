@@ -411,21 +411,19 @@ bool validate_cpu_candidates(const CpuGraph& g, const std::vector<uint8_t>& cand
   if (candidates.size() != g.cost.size()) throw std::invalid_argument("Candidate mask size mismatch");
   std::vector<uint32_t> choices(g.members.size(), 0);
   for (uint32_t u = 0; u < candidates.size(); ++u) if (candidates[u]) ++choices[g.node_class[u]];
+  std::vector<uint32_t> degree(g.members.size(), 0), queue;
   for (uint32_t c : g.roots)
     if (!choices[c]) throw std::runtime_error("Candidate graph has no root choice");
   for (uint32_t u = 0; u < candidates.size(); ++u) if (candidates[u])
     for (uint32_t k = g.child_ptr[u]; k < g.child_ptr[u + 1]; ++k) {
       if (!choices[g.children[k]]) throw std::runtime_error("Candidate has an unavailable child class");
       if (g.children[k] == g.node_class[u]) throw std::runtime_error("Candidate depends on its own class");
+      ++degree[g.children[k]];
     }
   // Every candidate points to every available choice of each child class.
   // After excluding self-class dependencies, a class cycle exists iff the
   // expanded candidate-node graph has a cycle. Traverse compact child refs
   // instead of scanning the much larger expanded CSR twice.
-  std::vector<uint32_t> degree(g.members.size(), 0), queue;
-  for (uint32_t u = 0; u < candidates.size(); ++u) if (candidates[u])
-    for (uint32_t k = g.child_ptr[u]; k < g.child_ptr[u + 1]; ++k)
-      ++degree[g.children[k]];
   size_t active = 0;
   for (uint32_t c = 0; c < choices.size(); ++c) if (choices[c]) {
     ++active;
