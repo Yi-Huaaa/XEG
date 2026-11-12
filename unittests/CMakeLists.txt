@@ -1,13 +1,15 @@
 # File location: gpu_extraction/unittests
 enable_testing()
 
-include(${g_ext_3RD_PARTY_DIR}/doctest/doctest.cmake)
+include(${xeg_3RD_PARTY_DIR}/doctest/doctest.cmake)
 # string(FIND '${CMAKE_CXX_FLAGS}' "-fsanitize" sanitize)
 
 find_package(Threads REQUIRED)
 
-list(APPEND g_ext_UNITTESTS
+list(APPEND xeg_UNITTESTS
   test_basics
+  test_cpu_extraction
+  test_cpu_solver
   test_ilp_backend
   test_xeg_milp_model
   test_csr_invariants
@@ -23,8 +25,8 @@ list(APPEND g_ext_UNITTESTS
   test_gpu_levelization
 )
 
-# Add unittests for g_ext
-foreach(unittest IN LISTS g_ext_UNITTESTS)
+# Add unittests for xeg
+foreach(unittest IN LISTS xeg_UNITTESTS)
   set(
     CMAKE_RUNTIME_OUTPUT_DIRECTORY
     ${CMAKE_BINARY_DIR}/unittests
@@ -38,7 +40,7 @@ foreach(unittest IN LISTS g_ext_UNITTESTS)
   target_compile_definitions(
     ${unittest}
     PRIVATE
-      G_EXT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+      XEG_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
   )
 
   # Set compiler flags for the "unittests" target
@@ -51,14 +53,14 @@ foreach(unittest IN LISTS g_ext_UNITTESTS)
 
   target_link_libraries(${unittest}
     PRIVATE Threads::Threads
-    PUBLIC g_ext
+    PUBLIC xeg
   )
 
   target_include_directories(${unittest}
     PRIVATE
-    ${g_ext_3RD_PARTY_DIR}/doctest
+    ${xeg_3RD_PARTY_DIR}/doctest
     PUBLIC
-    ${g_ext_3RD_PARTY_DIR}/taskflow
+    ${xeg_3RD_PARTY_DIR}/taskflow
     ${PROJECT_SOURCE_DIR}
   )
 
@@ -67,7 +69,7 @@ endforeach()
 
 # Add the test to CTest
 # Add the unit tests to the test target
-foreach(unittest IN LISTS g_ext_UNITTESTS)
+foreach(unittest IN LISTS xeg_UNITTESTS)
   add_test(NAME ${unittest} COMMAND ${unittest})
 endforeach()
 
@@ -76,7 +78,7 @@ endforeach()
 # Standalone fixed-mask comparison test for GPU DAG levelization
 #
 # This test has its own main() and directly compares the host-driven and
-# hybrid implementations. It is intentionally kept outside g_ext_UNITTESTS
+# hybrid implementations. It is intentionally kept outside xeg_UNITTESTS
 # because that list assumes .cpp doctest executables.
 # -----------------------------------------------------------------------------
 
@@ -93,7 +95,7 @@ add_executable(
 # Keep the executable beside the existing unit-test executables.
 #
 # Explicitly retain separable CUDA compilation because this executable
-# links against the CUDA g_ext library.
+# links against the CUDA xeg library.
 set_target_properties(
   ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
   PROPERTIES
@@ -108,12 +110,12 @@ target_link_libraries(
   ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
   PRIVATE
     Threads::Threads
-    g_ext
+    xeg
 )
 
 # Required for:
 #
-#   #include <g_ext/G_EXT.hpp>
+#   #include <xeg/XEG.hpp>
 target_include_directories(
   ${GPU_DAG_HYBRID_FIXED_MASK_TEST}
   PRIVATE
@@ -157,7 +159,7 @@ if(XEG_ENABLE_CUOPT)
   target_include_directories(
     test_cuopt_link
     PRIVATE
-      ${g_ext_3RD_PARTY_DIR}/doctest
+      ${xeg_3RD_PARTY_DIR}/doctest
   )
 
   target_link_libraries(

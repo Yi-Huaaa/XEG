@@ -2,7 +2,7 @@
 
 #include <doctest.h>
 
-#include <g_ext/g_ext.cuh>
+#include <xeg/xeg.cuh>
 
 #include <algorithm>
 #include <atomic>
@@ -479,7 +479,7 @@ public:
     path_ =
       std::filesystem::temp_directory_path() /
       (
-        "g_ext_warp_bitmap_a1_" +
+        "xeg_warp_bitmap_a1_" +
         std::to_string(timestamp) +
         "_" +
         std::to_string(file_id) +
@@ -497,7 +497,7 @@ public:
 
       for (const uint32_t child :
            children_by_parent[node]) {
-        // g_ext.cu interprets string children as child e-node
+        // xeg.cu interprets string children as child e-node
         // names and then resolves their eclasses.
         children.push_back(
           node_name(child));
@@ -743,8 +743,8 @@ CandidateState make_candidate_state(
 
 
 void check_result_equal(
-  const G_EXT::GpuInsertionResult& lhs,
-  const G_EXT::GpuInsertionResult& rhs)
+  const XEG::GpuInsertionResult& lhs,
+  const XEG::GpuInsertionResult& rhs)
 {
   DOCTEST_CHECK(
     lhs.selected_state ==
@@ -761,7 +761,7 @@ void check_result_equal(
 
 
 void check_candidate_accepted(
-  const G_EXT::GpuInsertionResult& result,
+  const XEG::GpuInsertionResult& result,
   const uint32_t candidate)
 {
   DOCTEST_REQUIRE(
@@ -787,7 +787,7 @@ void check_candidate_accepted(
 
 
 void check_candidate_rejected(
-  const G_EXT::GpuInsertionResult& result,
+  const XEG::GpuInsertionResult& result,
   const uint32_t candidate)
 {
   DOCTEST_REQUIRE(
@@ -824,7 +824,7 @@ DOCTEST_TEST_CASE(
     node_count,
     {});
 
-  G_EXT extension;
+  XEG extension;
 
   extension.read(
     graph.path());
@@ -905,7 +905,7 @@ DOCTEST_TEST_CASE(
       test_case.node_count,
       test_case.edges);
 
-    G_EXT extension;
+    XEG extension;
 
     extension.read(
       graph.path());
@@ -1198,7 +1198,7 @@ DOCTEST_TEST_CASE(
       node_count,
       edges);
 
-    G_EXT extension;
+    XEG extension;
 
     extension.read(
       graph.path());
@@ -1346,7 +1346,7 @@ DOCTEST_TEST_CASE(
       test_case.node_count,
       test_case.edges);
 
-    G_EXT extension;
+    XEG extension;
 
     extension.read(
       graph.path());
@@ -1500,7 +1500,7 @@ DOCTEST_TEST_CASE(
       node_count,
       edges);
 
-    G_EXT extension;
+    XEG extension;
 
     extension.read(
       graph.path());
@@ -1597,7 +1597,7 @@ DOCTEST_TEST_CASE(
     test_case.node_count,
     test_case.edges);
 
-  G_EXT extension;
+  XEG extension;
 
   extension.read(
     graph.path());

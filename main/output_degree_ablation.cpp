@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
@@ -323,12 +323,12 @@ int main(
       std::cout
         << "-------------------------------------\n";
 
-      G_EXT g_ext;
+      XEG xeg;
 
       const auto read_start =
         std::chrono::steady_clock::now();
 
-      g_ext.read_output_degree_exp(
+      xeg.read_output_degree_exp(
         input_path,
         output_degree_multiplier,
         random_seed,
@@ -344,12 +344,12 @@ int main(
 
       std::cout
         << "Ablation Build and Dump Time: "
-        << g_ext.round_to(
+        << xeg.round_to(
              read_duration.count() * 1000.0,
              0.001)
         << " (ms)\n";
 
-      // Intentionally do not call g_ext.run().
+      // Intentionally do not call xeg.run().
       return 0;
     }
 
@@ -478,7 +478,7 @@ int main(
     std::cout
       << "-------------------------------------\n";
 
-    G_EXT g_ext;
+    XEG xeg;
 
     // ==========================================================
     // Ablation-specific read and graph augmentation
@@ -486,10 +486,10 @@ int main(
     // This is the only semantic difference from simple:
     //
     //   simple:
-    //     g_ext.read(input_path)
+    //     xeg.read(input_path)
     //
     //   output-degree ablation:
-    //     g_ext.read_output_degree_exp(...)
+    //     xeg.read_output_degree_exp(...)
     //
     // read_output_degree_exp() first performs the original read
     // and pruning, then augments the e-node -> leaf-e-class
@@ -499,7 +499,7 @@ int main(
     const auto read_start =
       std::chrono::steady_clock::now();
 
-    g_ext.read_output_degree_exp(
+    xeg.read_output_degree_exp(
       input_path,
       output_degree_multiplier,
       kDefaultOutputDegreeAblationRandomSeed,
@@ -515,7 +515,7 @@ int main(
 
     std::cout
       << "Ablation Read Time: "
-      << g_ext.round_to(
+      << xeg.round_to(
            read_duration.count() * 1000.0,
            0.001)
       << " (ms)\n";
@@ -526,7 +526,7 @@ int main(
     // Therefore, after preprocessing, tree construction, DAG
     // construction, filtering, and CP-SAT are exactly the same
     // implementations used by the normal simple executable.
-    g_ext.run(
+    xeg.run(
       false,
       360,
       dag_kernel,

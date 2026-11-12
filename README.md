@@ -7,8 +7,8 @@ It takes a saturated e-graph with user-defined local costs and searches for a lo
 
 The extraction flow has three main stages:
 
-1. GPU tree construction builds an initial solution.
-2. GPU DAG construction expands the search space while preserving acyclicity.
+1. CPU or GPU tree construction builds an initial solution.
+2. The corresponding DAG construction expands the search space while preserving acyclicity.
 3. An integer solver searches the constructed space for a low-cost solution.
 
 The project supports Google OR-Tools CP-SAT by default.
@@ -16,12 +16,110 @@ It also provides an optional NVIDIA cuOpt backend for users who want to try GPU 
 
 ## Features
 
+* Deterministic CPU tree and DAG construction with OpenMP
 * GPU tree construction
 * GPU DAG construction with Thread, Warp, and Block kernels
 * Exact overlap detection and optional bitmap overlap detection
 * Google OR-Tools CP-SAT backend
 * Optional NVIDIA cuOpt backend
 * CTest-based unit and integration tests
+
+## CPU extraction
+
+Build and run the CPU pipeline with:
+
+```bash
+scripts/build.sh cpu
+scripts/run_cpu.sh dataset/esyn/mul3.rename.json 8 360 8
+```
+
+The arguments after the input are construction threads, CP-SAT time limit in
+seconds, and CP-SAT workers. Their defaults are `1`, `360`, and `8`. Use a zero
+time limit to run construction and validation without solving. CPU execution
+requires no GPU; the current shared-library build still requires a CUDA toolkit.
+
+`scripts/run_cpu.sh` sets `OMP_PROC_BIND=false` and unsets `OMP_PLACES` for the
+complete pipeline, including construction-only invocations of that wrapper.
+With OpenMP binding enabled, the primary thread can be pinned before CP-SAT
+starts, causing subsequently created solver workers to inherit one CPU.
+For direct executable calls that include solving, use:
+
+```bash
+env -u OMP_PLACES OMP_PROC_BIND=false build/main/cpu INPUT.json 8 360 8 report.json
+```
+
+For construction-only measurements, binding can be set explicitly on
+`scripts/benchmark_cpu.py`; its runs disable the solver. Do not carry those
+binding settings into a combined construction/solver run.
+
+The CPU tree uses nonnegative finite local costs and recovers an acyclic optimal
+tree witness with deterministic tie-breaking. DAG insertion evaluates neighbor
+bounds in parallel and commits candidates in node order, so changing construction
+threads preserves the selected nodes and solver input. Small graphs and narrow
+levelization frontiers use serial work to avoid synchronization overhead.
+After reachability filtering, candidates with unavailable child classes are
+removed recursively. Candidates that depend on their own e-class are excluded.
+The original valid seed tree must survive this cleanup.
+The final CPU candidate graph is checked for cycles and self-dependencies before
+solving. This lets its CP-SAT model omit redundant integer level variables and
+level constraints. The general e-graph solver paths retain their level model.
+
+Each run writes `run.log`, `report.json`, and the solver's memory log under
+`build/runs/`. The report contains separate tree/DAG times, construction hashes,
+solver status, and selected e-node names for a feasible solution. Construction
+times exclude JSON parsing, validation, and solving. The final solution is checked
+for root coverage, one choice per active e-class, child closure, acyclicity, and
+agreement with the solver's integer-cost objective. If the solver times out
+without an incumbent, or its incumbent is more expensive than the valid seed,
+`solution` retains the seed tree and labels its source `tree_fallback` with a
+reason. The report preserves the original solver status and objective separately.
+Reports also include `validation_ms`, `solver_pipeline_ms` (formulation, solving,
+and solution checks), and `cpu_pipeline_ms` (the complete CPU path after parsing).
+
+To repeat construction on a parsed graph without repeated JSON loading:
+
+```bash
+build/main/cpu INPUT.json 8 0 8 report.json 3
+```
+
+Use `python3 scripts/benchmark_cpu.py INPUT.json --output build/cpu-benchmark`
+inside an allocation to compare thread counts and check construction hashes.
+
+Keep solver workers and its time limit fixed when comparing construction thread
+counts. CP-SAT's parallel search and a finite time budget can still change its
+incumbent; deterministic construction does not promise identical timed solver
+outcomes or reproduce every published cost from a single run.
+
+For a fixed, reproducible final-cost baseline, use one solver worker and an
+explicit deterministic work limit as the last argument:
+
+```bash
+build/main/cpu INPUT.json 1 360 1 baseline.json 1 10
+build/main/cpu INPUT.json 8 360 1 parallel.json 1 10
+python3 verification/verify_solution.py INPUT.json parallel.json
+```
+
+Both runs must finish before the wall-time safety cap. See
+[`verification/README.md`](verification/README.md) for the independent checker
+and interpretation of solver status and fallback solutions.
+
+### Existing entry points
+
+`xeg_d` and the CPU comparison stages inside `simple` and `xeg_t` still call the
+CPU compatibility wrappers with one construction thread. Their DAG kernel/thread
+arguments configure GPU work; they do not enable parallel CPU construction.
+Use the dedicated `cpu` executable to select CPU construction threads.
+
+The canonical acyclic witness can differ from the original serial seed when
+floating-point costs tie. In the recorded 87-design comparison, 16 seed masks
+changed on inputs with tree costs beyond the exact-integer range of double
+precision. Nine designs have slower current single-thread tree-plus-DAG
+construction than the original; the largest relative slowdown is `mul112_map`
+(1570 ms to 2830 ms, with tree construction 766 ms to 2351 ms).
+Consequently, XEG-D warm starts and CPU costs printed by the older entry points
+can differ from historical logs. These observations do not measure complete
+XEG-D or GPU-pipeline runtime. See the [results index](results/cpu/20261112/README.md)
+for the separately measured multi-threaded CPU results.
 
 ## Requirements
 
@@ -358,6 +456,18 @@ Replace `path/to/input.json` with a valid XEG input file.
 
 ## Run All Tests
 
+For CPU-only execution after building, run the CPU test executables and the
+independent Python checker tests:
+
+```bash
+for test in test_cpu_extraction test_cpu_solver test_csr_invariants test_ilp_backend test_xeg_milp_model; do
+  build/unittests/"$test" || exit 1
+done
+python3 -m unittest verification.test_verify_solution
+```
+
+The complete CTest suite below also runs GPU tests and requires a GPU.
+
 ### Standard Build
 
 ```bash
@@ -383,6 +493,9 @@ ctest \
 ```
 
 ## Benchmarks
+
+Published experiment reports, performance plots, and per-input costs are indexed
+in [results/](results/README.md).
 
 The `dataset/` directory holds the benchmark e-graphs, one subdirectory per benchmark:
 
@@ -431,3 +544,6 @@ Their detailed usage will be documented separately.
 * [NVIDIA cuOpt](https://github.com/NVIDIA/cuopt)
 * [NVIDIA cuOpt documentation](https://docs.nvidia.com/cuopt/user-guide/latest/)
 * [Extraction Gym](https://github.com/egraphs-good/extraction-gym)
+
+The public C++ class is `XEG` (`#include <xeg/XEG.hpp>`). The CMake library
+target and source directory are `xeg`; test/build options use the `XEG_` prefix.

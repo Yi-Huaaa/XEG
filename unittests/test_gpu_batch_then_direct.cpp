@@ -13,14 +13,14 @@
 
 #include <unistd.h>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
 std::string test_data_path(
   const std::string& filename)
 {
-  return std::string(G_EXT_TEST_DATA_DIR)
+  return std::string(XEG_TEST_DATA_DIR)
     + "/"
     + filename;
 }
@@ -74,7 +74,7 @@ void check_no_tentative_state(
 
 
 void check_selected_edges_respect_levels(
-  const G_EXT::CsrGraphSnapshot& csr,
+  const XEG::CsrGraphSnapshot& csr,
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& level)
 {
@@ -161,7 +161,7 @@ void check_in_subgraph_is_selected_subset(
 // GPU DAG controller.
 //
 // This helper is compiled only into this unit-test executable.
-// It does not change or instrument the g_ext library.
+// It does not change or instrument the xeg library.
 template <typename Function>
 std::string capture_stdout(
   Function function)
@@ -355,20 +355,20 @@ ControllerSummary parse_controller_summary(
 TEST_CASE(
   "GPU batch-then-direct controller does not switch after immediate convergence")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path("chain.json"));
 
-  G_EXT::GpuDagConstructionResult result;
+  XEG::GpuDagConstructionResult result;
 
   const std::string output =
     capture_stdout(
       [&]() {
         result =
-          g_ext
+          xeg
             .unittest_gpu_construct_dag_from_tree_with_policy(
-              G_EXT::GpuDagInsertionPolicy::
+              XEG::GpuDagInsertionPolicy::
                 BatchThenDirect);
       });
 
@@ -444,21 +444,21 @@ TEST_CASE(
 TEST_CASE(
   "GPU batch-then-direct controller reaches full convergence")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "batch_then_direct_switch.json"));
 
-  G_EXT::GpuDagConstructionResult result;
+  XEG::GpuDagConstructionResult result;
 
   const std::string output =
     capture_stdout(
       [&]() {
         result =
-          g_ext
+          xeg
             .unittest_gpu_construct_dag_from_tree_with_policy(
-              G_EXT::GpuDagInsertionPolicy::
+              XEG::GpuDagInsertionPolicy::
                 BatchThenDirect);
       });
 
@@ -553,7 +553,7 @@ TEST_CASE(
   // fresh object and the original host-driven levelizer.
   // This is test-only validation and does not alter the
   // production controller.
-  G_EXT final_graph_validator;
+  XEG final_graph_validator;
 
   final_graph_validator.read(
     test_data_path(
@@ -564,7 +564,7 @@ TEST_CASE(
       .unittest_gpu_levelize_with_backend(
         result.selected_state,
         true,
-        G_EXT::GpuLevelizationBackend::
+        XEG::GpuLevelizationBackend::
           HostDriven);
 
   // Levelization must not change the final selected mask.

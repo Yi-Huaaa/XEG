@@ -2,8 +2,8 @@
 
 #include <doctest.h>
 
-#include <g_ext/cuopt_solver.hpp>
-#include <g_ext/g_ext.cuh>
+#include <xeg/cuopt_solver.hpp>
+#include <xeg/xeg.cuh>
 
 #include <algorithm>
 #include <cstdint>
@@ -539,10 +539,10 @@ DOCTEST_TEST_CASE(
 #endif
 
 DOCTEST_TEST_CASE(
-  "G_EXT run accepts a trailing cuOpt mode")
+  "XEG run accepts a trailing cuOpt mode")
 {
   using RunFunction =
-    void (G_EXT::*)(
+    void (XEG::*)(
       bool,
       double,
       DagKernel,
@@ -553,7 +553,7 @@ DOCTEST_TEST_CASE(
 
   constexpr bool has_expected_signature =
     std::is_same_v<
-      decltype(&G_EXT::run),
+      decltype(&XEG::run),
       RunFunction>;
 
   DOCTEST_CHECK_EQ(
@@ -587,10 +587,10 @@ DOCTEST_TEST_CASE(
 }
 
 DOCTEST_TEST_CASE(
-  "G_EXT XEG-T experiment accepts a trailing ILP backend")
+  "XEG XEG-T experiment accepts a trailing ILP backend")
 {
   using RunXegTFunction =
-    void (G_EXT::*)(
+    void (XEG::*)(
       double,
       DagKernel,
       uint32_t,
@@ -600,7 +600,7 @@ DOCTEST_TEST_CASE(
 
   constexpr bool has_expected_signature =
     std::is_same_v<
-      decltype(&G_EXT::run_xeg_t_exp),
+      decltype(&XEG::run_xeg_t_exp),
       RunXegTFunction>;
 
   DOCTEST_CHECK_EQ(
@@ -720,17 +720,17 @@ DOCTEST_TEST_CASE(
 }
 
 DOCTEST_TEST_CASE(
-  "G_EXT dispatcher accepts a trailing cuOpt mode")
+  "XEG dispatcher accepts a trailing cuOpt mode")
 {
   using DispatcherFunction =
-    void (G_EXT::*)(
+    void (XEG::*)(
       IlpBackend,
       CuoptMode);
 
   constexpr bool has_expected_signature =
     std::is_same_v<
       decltype(
-        &G_EXT::unittest_solve_ilp_backend),
+        &XEG::unittest_solve_ilp_backend),
       DispatcherFunction>;
 
   DOCTEST_CHECK_EQ(
@@ -739,9 +739,9 @@ DOCTEST_TEST_CASE(
 }
 
 DOCTEST_TEST_CASE(
-  "G_EXT dispatcher routes cuOpt backend to cuOpt solver boundary")
+  "XEG dispatcher routes cuOpt backend to cuOpt solver boundary")
 {
-  G_EXT extension;
+  XEG extension;
 
 #ifdef XEG_ENABLE_CUOPT
   DOCTEST_CHECK_NOTHROW(

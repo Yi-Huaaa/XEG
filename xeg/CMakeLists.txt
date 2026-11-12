@@ -1,21 +1,23 @@
-# File location: gpu_extraction/g_ext
-# CMakeLists.txt in the g_ext directory
+# File location: gpu_extraction/xeg
+# CMakeLists.txt in the xeg directory
 
 enable_language(CUDA)
 
-add_library(g_ext
-  G_EXT.hpp
-  g_ext.cu
-  g_ext.cuh
+add_library(xeg
+  XEG.hpp
+  xeg.cu
+  xeg.cuh
   cuopt_solver.cpp
   cuopt_solver.hpp
   xeg_milp_model.cpp
   xeg_milp_model.hpp
+  cpu_extraction.cpp
+  cpu_extraction.hpp
 )
 
 # Sources compiled by the host C++ compiler (for example main/xeg_d.cpp and
-# the unit tests) include g_ext.cuh, which needs the CUDA headers.
-target_include_directories(g_ext
+# the unit tests) include xeg.cuh, which needs the CUDA headers.
+target_include_directories(xeg
   PUBLIC
     ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )
@@ -25,19 +27,19 @@ target_include_directories(g_ext
 # -----------------------------------------------------------------------------
 if(XEG_ENABLE_CUOPT)
   target_compile_definitions(
-    g_ext
+    xeg
     PUBLIC
       XEG_ENABLE_CUOPT=1
   )
 
   target_link_libraries(
-    g_ext
+    xeg
     PRIVATE
       cuOpt::cuOpt
   )
 
   set_target_properties(
-    g_ext
+    xeg
     PROPERTIES
       BUILD_RPATH "${CUOPT_RUNTIME_LIBRARY_DIRS}"
   )
@@ -46,26 +48,26 @@ endif()
 # -----------------------------------------------------------------------------
 # Link OpenMP for CUDA partition (needed for OpenMP support in CUDA code)
 # -----------------------------------------------------------------------------
-# target_link_libraries(g_ext PRIVATE OpenMP::OpenMP_CXX)
-target_compile_options(g_ext PRIVATE ${OpenMP_CXX_FLAGS})
+# target_link_libraries(xeg PRIVATE OpenMP::OpenMP_CXX)
+target_compile_options(xeg PRIVATE ${OpenMP_CXX_FLAGS})
 
 # -----------------------------------------------------------------------------
 # Include taskflow
 # -----------------------------------------------------------------------------
-target_include_directories(g_ext PUBLIC ${g_ext_3RD_PARTY_DIR}/taskflow)
+target_include_directories(xeg PUBLIC ${xeg_3RD_PARTY_DIR}/taskflow)
 
 # -----------------------------------------------------------------------------
 # Find the pthreads library
 # -----------------------------------------------------------------------------
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
-target_link_libraries(g_ext PRIVATE Threads::Threads)
+target_link_libraries(xeg PRIVATE Threads::Threads)
 
 # -----------------------------------------------------------------------------
 # Find the openMP library
 # -----------------------------------------------------------------------------
 find_package(OpenMP REQUIRED)
-target_link_libraries(g_ext PRIVATE OpenMP::OpenMP_CXX)
+target_link_libraries(xeg PRIVATE OpenMP::OpenMP_CXX)
 
 # -----------------------------------------------------------------------------
 # OR-Tools: 假設在 $HOME/or-tools_x86_64_Ubuntu-22.04_cpp_v9.7.2996
@@ -79,15 +81,15 @@ else()
 endif()
 set(ORTOOLS_HOME "${XEG_DEFAULT_ORTOOLS_HOME}" CACHE PATH "OR-Tools C++ install directory")
 message(STATUS "ORTOOLS_HOME: ${ORTOOLS_HOME}")
-target_include_directories(g_ext
+target_include_directories(xeg
   PUBLIC
     ${ORTOOLS_HOME}/include
 )
-target_link_directories(g_ext
+target_link_directories(xeg
   PUBLIC
     ${ORTOOLS_HOME}/lib
 )
-target_link_libraries(g_ext
+target_link_libraries(xeg
   PRIVATE
     ${ORTOOLS_HOME}/lib/libortools.so
     protobuf
@@ -95,9 +97,9 @@ target_link_libraries(g_ext
 )
 
 # -----------------------------------------------------------------------------
-# Set compiler flags for the "g_ext" library
+# Set compiler flags for the "xeg" library
 # -----------------------------------------------------------------------------
-target_compile_options(g_ext PRIVATE
+target_compile_options(xeg PRIVATE
   -Wall
   -Wextra
   -Wfatal-errors

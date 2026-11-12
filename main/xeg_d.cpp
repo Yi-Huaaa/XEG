@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 int main(
   int argc,
@@ -32,12 +32,12 @@ int main(
     << "Warm start: single-thread CPU tree construction\n"
     << "-------------------------------------\n";
 
-  G_EXT g_ext;
+  XEG xeg;
 
   const auto read_start =
     std::chrono::steady_clock::now();
 
-  g_ext.read(input_path);
+  xeg.read(input_path);
 
   const auto read_end =
     std::chrono::steady_clock::now();
@@ -48,12 +48,12 @@ int main(
 
   std::cout
     << "Read Time: "
-    << g_ext.round_to(
+    << xeg.round_to(
          read_duration.count() * 1000.0,
          0.001)
     << " (ms)\n";
 
-  g_ext.run_xeg_d();
+  xeg.run_xeg_d();
 
   return 0;
 }

@@ -1,0 +1,14 @@
+# Track review artifacts while keeping raw benchmark output local.
+*
+!*/
+!.gitignore
+!.gitattributes
+!README.md
+!REPORT.txt
+!performance.png
+!quality.csv
+!comparison.md
+!comparison.csv
+!construction.md
+!construction_summary.csv
+!paper_xeg.csv

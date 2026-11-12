@@ -9,7 +9,7 @@
 #   XEG_CUDA_ARCH   CUDA architecture, e.g. 86 or 120
 #                   (default: detected from the local GPU by CMake)
 #   ORTOOLS_HOME    OR-Tools C++ install directory
-#                   (default: see g_ext/CMakeLists.txt)
+#                   (default: see xeg/CMakeLists.txt)
 #
 # nvcc and a host C/C++ compiler supported by it must be on PATH
 # (or set CUDACXX / CC / CXX).

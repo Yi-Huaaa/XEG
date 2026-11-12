@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "a": {
+      "op": "cycle",
+      "cost": 0,
+      "eclass": "0",
+      "children": [
+        "c"
+      ]
+    },
+    "b": {
+      "op": "leaf",
+      "cost": 0,
+      "eclass": "0",
+      "children": []
+    },
+    "c": {
+      "op": "cycle",
+      "cost": 0,
+      "eclass": "1",
+      "children": [
+        "a"
+      ]
+    },
+    "d": {
+      "op": "leaf",
+      "cost": 0,
+      "eclass": "1",
+      "children": []
+    },
+    "e": {
+      "op": "leaf",
+      "cost": 2,
+      "eclass": "2",
+      "children": []
+    }
+  },
+  "root_eclasses": [
+    "0",
+    "0",
+    "1",
+    "2",
+    "2"
+  ]
+}

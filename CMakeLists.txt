@@ -1,6 +1,6 @@
 # File location: gpu_extraction/
 # -------------------------------------------------------------------
-# g_ext CMake 
+# xeg CMake
 #
 # To enable thread sanitizer: 
 # -DCMAKE_CXX_FLAGS="-fsanitize=thread -g"
@@ -42,7 +42,7 @@ endif()
 message(STATUS "CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
 
 project(
-  g_ext 
+  xeg
   VERSION 1.0 
   LANGUAGES C CXX CUDA
 )
@@ -78,21 +78,21 @@ endif()
 
 
 # build options
-option(g_ext_BUILD_TESTS "Enables builds of tests" ON)
-option(g_ext_BUILD_CUDA "Enables builds of cuda code" ON)
+option(XEG_BUILD_TESTS "Enables builds of tests" ON)
+option(XEG_BUILD_CUDA "Enables builds of cuda code" ON)
 option(XEG_ENABLE_CUOPT "Build the NVIDIA cuOpt backend" OFF)
 set(CUOPT_ROOT "" CACHE PATH "Root of the libcuopt package")
 
 # project-specific variables
-set(g_ext_CMAKE_DIR ${PROJECT_SOURCE_DIR}/cmake)
-set(g_ext_3RD_PARTY_DIR ${PROJECT_SOURCE_DIR}/3rd-party)
-set(g_ext_MAIN_DIR ${PROJECT_SOURCE_DIR}/main)
-message(STATUS "g_ext_3RD_PARTY_DIR: " ${g_ext_3RD_PARTY_DIR})
+set(xeg_CMAKE_DIR ${PROJECT_SOURCE_DIR}/cmake)
+set(xeg_3RD_PARTY_DIR ${PROJECT_SOURCE_DIR}/3rd-party)
+set(xeg_MAIN_DIR ${PROJECT_SOURCE_DIR}/main)
+message(STATUS "xeg_3RD_PARTY_DIR: " ${xeg_3RD_PARTY_DIR})
 message(STATUS "CMAKE_CUDA_COMPILER: " ${CMAKE_CUDA_COMPILER})
 message(STATUS "CMAKE_CUDA_COMPILER_ID: " ${CMAKE_CUDA_COMPILER_ID})
 message(STATUS "CMAKE_CUDA_COMPILER_VERSION: " ${CMAKE_CUDA_COMPILER_VERSION})
 message(STATUS "CMAKE_CUDA_FLAGS: " ${CMAKE_CUDA_FLAGS})
-message(STATUS "g_ext_BUILD_CUDA: " ${g_ext_BUILD_CUDA})
+message(STATUS "XEG_BUILD_CUDA: " ${XEG_BUILD_CUDA})
 message(STATUS "XEG_ENABLE_CUOPT: " ${XEG_ENABLE_CUOPT})
 
 # Turn on the verbose
@@ -113,7 +113,7 @@ if(XEG_ENABLE_CUOPT)
     cmake_policy(SET CMP0144 NEW)
   endif()
 
-  list(APPEND CMAKE_MODULE_PATH "${g_ext_CMAKE_DIR}")
+  list(APPEND CMAKE_MODULE_PATH "${xeg_CMAKE_DIR}")
   find_package(cuOpt REQUIRED)
   message(STATUS "CUOPT_INCLUDE_DIR: ${CUOPT_INCLUDE_DIR}")
   message(STATUS "CUOPT_LIBRARY: ${CUOPT_LIBRARY}")
@@ -123,7 +123,7 @@ endif()
 # start build
 # -----------------------------------------------------------------------------
 find_package(OpenMP REQUIRED)
-add_subdirectory(g_ext)
+add_subdirectory(xeg)
 add_subdirectory(main)
 add_subdirectory(unittests)
 
@@ -159,7 +159,7 @@ endif()
 # find nvcc
 # https://cliutils.gitlab.io/modern-cmake/chapters/packages/CUDA.html
 # -----------------------------------------------------------------------------
-if(g_ext_BUILD_CUDA)
+if(XEG_BUILD_CUDA)
   message(STATUS "Configuring CUDA ...")
   enable_language(CUDA)
   if(NOT CMAKE_CUDA_COMPILER)
@@ -168,12 +168,12 @@ if(g_ext_BUILD_CUDA)
   enable_language(CUDA)
   if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS "11") # need 12.2 (or higher)
     message(STATUS "CMAKE_CUDA_COMPILER_VERSION: ${CMAKE_CUDA_COMPILER_VERSION}")
-    message(FATAL_ERROR "\ng_ext requires CUDA at least v12 (Driver: version 550 or higher)")
+    message(FATAL_ERROR "\nxeg requires CUDA at least v12 (Driver: version 550 or higher)")
   endif()
 
   # configure cuBLAS
   message(STATUS "Configuring CUDA BLAS ...")
-  list(APPEND CMAKE_MODULE_PATH ${g_ext_CMAKE_DIR}/cuda_modules/)
+  list(APPEND CMAKE_MODULE_PATH ${xeg_CMAKE_DIR}/cuda_modules/)
   find_package(cuBLAS)
   message(STATUS "CUBLAS_FOUND: ${CUBLAS_FOUND}")
   message(STATUS "CUBLAS_INCLUDE_DIRS: ${CUBLAS_INCLUDE_DIRS}")
@@ -185,7 +185,7 @@ endif()
 
 
 # # Add cuBLAS library if necessary
-# if (g_ext_BUILD_CUDA)
+# if (XEG_BUILD_CUDA)
 #     target_link_libraries(${PROJECT_NAME} INTERFACE ${CUBLAS_LIBRARIES})
 #     target_include_directories(${PROJECT_NAME} INTERFACE ${CUBLAS_INCLUDE_DIRS})
 # endif()
@@ -203,18 +203,18 @@ endif()
 include_directories(${PROJECT_SOURCE_DIR})
 
 add_library(default_settings INTERFACE)
-add_library(g_ext::default_settings ALIAS default_settings)
+add_library(xeg::default_settings ALIAS default_settings)
 
 
 # -----------------------------------------------------------------------------
-# g_ext::default_setting
+# xeg::default_setting
 # -----------------------------------------------------------------------------
 
 # error setting
 add_library(error_settings INTERFACE)
 
 # cuda compiler options
-if(g_ext_BUILD_CUDA)
+if(XEG_BUILD_CUDA)
   message(STATUS "Configuring CUDA compiler options ...")
   target_compile_options(
     error_settings
@@ -222,5 +222,5 @@ if(g_ext_BUILD_CUDA)
     INTERFACE
     $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda -Xcompiler=-Wall,-Wextra,-Wfatal-errors,-Wshadow>
   )
-endif(g_ext_BUILD_CUDA)
+endif(XEG_BUILD_CUDA)
 

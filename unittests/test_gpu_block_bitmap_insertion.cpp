@@ -2,7 +2,7 @@
 
 #include <doctest.h>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 #include <array>
 #include <atomic>
@@ -314,7 +314,7 @@ public:
     std::ostringstream filename;
 
     filename
-      << "g_ext_block_bitmap_"
+      << "xeg_block_bitmap_"
       << timestamp
       << "_"
       << suffix
@@ -489,7 +489,7 @@ make_invalid_level_parent_collision_level()
 
 
 void check_candidate_accepted(
-  const G_EXT::GpuInsertionResult& result)
+  const XEG::GpuInsertionResult& result)
 {
   REQUIRE(
     result.selected_state.size() >
@@ -514,7 +514,7 @@ void check_candidate_accepted(
 
 
 void check_candidate_rejected(
-  const G_EXT::GpuInsertionResult& result)
+  const XEG::GpuInsertionResult& result)
 {
   REQUIRE(
     result.selected_state.size() >
@@ -539,7 +539,7 @@ void check_candidate_rejected(
 
 
 void run_block_batch_and_direct(
-  G_EXT& g_ext,
+  XEG& xeg,
   const std::vector<uint32_t>& selected_state,
   const std::vector<int>& level,
   const uint32_t threads_per_candidate,
@@ -553,7 +553,7 @@ void run_block_batch_and_direct(
     bitmap_bits);
 
   const auto batch_result =
-    g_ext.unittest_gpu_insert_block_batch_once(
+    xeg.unittest_gpu_insert_block_batch_once(
       selected_state,
       level,
       true,
@@ -570,7 +570,7 @@ void run_block_batch_and_direct(
   }
 
   const auto direct_result =
-    g_ext.unittest_gpu_insert_block_direct_once(
+    xeg.unittest_gpu_insert_block_direct_once(
       selected_state,
       level,
       true,
@@ -597,9 +597,9 @@ TEST_CASE(
   TemporaryJsonFile graph_file(
     make_selected_parent_collision_graph());
 
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     graph_file.path());
 
   const std::vector<uint32_t> selected_state =
@@ -642,7 +642,7 @@ TEST_CASE(
         bitmap_bits != 32u;
 
       run_block_batch_and_direct(
-        g_ext,
+        xeg,
         selected_state,
         level,
         threads_per_candidate,
@@ -659,9 +659,9 @@ TEST_CASE(
   TemporaryJsonFile graph_file(
     make_unselected_parent_collision_graph());
 
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     graph_file.path());
 
   const std::vector<uint32_t> selected_state =
@@ -702,7 +702,7 @@ TEST_CASE(
       //   1 & 31  == 1
       //   33 & 31 == 1
       run_block_batch_and_direct(
-        g_ext,
+        xeg,
         selected_state,
         level,
         threads_per_candidate,
@@ -719,9 +719,9 @@ TEST_CASE(
   TemporaryJsonFile graph_file(
     make_invalid_level_parent_collision_graph());
 
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     graph_file.path());
 
   const std::vector<uint32_t> selected_state =
@@ -752,7 +752,7 @@ TEST_CASE(
     // invalid parent ID 1 would collide with child ID 33 in a
     // 32-bit bitmap.
     run_block_batch_and_direct(
-      g_ext,
+      xeg,
       selected_state,
       level,
       threads_per_candidate,
@@ -768,9 +768,9 @@ TEST_CASE(
   TemporaryJsonFile graph_file(
     make_true_overlap_graph());
 
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     graph_file.path());
 
   const std::vector<uint32_t>
@@ -804,7 +804,7 @@ TEST_CASE(
     for (const uint32_t bitmap_bits :
          bitmap_sizes) {
       run_block_batch_and_direct(
-        g_ext,
+        xeg,
         selected_state,
         level,
         threads_per_candidate,
@@ -821,9 +821,9 @@ TEST_CASE(
   TemporaryJsonFile graph_file(
     make_selected_parent_collision_graph());
 
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     graph_file.path());
 
   const std::vector<uint32_t> selected_state =
@@ -847,7 +847,7 @@ TEST_CASE(
       bitmap_bits);
 
     CHECK_THROWS_AS(
-      g_ext.unittest_gpu_insert_block_direct_once(
+      xeg.unittest_gpu_insert_block_direct_once(
         selected_state,
         level,
         true,
@@ -856,7 +856,7 @@ TEST_CASE(
       std::invalid_argument);
 
     CHECK_THROWS_AS(
-      g_ext.unittest_gpu_insert_block_batch_once(
+      xeg.unittest_gpu_insert_block_batch_once(
         selected_state,
         level,
         true,

@@ -7,13 +7,13 @@
 #include <string>
 #include <vector>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
 std::string test_data_path(const std::string& filename)
 {
-  return std::string(G_EXT_TEST_DATA_DIR) + "/" + filename;
+  return std::string(XEG_TEST_DATA_DIR) + "/" + filename;
 }
 
 template <typename T>
@@ -54,11 +54,11 @@ TEST_CASE("GPU levelization handles a chain")
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
-    g_ext.read(test_data_path("chain.json"));
+    XEG xeg;
+    xeg.read(test_data_path("chain.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize(
+      xeg.unittest_gpu_levelize(
         selected_state,
         is_top_down);
 
@@ -91,11 +91,11 @@ TEST_CASE("GPU levelization handles a diamond")
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
-    g_ext.read(test_data_path("diamond.json"));
+    XEG xeg;
+    xeg.read(test_data_path("diamond.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize(
+      xeg.unittest_gpu_levelize(
         selected_state,
         is_top_down);
 
@@ -133,11 +133,11 @@ TEST_CASE("GPU levelization ignores unselected e-nodes")
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
-    g_ext.read(test_data_path("diamond.json"));
+    XEG xeg;
+    xeg.read(test_data_path("diamond.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize(
+      xeg.unittest_gpu_levelize(
         selected_state,
         is_top_down);
 
@@ -170,11 +170,11 @@ TEST_CASE("GPU levelization treats state 2 as selected")
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
-    g_ext.read(test_data_path("chain.json"));
+    XEG xeg;
+    xeg.read(test_data_path("chain.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize(
+      xeg.unittest_gpu_levelize(
         selected_state,
         is_top_down);
 
@@ -207,11 +207,11 @@ TEST_CASE("GPU levelization leaves cycle nodes unresolved")
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
-    g_ext.read(test_data_path("cycle.json"));
+    XEG xeg;
+    xeg.read(test_data_path("cycle.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize(
+      xeg.unittest_gpu_levelize(
         selected_state,
         is_top_down);
 
@@ -254,12 +254,12 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
-    g_ext.read(
+    XEG xeg;
+    xeg.read(
       test_data_path("asymmetric_dag.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize(
+      xeg.unittest_gpu_levelize(
         selected_state,
         is_top_down);
 
@@ -304,12 +304,12 @@ TEST_CASE(
   for (const bool is_top_down : {true, false}) {
     DOCTEST_CAPTURE(is_top_down);
 
-    G_EXT g_ext;
-    g_ext.read(
+    XEG xeg;
+    xeg.read(
       test_data_path("mixed_cycle.json"));
 
     const auto result =
-      g_ext.unittest_gpu_levelize(
+      xeg.unittest_gpu_levelize(
         selected_state,
         is_top_down);
 

@@ -15,16 +15,16 @@ set(
 # Keep this source and target unchanged.
 add_executable(
   simple
-  ${g_ext_MAIN_DIR}/simple.cu
+  ${xeg_MAIN_DIR}/simple.cu
 )
 
 # Output-degree ablation executable.
 #
 # This file contains host C++ only. CUDA kernels remain inside
-# the existing g_ext library, so this source can remain .cpp.
+# the existing xeg library, so this source can remain .cpp.
 add_executable(
   output_degree_ablation
-  ${g_ext_MAIN_DIR}/output_degree_ablation.cpp
+  ${xeg_MAIN_DIR}/output_degree_ablation.cpp
 )
 
 # Standalone XEG-D executable.
@@ -33,16 +33,21 @@ add_executable(
 # construction for the warm start, and solves with CP-SAT.
 add_executable(
   xeg_d
-  ${g_ext_MAIN_DIR}/xeg_d.cpp
+  ${xeg_MAIN_DIR}/xeg_d.cpp
 )
 
+
+add_executable(cpu ${xeg_MAIN_DIR}/cpu.cpp)
+add_executable(xeg_t ${xeg_MAIN_DIR}/xeg_t.cpp)
 
 find_package(Threads REQUIRED)
 
 
 list(
   APPEND
-  g_ext_examples
+  xeg_examples
+  cpu
+  xeg_t
   simple
   output_degree_ablation
   xeg_d
@@ -53,7 +58,7 @@ list(
 # Path and library settings
 # -----------------------------------------------------------------------------
 
-foreach(example IN LISTS g_ext_examples)
+foreach(example IN LISTS xeg_examples)
 
   target_include_directories(
     ${example}
@@ -63,17 +68,17 @@ foreach(example IN LISTS g_ext_examples)
 
   # Important:
   # Use ${example}, not the previously hard-coded "simple".
-  # Otherwise output_degree_ablation would not link against g_ext.
+  # Otherwise output_degree_ablation would not link against xeg.
   target_link_libraries(
     ${example}
     PRIVATE
-    g_ext
+    xeg
   )
 
   target_link_libraries(
     ${example}
     PRIVATE
-    g_ext
+    xeg
   )
 
 endforeach()

@@ -9,14 +9,14 @@
 #include <string>
 #include <vector>
 
-#include <g_ext/G_EXT.hpp>
+#include <xeg/XEG.hpp>
 
 namespace {
 
 std::string test_data_path(
   const std::string& filename)
 {
-  return std::string(G_EXT_TEST_DATA_DIR)
+  return std::string(XEG_TEST_DATA_DIR)
     + "/"
     + filename;
 }
@@ -79,14 +79,14 @@ void check_csr_sorted_and_unique(
 TEST_CASE(
   "Forward and inverse CSR segments are sorted and unique")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "csr_unsorted_duplicate.json"));
 
   const auto csr =
-    g_ext.unittest_get_csr_snapshot();
+    xeg.unittest_get_csr_snapshot();
 
   check_csr_sorted_and_unique(
     csr.forward_adj,
@@ -157,14 +157,14 @@ TEST_CASE(
 TEST_CASE(
   "Forward and inverse CSR describe the same edges")
 {
-  G_EXT g_ext;
+  XEG xeg;
 
-  g_ext.read(
+  xeg.read(
     test_data_path(
       "csr_unsorted_duplicate.json"));
 
   const auto csr =
-    g_ext.unittest_get_csr_snapshot();
+    xeg.unittest_get_csr_snapshot();
 
   DOCTEST_REQUIRE(
     csr.forward_ptr.size()
