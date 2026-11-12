@@ -97,4 +97,5 @@ this external collection.
 
 We sincerely thank Jiaqi Yin, first author of
 [BoolE](https://arxiv.org/abs/2504.05577), for sharing the BoolE benchmarks,
-including the six large compressed archives, and allowing us to include them.
+including the six large compressed archives.
+We are deeply grateful for this generous support.
