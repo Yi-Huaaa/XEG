@@ -53,14 +53,14 @@ matched the original JSON files byte for byte. Sizes below use MiB (1024² bytes
 
 ## Sources and licensing status
 
-Yi-Hua Chung received this collection directly from the E-Syn authors. The
+Jiaqi Yin provided the full 87-design benchmark collection to Yi-Hua Chung. The
 `.rename.json` files are the versions used in XEG's recorded evaluation. The
 links below identify the originating work and public reference collections;
-they do not assert byte-for-byte identity with the author's supplied files.
+they do not assert byte-for-byte identity with the supplied files.
 
-| Local family | Designs | Originating work | Public reference | Declared reference-repository license |
+| Local family | Designs | Originating work | Public reference | License / redistribution permission |
 |---|---:|---|---|---|
-| `boolE/` | 16 | [BoolE](https://arxiv.org/abs/2504.05577) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/boole) | Apache-2.0; six large cases are only in the HF collection below |
+| `boolE/` | 16 | [BoolE](https://arxiv.org/abs/2504.05577) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/boole) | Redistributed with permission from Jiaqi Yin, including all six large ZIP archives |
 | `diospyros/` | 13 | [Diospyros](https://doi.org/10.1145/3445814.3446707) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/diospyros) | Apache-2.0; older artifact is BSD-3-Clause |
 | `esyn/` | 14 | [E-Syn](https://doi.org/10.1145/3649329.3656246) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/esyn) | Apache-2.0 |
 | `flexc/` | 14 | [FlexC](https://arxiv.org/abs/2309.09112) | [SmoothE dataset](https://github.com/cornell-zhang/SmoothE/tree/main/dataset/flexc) | Apache-2.0; older artifact is BSD-3-Clause |
@@ -84,15 +84,18 @@ SmoothE states that GitHub file-size limits prevent it from including all
 BoolE inputs: it includes ten and links the six large cases to
 [SeaSkysz/eboost_dataset](https://huggingface.co/datasets/SeaSkysz/eboost_dataset/tree/main/boole).
 The [e-boost README](https://github.com/Yu-Maryland/e-boost#-benchmarks) also
-links that complete collection. At the licensing check on 2026-11-12, the HF
-collection had no LICENSE or dataset card declaring a license, and the e-boost
-repository had no root LICENSE. **The six large BoolE files are therefore not
-covered by the SmoothE repository's license merely because it links to them.**
+links that complete collection.
 
-**Release status:** sources and published repository licenses are documented;
-permission to redistribute every author-supplied file, especially those six
-large BoolE files, has not been independently confirmed. Public availability
-alone is not recorded as an explicit grant. Before public release, obtain the
-applicable terms/permission from the provider or replace/omit files whose
-redistribution rights remain unresolved. XEG's [Apache-2.0 license](../LICENSE)
-applies to XEG code and does not relicense this external collection.
+**Release status:** the 16 BoolE inputs, including the six large compressed
+archives, are included with Jiaqi Yin's permission. Sources and declared
+reference-repository licenses for the other eight families are listed above.
+XEG's [Apache-2.0 license](../LICENSE) applies to XEG code and does not relicense
+this external collection.
+
+## Acknowledgments
+
+The BoolE inputs in `boolE/`, including the six large compressed archives, are
+redistributed with the permission of Jiaqi Yin, first author of
+[BoolE: Exact Symbolic Reasoning via Boolean Equality Saturation](https://arxiv.org/abs/2504.05577).
+We sincerely thank Jiaqi Yin for sharing the full benchmark collection and
+allowing us to include the BoolE inputs.
