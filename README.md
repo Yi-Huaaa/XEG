@@ -1,13 +1,22 @@
 # XEG
 
-**Parallel e-graph extraction on CPU and GPU**
+**Efficient and effective e-graph extraction on CPU and GPU**
+
+[![Paper](https://img.shields.io/badge/paper-ASPLOS%202027-blue)](https://yi-huaaa.github.io/uploads/publications/2027-xeg-paper.pdf)
+[![CUDA](https://img.shields.io/badge/GPU-CUDA-76B900?logo=nvidia&logoColor=white)](#requirements)
+[![OpenMP](https://img.shields.io/badge/CPU-OpenMP-0071C5)](#cpu)
 
 XEG extracts a low-cost program from a saturated e-graph under a DAG cost model,
 where shared nodes are counted once. It constructs a seed tree, expands the
 candidate space, and uses Google OR-Tools CP-SAT to select a solution.
 
-The repository includes OpenMP CPU and CUDA GPU implementations, an independent
-solution checker, and [results across 87 designs](results/README.md).
+This repository accompanies our ASPLOS 2027 paper
+[*XEG: A GPU-parallel Algorithm for Efficient and Effective E-Graph
+Extraction*](https://yi-huaaa.github.io/uploads/publications/2027-xeg-paper.pdf).
+It includes OpenMP CPU and CUDA GPU implementations, scripts for running both,
+and an independent solution checker. The implementation and GPU profiles have
+evolved since the paper; [results/](results/README.md) distinguishes the paper's
+numbers from measurements of the current code.
 
 ## Highlights
 
@@ -19,6 +28,9 @@ solution checker, and [results across 87 designs](results/README.md).
   final-solution checks, with a valid seed fallback when needed.
 - **Independent verification.** A standalone Python checker validates selected
   nodes against the original input JSON.
+
+See the [87-design CPU/GPU comparison](results/gpu/20261112/overall_runtime.md)
+for recorded overall runtime, final cost, and cost ratios against paper XEG.
 
 ## Requirements
 
@@ -45,7 +57,8 @@ cd gpu_extractor
 scripts/build.sh cpu gpu
 ```
 
-Run the same supplied e-graph on either implementation. Execute these commands
+Extract a solution from the supplied BoolE `mul16` e-graph on either
+implementation, then check the exported solution. Execute these commands
 from the repository root; on a cluster, use an appropriate compute allocation.
 
 ### CPU
@@ -53,10 +66,10 @@ from the repository root; on a cluster, use an appropriate compute allocation.
 ```bash
 # 8 construction threads, 360-second CP-SAT limit, 8 solver workers
 XEG_RUN_DIR=build/runs/example-cpu \
-  scripts/run_cpu.sh dataset/esyn/mul3.rename.json 8 360 8
+  scripts/run_cpu.sh dataset/boolE/mul16.rename.json 8 360 8
 
 python3 verification/verify_solution.py \
-  dataset/esyn/mul3.rename.json build/runs/example-cpu/report.json
+  dataset/boolE/mul16.rename.json build/runs/example-cpu/report.json
 ```
 
 ### GPU
@@ -64,17 +77,17 @@ python3 verification/verify_solution.py \
 ```bash
 # Profiled GPU parameters, 360-second CP-SAT limit, 8 solver workers
 XEG_RUN_DIR=build/runs/example-gpu \
-  scripts/run_gpu.sh dataset/esyn/mul3.rename.json
+  scripts/run_gpu.sh dataset/boolE/mul16.rename.json
 
 python3 verification/verify_solution.py \
-  dataset/esyn/mul3.rename.json build/runs/example-gpu/report.json
+  dataset/boolE/mul16.rename.json build/runs/example-gpu/report.json
 ```
 
 Both runners save `run.log`, `report.json`, and solver memory logs. Without
 `XEG_RUN_DIR`, each run gets a timestamped directory under `build/runs/`.
-`report.json` is an array with one entry per repetition, recording final cost,
-solver status, selected e-nodes, and separate construction timings. Reusing an explicit run directory replaces its
-`run.log` and `report.json`.
+`report.json` records final cost, solver status, selected e-nodes, and separate
+construction timings. It is an array with one entry per repetition. Reusing an
+explicit run directory replaces its `run.log` and `report.json`.
 
 ## How XEG works
 
@@ -171,8 +184,15 @@ single-core affinity. For direct calls that solve, use
 
 ## Benchmarks and results
 
+The [overall comparison](results/gpu/20261112/overall_runtime.md) places
+**CPU 8 threads, Fixed GPU, and Profiled GPU** side by side for all 87 designs.
+Each quality cell shows `final cost (cost ratio, status)`: the cost ratio uses
+the paper's XEG final cost as its baseline, and lower is better. O means optimal
+within that run's candidate space, F means feasible, and T means tree fallback.
+
 | Resource | Contents |
 |---|---|
+| [Overall runtime and solution quality](results/gpu/20261112/overall_runtime.md) | CPU 8 threads / Fixed GPU / Profiled GPU, with cost ratios against paper XEG |
 | [CPU results](results/cpu/20261112/README.md) | Quality versus the paper and construction timing across thread counts |
 | [GPU results](results/gpu/20261112/README.md) | Original, Fixed, and Profiled GPU quality and construction timing |
 | [GPU profiles](configs/gpu/87-designs.json) | Common defaults and per-design overrides |
@@ -183,6 +203,9 @@ E-morphic, Rover, and Tensat. The repository includes 81 JSON inputs under
 `dataset/`; six large BoolE inputs are omitted from git: `mul112`, `mul128`,
 `mul80_map`, `mul96_map`, `mul112_map`, and `mul128_map`.
 
+Use `scripts/run_cpu.sh` and `scripts/run_gpu.sh` to run an individual design
+with the settings shown above. GPU runs use the measured design profile by
+default; append explicit geometry and `--no-profile` for the Fixed GPU settings.
 To compare CPU construction thread counts without solver time:
 
 ```bash
@@ -195,7 +218,12 @@ results were selected from parameter trials; neither those profiles nor one
 fresh run guarantee a particular published cost. Experiment budgets, timing
 boundaries, and hardware are recorded with the results.
 
-## Build options and tests
+The overall-runtime table includes construction, in-program checks, and CP-SAT,
+and excludes input parsing. Its CPU and GPU quality sweeps ran different numbers
+of designs concurrently, so those times do not establish a controlled CPU/GPU
+speedup. Use the separate construction tables for the recorded phase timings.
+
+## Build options
 
 `scripts/build.sh cpu gpu` builds both recommended drivers in `build/main/`.
 Use `scripts/build.sh cpu` or `scripts/build.sh gpu` to build one target.
@@ -209,8 +237,13 @@ With no targets, the existing build helper builds the legacy `simple` driver.
 | `XEG_RUN_DIR` | Timestamped directory under `<build>/runs` | Output directory for one scripted run |
 
 CMake also accepts `-DORTOOLS_HOME=...` and
-`-DCMAKE_CUDA_ARCHITECTURES=...`. To build and run the complete test suite on a
-GPU machine:
+`-DCMAKE_CUDA_ARCHITECTURES=...` when invoked directly. The build script's
+positional arguments are target names. For the optional NVIDIA cuOpt backend,
+see [docs/cuopt.md](docs/cuopt.md).
+
+## Tests
+
+To build and run the complete test suite on a GPU machine:
 
 ```bash
 cmake --build build -j "$(nproc)"
@@ -219,8 +252,13 @@ python3 -m unittest discover -s verification -p 'test_*.py'
 ```
 
 For CPU execution without a GPU, build and run `test_cpu_extraction` and
-`test_cpu_solver` instead of the complete CTest suite. The build still needs
-the CUDA toolkit.
+`test_cpu_solver`. The build still needs the CUDA toolkit:
+
+```bash
+scripts/build.sh test_cpu_extraction test_cpu_solver
+ctest --test-dir build -R '^test_cpu_(extraction|solver)$' --output-on-failure
+python3 -m unittest discover -s verification -p 'test_*.py'
+```
 
 ## Repository layout
 
@@ -241,3 +279,29 @@ is `xeg`. Legacy XEG-D remains single-threaded, and its canonical seeds and
 construction timings can differ from historical runs. See
 [main/README.md](main/README.md) for compatibility notes and experimental tools,
 and [docs/cuopt.md](docs/cuopt.md) for the optional cuOpt build.
+
+## Citation
+
+If you use XEG in your research, please cite our paper:
+
+```bibtex
+@inproceedings{chung2027xeg,
+  author    = {Chung, Yi-Hua and Hsiao, Hao-Hsiang and Chiu, Cheng-Hsiang and
+               Zhang, Boyang and Chang, Che and San Miguel, Joshua and
+               Huang, Tsung-Wei},
+  title     = {{XEG}: A {GPU}-parallel Algorithm for Efficient and Effective
+               E-Graph Extraction},
+  booktitle = {Proceedings of the 32nd ACM International Conference on
+               Architectural Support for Programming Languages and Operating
+               Systems, Volume 1},
+  pages     = {1069--1085},
+  year      = {2027},
+  publisher = {ACM},
+  doi       = {10.1145/3845814.3850040}
+}
+```
+
+## Contact
+
+For questions about XEG, please email Yi-Hua Chung at
+[yihua.chung@wisc.edu](mailto:yihua.chung@wisc.edu).
