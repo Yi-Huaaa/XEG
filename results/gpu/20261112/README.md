@@ -1,9 +1,16 @@
 # GPU extraction results
 
-The [fixed-configuration comparison](comparison.md) covers all 87 designs with the original Block/64/512 settings. It contains separate solution-quality, tree-runtime, and DAG-runtime tables; [comparison.csv](comparison.csv) preserves unrounded measurements.
+- [Selected design profiles: quality and separate tree/DAG tables](profiled.md)
+- [Fixed original parameters: implementation-only comparison](comparison.md)
+- [Full report and experiment limits](REPORT.txt)
+- [Per-design costs](quality.csv), [full measurements](profiles.csv), [profile settings](profiles.json)
+- [All parameter-trial summaries, including rejected settings](profile_trials.csv)
+- [Original INFEASIBLE diagnostics](infeasible_diagnostics.csv)
 
-All 87 repaired GPU solutions passed the independent verifier: 81 OPTIMAL and 6 FEASIBLE. The original GPU returned 75 valid incumbents, 8 INFEASIBLE results, and 4 UNKNOWN results. Native geometric-mean speedups are 1.143x for tree construction and 0.979x for DAG construction. This fixed-parameter result does not meet the goal of improving both phases.
+All 87 selected GPU solutions passed independent verification: 80 OPTIMAL, 7 FEASIBLE. Against the original GPU, native geometric-mean speedups are **1.145x tree** and **0.998x DAG**. 23 designs have slower tree timings and 44 have slower DAG timings; per-design results and added verification overhead are shown in the tables.
 
-Design-profile experiments are still running. Their selected results will be published separately, with the trial-selection method and fresh construction timings. The current fixed-configuration table will remain available.
+Selected quality versus the CPU reference: 17 lower, 51 equal, 19 higher; 0 without a reference answer. Profiles are chosen from measured trials and are not guaranteed optima or deterministic results. The fixed-parameter comparison remains separate to make the effect of tuning visible.
 
-Correctness and regression checks completed so far: 139 C++/CUDA tests, 15 Python tests, all 87 CPU regression comparisons, and GPU memory checking on the tree/repeated-extraction tests (zero reported errors or leaked allocations). Raw logs, source snapshots, failed attempts, and reproduction scripts remain under `build/plan/20261112_gpu_alignment/` on the experiment server.
+![GPU construction speedups](performance.png)
+
+Validation: 139 C++/CUDA tests, 15 Python tests, 87 CPU regression comparisons, and GPU memcheck on tree/repeated-extraction tests. Raw experiment/review logs remain under `build/plan/20261112_gpu_alignment/` on the experiment server.

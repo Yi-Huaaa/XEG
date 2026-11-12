@@ -6,7 +6,7 @@ Construction times are per-design medians of three separate-process runs on the 
 
 Quality uses one fixed-configuration run per design, 360 seconds and 8 CP-SAT workers. Four quality cases run concurrently; their solver wall times are not an isolated performance benchmark. GPU construction and parallel timed solving are nondeterministic. Paper costs are reference values carried over from the accepted [CPU comparison](../../cpu/20261112/comparison.md), with different tuning/repetition methodology.
 
-Four large BoolE solves (`mul80`, `mul96`, `mul112`, and `mul128`) were killed when their concurrent jobs exceeded the initial 128 GiB allocation. Only those four cases were rerun with a 256 GiB allocation, keeping the executable, inputs, parameters, 360-second limit, 8 solver workers, and four-case concurrency unchanged. The other 83 completed results were retained. Failed attempts are preserved in the local experiment records and are not counted as solver answers.
+Four large BoolE solves (`mul80`, `mul96`, `mul112`, and `mul128`) were killed when the initial job exceeded its 128 GiB allocation while running concurrent solves. Only those four cases were rerun with a 256 GiB allocation, keeping the executable, inputs, parameters, 360-second limit, 8 solver workers, and four-case concurrency unchanged. The other 83 completed results were retained. Failed attempts are preserved in the local experiment records and are not counted as solver answers.
 
 ## Solution quality
 

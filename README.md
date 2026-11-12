@@ -135,8 +135,10 @@ bitmap hash, batching, and levelization defaults are unchanged. GPU construction
 remains nondeterministic; repeated runs can produce different candidate spaces.
 
 Per-design profiles expose batch concurrency and controller parameters without
-recompiling. The supplied manifest lists all 87 benchmark inputs; empty entries
-inherit its Block/64/512 defaults. See the [profile format and parameter meanings](configs/gpu/README.md).
+recompiling. The supplied manifest includes measured overrides for 33 of the 87
+benchmark inputs; empty entries inherit its Block/64/512 defaults. See the
+[profile format and parameter meanings](configs/gpu/README.md) and
+[87-design quality and construction results](results/gpu/20261112/README.md).
 
 ```bash
 scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json --config configs/gpu/87-designs.json

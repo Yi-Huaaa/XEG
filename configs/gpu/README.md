@@ -1,6 +1,6 @@
 # GPU design profiles
 
-`87-designs.json` lists the benchmark inputs and inherits the measured Block/64/512 configuration. Empty design objects use the common defaults; they do **not** mean that an individual tuning search has established an optimum.
+`87-designs.json` contains measured profiles for the 87 benchmark inputs: 33 override the common Block/64/512 configuration, and 54 inherit its defaults. The [results and selection protocol](../../results/gpu/20261112/profiled.md) show costs, separate construction timings, and rejected trials. These are selected observations, not guaranteed optima; GPU construction and timed parallel solving remain nondeterministic. Empty design objects use the common defaults.
 
 ```bash
 scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json --config configs/gpu/87-designs.json
