@@ -97,6 +97,18 @@ TEST_CASE("shared children and repeated roots count once in extracted DAG") {
   auto t=xeg::cpu_tree(g.view(),1);
   CHECK(t.tree_cost==14);CHECK(t.dag_cost==5);compare(g);
 }
+TEST_CASE("parallel witness recovery breaks optimal zero-cost cycles") {
+  Graph g;
+  // Exceed the parallel threshold while keeping every cyclic alternative
+  // optimal; a cost-only tie break could otherwise choose a cycle.
+  for (uint32_t pair=0;pair<1100;++pair) {
+    const uint32_t c=2*pair;
+    g.add(c,0,{c+1});g.add(c,0);
+    g.add(c+1,0,{c});g.add(c+1,0);
+    g.roots.push_back(c);g.roots.push_back(c+1);
+  }
+  g.finish();compare(g);
+}
 TEST_CASE("unproductive roots and invalid costs fail explicitly") {
   Graph g;g.add(0,0,{0});g.roots={0};g.finish();
   CHECK_THROWS_AS(xeg::cpu_tree(g.view(),1),std::runtime_error);
