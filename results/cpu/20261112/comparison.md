@@ -2,6 +2,7 @@
 
 The design order, e-class/e-node counts, and **XEG (paper)** values follow Table 8 of `2027-ASPLOS-XEG.pdf` (PDF page 15). Only XEG is compared here. Runtime is in **milliseconds (ms)**; lower runtime and lower final cost are better.
 
+- [CPU status: O / F / T](#cpu-status)
 - [360-second quality run: paper XEG versus CPU 8 threads](#quality-run)
 - [All six CPU thread counts: fixed solver work](#thread-sweep)
 - [Construction-only thread scaling](construction.md)
@@ -13,7 +14,19 @@ CPU thread counts refer to **tree/DAG construction threads**, separately from CP
 
 The quality and fixed-work sweeps ran up to eight independent inputs concurrently in each allocation. These are recorded wall times, not an isolated scaling benchmark. Use the separate construction timing table for scaling. The paper reports an Intel Core i5-13500 plus RTX A4000 setup and aggregation across runs; these CPU runs used the current Slurm environment. Hardware, solver settings, and aggregation differ, so the runtime ratios are descriptive observations. Published paper numbers are used directly, without attempting to reconstruct the author's tuning or selection of runs.
 
-**O** = CP-SAT proved optimal within the constructed candidate space; **F** = feasible without proof of optimality; **T** = the validated seed tree was retained because the solver had no incumbent or a worse incumbent. All CPU solutions in these tables passed independent verification.
+## CPU status
+
+`CPU status` describes the source of the final solution and whether its optimality was proved.
+
+| Status | Final solution | Optimality guarantee |
+|---|---|---|
+| **O — Optimal** | A legal solution returned by CP-SAT. | Proven optimal within the candidate space produced by tree/DAG construction. |
+| **F — Feasible** | A legal solution returned by CP-SAT. | Optimality has not been proved. |
+| **T — Tree fallback** | The validated seed tree is retained because CP-SAT found no feasible solution or returned one with a higher cost than the seed. | Optimality has not been proved. |
+
+**O does not imply a global optimum over the original, complete e-graph.** Construction restricts the candidate space searched by CP-SAT.
+
+**All final CPU solutions in these tables, including O, F, and T, passed independent legality verification.** F and T do not indicate an illegal solution; they indicate the absence of an optimality proof, with T additionally identifying the fallback source.
 
 <a id="quality-run"></a>
 
