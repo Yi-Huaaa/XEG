@@ -216,4 +216,9 @@ void cuda_free_and_null(T*& ptr) noexcept
 
   ptr = nullptr;
 }
+template<class F> struct GpuScopeExit {
+  F release;
+  ~GpuScopeExit() { release(); }
+};
+template<class F> GpuScopeExit<F> gpu_scope_exit(F release) { return {release}; }
 } // namespace

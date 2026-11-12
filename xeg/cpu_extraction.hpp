@@ -50,7 +50,10 @@ void validate_cpu_dag(const CpuGraph& graph,
 // Removing the last available choice of a class invalidates its dependents.
 size_t prune_cpu_candidates(const CpuGraph& graph, std::vector<uint8_t>& candidates,
                             int threads);
-void validate_cpu_candidates(const CpuGraph& graph,
-                             const std::vector<uint8_t>& candidates);
+// With require_acyclic=false, validate closure and report whether class levels
+// are redundant; cyclic candidates can still use the general CP-SAT model.
+bool validate_cpu_candidates(const CpuGraph& graph,
+                             const std::vector<uint8_t>& candidates,
+                             bool require_acyclic = true);
 } // namespace xeg
 #endif

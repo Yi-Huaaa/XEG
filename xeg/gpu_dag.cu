@@ -1682,6 +1682,7 @@ void XEG::_gpu_DAG_construction(
     start_gpu,
     stop_gpu));
 
+  _gpu_dag_ms = gpu_dag_total_time_ms;
   // Detailed core/filter timing is calculated only when enabled.
   if constexpr (kEnableGpuDagIterationLog) {
     CUDA_CHECK(cudaEventElapsedTime(

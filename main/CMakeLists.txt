@@ -37,6 +37,7 @@ add_executable(
 )
 
 
+add_executable(gpu ${xeg_MAIN_DIR}/gpu.cpp)
 add_executable(cpu ${xeg_MAIN_DIR}/cpu.cpp)
 add_executable(xeg_t ${xeg_MAIN_DIR}/xeg_t.cpp)
 
@@ -46,6 +47,7 @@ find_package(Threads REQUIRED)
 list(
   APPEND
   xeg_examples
+  gpu
   cpu
   xeg_t
   simple

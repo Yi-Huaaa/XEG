@@ -105,10 +105,10 @@ and interpretation of solver status and fallback solutions.
 
 ### Existing entry points
 
-`xeg_d` and the CPU comparison stages inside `simple` and `xeg_t` still call the
-CPU compatibility wrappers with one construction thread. Their DAG kernel/thread
-arguments configure GPU work; they do not enable parallel CPU construction.
-Use the dedicated `cpu` executable to select CPU construction threads.
+`xeg_d` uses the CPU compatibility wrapper with one construction thread.
+`simple` and `xeg_t` run the checked GPU pipeline; they no longer run an unrelated
+serial CPU comparison first. Use the dedicated `cpu` executable to measure CPU
+construction and select its thread count.
 
 The canonical acyclic witness can differ from the original serial seed when
 floating-point costs tie. In the recorded 87-design comparison, 16 seed masks
@@ -116,10 +116,60 @@ changed on inputs with tree costs beyond the exact-integer range of double
 precision. Nine designs have slower current single-thread tree-plus-DAG
 construction than the original; the largest relative slowdown is `mul112_map`
 (1570 ms to 2830 ms, with tree construction 766 ms to 2351 ms).
-Consequently, XEG-D warm starts and CPU costs printed by the older entry points
-can differ from historical logs. These observations do not measure complete
+Consequently, XEG-D warm starts can differ from historical logs. These observations do not measure complete
 XEG-D or GPU-pipeline runtime. See the [results index](results/cpu/20261112/README.md)
 for the separately measured multi-threaded CPU results.
+
+## GPU extraction and verification
+
+```bash
+scripts/build.sh gpu
+scripts/run_gpu.sh dataset/esyn/mul3.rename.json 2 64 512 360 8
+python3 verification/verify_solution.py dataset/esyn/mul3.rename.json build/runs/RUN/report.json
+```
+
+Arguments after the input are kernel (`0` Thread, `1` Warp, `2` Block), DAG threads,
+bitmap bits, solver seconds, and solver workers. Defaults remain `0 1 0 360 8`;
+the example explicitly selects Block/64/512. The existing batch/direct policy,
+bitmap hash, batching, and levelization thresholds are unchanged. GPU construction
+remains nondeterministic; repeated runs can produce different candidate spaces.
+
+Tree construction still relaxes double tree costs with one GPU thread per
+e-node. A per-class gate couples each strict cost improvement to its representative.
+This avoids
+mismatched representatives and cyclic witnesses at zero-cost or rounded ties.
+Repeated roots count once in the DAG objective. Device buffers and timing events
+are released after use, including repeated extractions on one object.
+
+The GPU seed is checked before DAG expansion. After the existing root-to-leaf
+filter, impossible candidates are removed recursively, and the seed must survive.
+CPU and GPU use the same CP-SAT settings, final-solution checks, and cheaper-seed
+fallback. Class-level constraints are omitted only for a checked acyclic candidate
+space; if a GPU candidate space is cyclic, the general level model is retained.
+The optional cuOpt backend retains its existing level model and output interface.
+
+`report.json` separates native `tree_ms` and `dag_ms` CUDA-event timings from
+`seed_validation_ms`, candidate copy/pruning/validation times, and `postprocess_ms`.
+`tree_wall_ms` includes allocations and transfers; `dag_wall_ms` covers the original
+DAG controller. `gpu_pipeline_ms` includes GPU setup, checks, solving, and cleanup,
+excluding input parsing. Solver reports include `model_build_ms` and `wall_time_s`.
+Use the same workers, limits, and candidate input to isolate CP-SAT overhead:
+CPU and GPU construction can supply different models even with identical settings.
+
+The wrapper disables OpenMP binding so solver workers can use the allocation's
+CPUs. Direct runs and repeated construction use:
+
+```bash
+env -u OMP_PLACES OMP_PROC_BIND=false build/main/gpu INPUT.json 2 64 512 0 8 report.json 3
+```
+
+The final optional argument is a deterministic solver work limit, requiring one
+solver worker and a positive wall limit, as for the CPU executable. This fixes
+solver work but does not make GPU candidate construction deterministic.
+
+Implementation files separate `gpu_tree.cu`, `gpu_dag_insert.cu`, `gpu_dag.cu`,
+`gpu_pipeline.cpp`, and `cpsat_solver.cpp`. `gpu_common.cuh` holds the existing GPU
+controller constants. Tests of individual GPU stages are in `gpu_testing.cu`.
 
 ## Requirements
 

@@ -73,6 +73,7 @@ void XEG::_cpsat_solver(
   const std::vector<uint32_t>& best_ende_of_ecls,
   const std::vector<bool>& picked_endes
 ) {
+  const auto model_start = std::chrono::steady_clock::now();
 #ifdef PRINT_LOG
   printf("Inside XEG::_cpsat_solver() Time_limit = %.2lf (sec)\n", time_limit);
 
@@ -235,7 +236,7 @@ uint32_t single_choice_eclasses = 0;
 
   // General e-graphs require explicit class levels. The CPU DAG path may omit
   // them only after candidate acyclicity, self-dependencies and closure checks.
-  if (!_cpu_omit_level_constraints) {
+  if (!_solver_omit_level_constraints) {
     // Part 5.
     int num_classes = ecls_its_ende.size();
     std::unordered_map<uint32_t, IntVar, std::hash<uint32_t>> level;
@@ -415,8 +416,8 @@ uint32_t single_choice_eclasses = 0;
     parameters.set_max_time_in_seconds(time_limit);
     parameters.set_random_seed(42);
     parameters.set_randomize_search(true);
-    if (_cpu_solver_workers > 0) parameters.set_num_search_workers(_cpu_solver_workers);
-    if (_cpu_deterministic_limit > 0) parameters.set_max_deterministic_time(_cpu_deterministic_limit);
+    if (_solver_workers > 0) parameters.set_num_search_workers(_solver_workers);
+    if (_solver_deterministic_limit > 0) parameters.set_max_deterministic_time(_solver_deterministic_limit);
     // parameters.set_max_time_in_seconds(3600.0);
     // parameters.set_log_search_progress(true);  // for full log
     model.Add(NewSatParameters(parameters));
@@ -544,9 +545,10 @@ uint32_t single_choice_eclasses = 0;
       break;
   }
 
-  if (_cpu_validate_solver) {
-    _cpu_solver_result = {{"status",solver_status}, {"wall_time_s",response.wall_time()},
-      {"level_constraints",!_cpu_omit_level_constraints},
+  if (_solver_validate) {
+    _solver_result = {{"status",solver_status}, {"wall_time_s",response.wall_time()},
+      {"level_constraints",!_solver_omit_level_constraints},
+      {"model_build_ms",std::chrono::duration<double,std::milli>(start-model_start).count()},
       {"model_variables",cp_model.Proto().variables_size()},
       {"model_constraints",cp_model.Proto().constraints_size()}};
     if (response.status() == CpSolverStatus::OPTIMAL || response.status() == CpSolverStatus::FEASIBLE) {
@@ -557,12 +559,12 @@ uint32_t single_choice_eclasses = 0;
       const double objective = xeg::validate_cpu_solution(_cpu_graph(),selected,true);
       if (std::abs(objective-response.objective_value()) > 1e-6)
         throw std::runtime_error("CP-SAT objective does not match independently evaluated extraction");
-      _cpu_solver_result["objective"] = objective;
-      _cpu_solver_result["bound"] = response.best_objective_bound();
-      _cpu_solver_result["validated"] = true;
+      _solver_result["objective"] = objective;
+      _solver_result["bound"] = response.best_objective_bound();
+      _solver_result["validated"] = true;
       auto names = nlohmann::json::array();
       for (uint32_t u=0;u<_num_ende;++u) if (selected[u]) names.push_back(_ende_name[u]);
-      _cpu_solver_result["selected_enodes"] = std::move(names);
+      _solver_result["selected_enodes"] = std::move(names);
     }
   }
 
@@ -607,3 +609,68 @@ uint32_t single_choice_eclasses = 0;
 }
 
 // =========================== Print functions =========================== // 
+
+// CPU and GPU share solver settings, independent final checks, and seed fallback.
+nlohmann::json XEG::_solve_checked_candidates(
+  double time_limit, const std::vector<uint8_t>& candidates,
+  const std::vector<uint8_t>& seed, const std::vector<uint32_t>& hint_best,
+  const std::vector<bool>& hint_selected, int solver_workers,
+  double deterministic_limit, bool acyclic)
+{
+  using Clock = std::chrono::steady_clock;
+  const auto graph = _cpu_graph();
+  nlohmann::json report;
+  double seed_objective = 0;
+  for (uint32_t u = 0; u < _num_ende; ++u) {
+    const float c = _ende_cost[u];
+    if (static_cast<double>(c) > std::numeric_limits<int>::max())
+      throw std::invalid_argument("CP-SAT requires local costs within the signed int range");
+    if (seed[u]) seed_objective += static_cast<int>(c);
+  }
+  std::vector<std::vector<uint32_t>> members(_num_ecls);
+  for (uint32_t c = 0; c < _num_ecls; ++c)
+    for (uint32_t u : _ecls_its_ende[c])
+      if (candidates[u]) members[c].push_back(u);
+  _solver_workers = solver_workers;
+  _solver_deterministic_limit = deterministic_limit;
+  // The validated candidate graph is acyclic and contains no e-node that
+  // depends on its own class. A cycle among chosen classes would therefore
+  // induce a cycle among their chosen e-nodes in this graph. Level variables
+  // add no restriction here. Cyclic candidates retain their level model.
+  _solver_omit_level_constraints = acyclic;
+  _solver_validate = true;
+  _solver_result = nullptr;
+  const auto solver_start = Clock::now();
+  try {
+    _cpsat_solver(time_limit,members,_ende_child,_ende_child_ptr,
+                  _root_eclass_id,_ende_cost,hint_best,
+                  hint_selected);
+  } catch (...) {
+    _solver_validate = false; _solver_workers = 0; _solver_deterministic_limit = 0;
+    _solver_omit_level_constraints = false;
+    throw;
+  }
+  _solver_validate = false; _solver_workers = 0; _solver_deterministic_limit = 0;
+  _solver_omit_level_constraints = false;
+  report["solver_pipeline_ms"] = std::chrono::duration<double,std::milli>(Clock::now()-solver_start).count();
+  report["solver"] = _solver_result;
+  const bool has_incumbent = _solver_result.contains("objective");
+  if (has_incumbent && _solver_result["objective"].get<double>() <= seed_objective) {
+    report["solution"] = _solver_result;
+    report["solution"]["source"] = "solver";
+  } else if (has_incumbent || _solver_result["status"] == "UNKNOWN") {
+    if (_solver_result["status"] == "OPTIMAL")
+      throw std::runtime_error("CP-SAT optimum exceeds the validated feasible seed cost");
+    // A hint is not an incumbent. A short solve may find nothing, or find a
+    // solution worse than the valid tree already available to this pipeline.
+    auto names = nlohmann::json::array();
+    for (uint32_t u = 0; u < _num_ende; ++u) if (seed[u]) names.push_back(_ende_name[u]);
+    report["solution"] = {{"source","tree_fallback"}, {"status","FEASIBLE"},
+      {"reason",has_incumbent ? "better_than_solver_incumbent" : "no_solver_incumbent"},
+      {"objective",xeg::validate_cpu_solution(graph,seed,true)},
+      {"selected_enodes",std::move(names)}, {"validated",true}};
+  } else {
+    throw std::runtime_error("CP-SAT rejected a search space containing a validated feasible tree");
+  }
+  return report;
+}

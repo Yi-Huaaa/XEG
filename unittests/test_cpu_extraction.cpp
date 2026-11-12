@@ -220,3 +220,28 @@ TEST_CASE("closure excludes e-nodes that depend on their own class") {
   CHECK(candidates==std::vector<uint8_t>{0,1});
   CHECK_NOTHROW(xeg::validate_cpu_candidates(g.view(),candidates));
 }
+
+TEST_CASE("compact candidate cycle check agrees with expanded-node traversal") {
+  std::mt19937 random(101);
+  for (int trial=0; trial<100; ++trial) {
+    Graph g;
+    const uint32_t count=3+random()%20;
+    for (uint32_t c=0; c<count; ++c) {
+      g.add(c,1);
+      for (int a=0; a<3; ++a) {
+        std::vector<uint32_t> children;
+        for (uint32_t k=0,arity=random()%4; k<arity; ++k) children.push_back(random()%count);
+        g.add(c,1,children);
+      }
+    }
+    g.roots={0,count-1};g.finish();
+    std::vector<uint8_t> mask(g.cost.size());
+    for (uint32_t c=0; c<count; ++c)
+      for (uint32_t u:g.members[c]) mask[u]=g.ptr[u]==g.ptr[u+1] || (random()%2);
+    xeg::prune_cpu_candidates(g.view(),mask,1);
+    bool expanded_acyclic=true;
+    try { xeg::validate_cpu_dag(g.view(),mask); }
+    catch (const std::runtime_error&) { expanded_acyclic=false; }
+    CHECK(xeg::validate_cpu_candidates(g.view(),mask,false)==expanded_acyclic);
+  }
+}

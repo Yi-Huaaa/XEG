@@ -1,5 +1,37 @@
 #include "gpu_common.cuh"
 
+// Live optimistic insertion uses relaxed atomic observations. Levelization
+// and rollback at the kernel boundary still decide which proposals survive.
+// Loads do not need an atomic read-modify-write or an added publication fence.
+template <typename T>
+__device__ __forceinline__
+T gpu_atomic_load_relaxed(
+  T* ptr)
+{
+  cuda::atomic_ref<
+    T,
+    cuda::thread_scope_device> ref(*ptr);
+
+  return ref.load(
+    cuda::memory_order_relaxed);
+}
+
+template <typename T>
+__device__ __forceinline__
+void gpu_atomic_store_relaxed(
+  T* ptr,
+  const T value)
+{
+  cuda::atomic_ref<
+    T,
+    cuda::thread_scope_device> ref(*ptr);
+
+  ref.store(
+    value,
+    cuda::memory_order_relaxed);
+}
+
+
 // One GPU thread evaluates one e-node slot in each sequential
 // transposed batch.
 //
@@ -72,9 +104,7 @@ __global__ void _gpu_dag_insert_batch_kl(
 
       // Atomic load because selected_state is updated live by
       // other threads in this block.
-      if (atomicAdd(
-            &selected_state[u],
-            0u) != 0u) {
+      if (gpu_atomic_load_relaxed(&selected_state[u]) != 0u) {
         break;
       }
 
@@ -125,15 +155,11 @@ __global__ void _gpu_dag_insert_batch_kl(
             inverse_adj[parent_position];
 
           const uint32_t parent_state =
-            atomicAdd(
-              &selected_state[parent],
-              0u);
+            gpu_atomic_load_relaxed(&selected_state[parent]);
 
           if (parent_state != 0u) {
             const int parent_level =
-              atomicAdd(
-                &level[parent],
-                0);
+              gpu_atomic_load_relaxed(&level[parent]);
 
             if (parent_level >= 0) {
               has_selected_parent = true;
@@ -155,15 +181,11 @@ __global__ void _gpu_dag_insert_batch_kl(
             forward_adj[child_position];
 
           const uint32_t child_state =
-            atomicAdd(
-              &selected_state[child],
-              0u);
+            gpu_atomic_load_relaxed(&selected_state[child]);
 
           if (child_state != 0u) {
             const int child_level =
-              atomicAdd(
-                &level[child],
-                0);
+              gpu_atomic_load_relaxed(&level[child]);
 
             if (child_level >= 0) {
               has_selected_child = true;
@@ -185,15 +207,11 @@ __global__ void _gpu_dag_insert_batch_kl(
           inverse_adj[parent_position];
 
         const uint32_t neighbor_state =
-          atomicAdd(
-            &selected_state[neighbor],
-            0u);
+          gpu_atomic_load_relaxed(&selected_state[neighbor]);
 
         if (neighbor_state != 0u) {
           const int neighbor_level =
-            atomicAdd(
-              &level[neighbor],
-              0);
+            gpu_atomic_load_relaxed(&level[neighbor]);
 
           if (neighbor_level >= 0) {
             has_selected_parent = true;
@@ -256,7 +274,7 @@ __global__ void _gpu_dag_insert_batch_kl(
       // batch may observe state 2 before the end-of-batch
       // __syncthreads(). The level must already be visible when
       // state 2 becomes visible.
-      level[u] = proposed_level;
+      gpu_atomic_store_relaxed(&level[u], proposed_level);
 
       // __threadfence(); // Note: open this will have worse soln Q than close it. So we close it
 
@@ -373,9 +391,7 @@ __global__ void _gpu_dag_insert_direct_kl(
   }
 
   // selected_state is updated live by other GPU threads.
-  if (atomicAdd(
-        &selected_state[u],
-        0u) != 0u) {
+  if (gpu_atomic_load_relaxed(&selected_state[u]) != 0u) {
     return;
   }
 
@@ -423,15 +439,11 @@ __global__ void _gpu_dag_insert_direct_kl(
         inverse_adj[parent_position];
 
       const uint32_t parent_state =
-        atomicAdd(
-          &selected_state[parent],
-          0u);
+        gpu_atomic_load_relaxed(&selected_state[parent]);
 
       if (parent_state != 0u) {
         const int parent_level =
-          atomicAdd(
-            &level[parent],
-            0);
+          gpu_atomic_load_relaxed(&level[parent]);
 
         if (parent_level >= 0) {
           has_selected_parent = true;
@@ -453,15 +465,11 @@ __global__ void _gpu_dag_insert_direct_kl(
         forward_adj[child_position];
 
       const uint32_t child_state =
-        atomicAdd(
-          &selected_state[child],
-          0u);
+        gpu_atomic_load_relaxed(&selected_state[child]);
 
       if (child_state != 0u) {
         const int child_level =
-          atomicAdd(
-            &level[child],
-            0);
+          gpu_atomic_load_relaxed(&level[child]);
 
         if (child_level >= 0) {
           has_selected_child = true;
@@ -485,15 +493,11 @@ __global__ void _gpu_dag_insert_direct_kl(
       inverse_adj[parent_position];
 
     const uint32_t neighbor_state =
-      atomicAdd(
-        &selected_state[neighbor],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[neighbor]);
 
     if (neighbor_state != 0u) {
       const int neighbor_level =
-        atomicAdd(
-          &level[neighbor],
-          0);
+        gpu_atomic_load_relaxed(&level[neighbor]);
 
       if (neighbor_level >= 0) {
         has_selected_parent = true;
@@ -556,7 +560,7 @@ __global__ void _gpu_dag_insert_direct_kl(
   // No global synchronization or thread fence is introduced.
   // Existing levelization/finalization validates the resulting
   // tentative graph.
-  level[u] = proposed_level;
+  gpu_atomic_store_relaxed(&level[u], proposed_level);
 
   if (atomicCAS(
         &selected_state[u],
@@ -720,9 +724,7 @@ void gpu_dag_process_block_candidate(
   // other candidate blocks.
   if (lane == 0u) {
     *candidate_active =
-      atomicAdd(
-        &selected_state[u],
-        0u) == 0u
+      gpu_atomic_load_relaxed(&selected_state[u]) == 0u
         ? 1u
         : 0u;
   }
@@ -785,18 +787,14 @@ void gpu_dag_process_block_candidate(
       inverse_adj[position];
 
     const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[parent]);
 
     if (parent_state == 0u) {
       continue;
     }
 
     const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
+      gpu_atomic_load_relaxed(&level[parent]);
 
     if (parent_level < 0) {
       continue;
@@ -851,18 +849,14 @@ void gpu_dag_process_block_candidate(
       forward_adj[position];
 
     const uint32_t child_state =
-      atomicAdd(
-        &selected_state[child],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[child]);
 
     if (child_state == 0u) {
       continue;
     }
 
     const int child_level =
-      atomicAdd(
-        &level[child],
-        0);
+      gpu_atomic_load_relaxed(&level[child]);
 
     if (child_level < 0) {
       continue;
@@ -1003,8 +997,7 @@ void gpu_dag_process_block_candidate(
       //   2. publish tentative state 2
       //
       // Do not add __threadfence().
-      level[u] =
-        proposed_level;
+      gpu_atomic_store_relaxed(&level[u], proposed_level);
 
       if (atomicCAS(
             &selected_state[u],
@@ -1462,34 +1455,6 @@ bool gpu_dag_bitmap_shared_contains(
     second_hit;
 }
 
-template <typename T>
-__device__ __forceinline__
-T gpu_atomic_load_relaxed(
-  T* ptr)
-{
-  cuda::atomic_ref<
-    T,
-    cuda::thread_scope_device> ref(*ptr);
-
-  return ref.load(
-    cuda::memory_order_relaxed);
-}
-
-template <typename T>
-__device__ __forceinline__
-void gpu_atomic_store_relaxed(
-  T* ptr,
-  const T value)
-{
-  cuda::atomic_ref<
-    T,
-    cuda::thread_scope_device> ref(*ptr);
-
-  ref.store(
-    value,
-    cuda::memory_order_relaxed);
-}
-
 __device__ __forceinline__
 void gpu_dag_process_block_bitmap_candidate(
   const uint32_t u,
@@ -1528,7 +1493,7 @@ void gpu_dag_process_block_bitmap_candidate(
   // ----------------------------------------------------------
   if (lane == 0u) {
     *candidate_active =
-      selected_state[u] == 0u
+      gpu_atomic_load_relaxed(&selected_state[u]) == 0u
         ? 1u
         : 0u;
   }
@@ -1593,18 +1558,14 @@ void gpu_dag_process_block_bitmap_candidate(
       inverse_adj[position];
 
     const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[parent]);
 
     if (parent_state == 0u) {
       continue;
     }
 
     const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
+      gpu_atomic_load_relaxed(&level[parent]);
 
     if (parent_level < 0) {
       continue;
@@ -1693,14 +1654,14 @@ void gpu_dag_process_block_bitmap_candidate(
     // }
 
     const uint32_t child_state =
-      selected_state[child];
+      gpu_atomic_load_relaxed(&selected_state[child]);
 
     if (child_state == 0u) {
       continue;
     }
 
     const int child_level =
-      level[child];
+      gpu_atomic_load_relaxed(&level[child]);
 
     if (child_level < 0) {
       continue;
@@ -1829,8 +1790,7 @@ void gpu_dag_process_block_bitmap_candidate(
       // order.
       //
       // Do not add __threadfence().
-      level[u] =
-        proposed_level;
+      gpu_atomic_store_relaxed(&level[u], proposed_level);
 
       if (atomicCAS(
             &selected_state[u],
@@ -2186,9 +2146,7 @@ void gpu_dag_process_warp_candidate(
 
   if (lane == 0u) {
     candidate_active =
-      atomicAdd(
-        &selected_state[u],
-        0u) == 0u
+      gpu_atomic_load_relaxed(&selected_state[u]) == 0u
         ? 1u
         : 0u;
   }
@@ -2256,18 +2214,14 @@ void gpu_dag_process_warp_candidate(
       inverse_adj[position];
 
     const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[parent]);
 
     if (parent_state == 0u) {
       continue;
     }
 
     const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
+      gpu_atomic_load_relaxed(&level[parent]);
 
     if (parent_level < 0) {
       continue;
@@ -2314,18 +2268,14 @@ void gpu_dag_process_warp_candidate(
       forward_adj[position];
 
     const uint32_t child_state =
-      atomicAdd(
-        &selected_state[child],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[child]);
 
     if (child_state == 0u) {
       continue;
     }
 
     const int child_level =
-      atomicAdd(
-        &level[child],
-        0);
+      gpu_atomic_load_relaxed(&level[child]);
 
     if (child_level < 0) {
       continue;
@@ -2463,8 +2413,7 @@ void gpu_dag_process_warp_candidate(
       // order.
       //
       // Do not add __threadfence().
-      level[u] =
-        proposed_level;
+      gpu_atomic_store_relaxed(&level[u], proposed_level);
 
       if (atomicCAS(
             &selected_state[u],
@@ -2815,9 +2764,7 @@ void gpu_dag_process_warp_bitmap32_candidate(
 
   if (lane == 0u) {
     candidate_active =
-      atomicAdd(
-        &selected_state[u],
-        0u) == 0u
+      gpu_atomic_load_relaxed(&selected_state[u]) == 0u
         ? 1u
         : 0u;
   }
@@ -2874,18 +2821,14 @@ void gpu_dag_process_warp_bitmap32_candidate(
       inverse_adj[position];
 
     const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[parent]);
 
     if (parent_state == 0u) {
       continue;
     }
 
     const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
+      gpu_atomic_load_relaxed(&level[parent]);
 
     if (parent_level < 0) {
       continue;
@@ -2937,18 +2880,14 @@ void gpu_dag_process_warp_bitmap32_candidate(
       forward_adj[position];
 
     const uint32_t child_state =
-      atomicAdd(
-        &selected_state[child],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[child]);
 
     if (child_state == 0u) {
       continue;
     }
 
     const int child_level =
-      atomicAdd(
-        &level[child],
-        0);
+      gpu_atomic_load_relaxed(&level[child]);
 
     if (child_level < 0) {
       continue;
@@ -3084,8 +3023,7 @@ void gpu_dag_process_warp_bitmap32_candidate(
       // order.
       //
       // Do not add __threadfence().
-      level[u] =
-        proposed_level;
+      gpu_atomic_store_relaxed(&level[u], proposed_level);
 
       if (atomicCAS(
             &selected_state[u],
@@ -3130,9 +3068,7 @@ void gpu_dag_process_warp_bitmap64_candidate(
 
   if (lane == 0u) {
     candidate_active =
-      atomicAdd(
-        &selected_state[u],
-        0u) == 0u
+      gpu_atomic_load_relaxed(&selected_state[u]) == 0u
         ? 1u
         : 0u;
   }
@@ -3187,18 +3123,14 @@ void gpu_dag_process_warp_bitmap64_candidate(
       inverse_adj[position];
 
     const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[parent]);
 
     if (parent_state == 0u) {
       continue;
     }
 
     const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
+      gpu_atomic_load_relaxed(&level[parent]);
 
     if (parent_level < 0) {
       continue;
@@ -3248,18 +3180,14 @@ void gpu_dag_process_warp_bitmap64_candidate(
       forward_adj[position];
 
     const uint32_t child_state =
-      atomicAdd(
-        &selected_state[child],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[child]);
 
     if (child_state == 0u) {
       continue;
     }
 
     const int child_level =
-      atomicAdd(
-        &level[child],
-        0);
+      gpu_atomic_load_relaxed(&level[child]);
 
     if (child_level < 0) {
       continue;
@@ -3387,8 +3315,7 @@ void gpu_dag_process_warp_bitmap64_candidate(
       proposed_level >= 0;
 
     if (valid) {
-      level[u] =
-        proposed_level;
+      gpu_atomic_store_relaxed(&level[u], proposed_level);
 
       if (atomicCAS(
             &selected_state[u],
@@ -3923,9 +3850,7 @@ void gpu_dag_process_warp_bitmap_shared_candidate(
 
   if (lane == 0u) {
     candidate_active =
-      atomicAdd(
-        &selected_state[u],
-        0u) == 0u
+      gpu_atomic_load_relaxed(&selected_state[u]) == 0u
         ? 1u
         : 0u;
   }
@@ -3995,18 +3920,14 @@ void gpu_dag_process_warp_bitmap_shared_candidate(
       inverse_adj[position];
 
     const uint32_t parent_state =
-      atomicAdd(
-        &selected_state[parent],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[parent]);
 
     if (parent_state == 0u) {
       continue;
     }
 
     const int parent_level =
-      atomicAdd(
-        &level[parent],
-        0);
+      gpu_atomic_load_relaxed(&level[parent]);
 
     if (parent_level < 0) {
       continue;
@@ -4045,18 +3966,14 @@ void gpu_dag_process_warp_bitmap_shared_candidate(
       forward_adj[position];
 
     const uint32_t child_state =
-      atomicAdd(
-        &selected_state[child],
-        0u);
+      gpu_atomic_load_relaxed(&selected_state[child]);
 
     if (child_state == 0u) {
       continue;
     }
 
     const int child_level =
-      atomicAdd(
-        &level[child],
-        0);
+      gpu_atomic_load_relaxed(&level[child]);
 
     if (child_level < 0) {
       continue;
@@ -4180,8 +4097,7 @@ void gpu_dag_process_warp_bitmap_shared_candidate(
       //   2. tentative state 2
       //
       // Do not add __threadfence().
-      level[u] =
-        proposed_level;
+      gpu_atomic_store_relaxed(&level[u], proposed_level);
 
       if (atomicCAS(
             &selected_state[u],

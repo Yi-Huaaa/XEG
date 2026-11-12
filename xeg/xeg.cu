@@ -390,332 +390,12 @@ void XEG::_run_impl(
   const IlpBackend ilp_backend,
   const CuoptMode cuopt_mode)
 {
-  switch (dag_kernel) {
-    case DagKernel::Thread:
-      if (num_thread_dag_constrution != 1u) {
-        throw std::invalid_argument(
-          "Thread DAG kernel requires exactly "
-          "one thread per candidate");
-      }
-
-      if (dag_bitmap_bits != 0u) {
-        throw std::invalid_argument(
-          "Thread DAG kernel requires "
-          "BITMAP_BITS=0");
-      }
-
-      break;
-
-    case DagKernel::Warp:
-      _validate_warp_threads_per_block(
-        num_thread_dag_constrution);
-
-      _validate_warp_bitmap_bits(
-        dag_bitmap_bits);
-
-      break;
-
-    case DagKernel::Block:
-      _validate_block_threads_per_candidate(
-        num_thread_dag_constrution);
-
-      _validate_block_bitmap_bits(
-        dag_bitmap_bits);
-
-      break;
-
-    default:
-      throw std::invalid_argument(
-        "Invalid DagKernel value");
-  }
-
-  _dag_kernel =
-    dag_kernel;
-
-  _dag_threads_per_candidate =
-    num_thread_dag_constrution;
-
-  _dag_bitmap_bits =
-    dag_bitmap_bits;
-
-  _dag_bitmap_mask =
-    dag_bitmap_bits == 0u
-      ? 0u
-      : dag_bitmap_bits - 1u;
-
-  _dag_bitmap_words =
-    dag_bitmap_bits / 32u;
-
-  // CPU version
-  std::vector<double> cost_of_ecls; // Final cost of each eclass
-  std::vector<double> cost_of_ende; // Final cost of each enode
-  std::vector<uint32_t> best_ende_of_ecls; // enode idx with smallest cost in that eclass     
-  std::vector<bool> picked_endes;
-  std::chrono::duration<double> duration;
-  auto start = std::chrono::steady_clock::now(); 
-    auto [best_tree_cost_cpu, dag_cost_cpu] = _cpu_tree_construction(
-      _ende_cost, 
-      cost_of_ecls, 
-      cost_of_ende, 
-      best_ende_of_ecls, 
-      picked_endes);
-  auto end = std::chrono::steady_clock::now();
-  duration = end - start;
-  std::cout << "CPU tree construction runtime: " << 
-    round_to((duration.count()) * 1000, 0.01) << " (ms)\n";
-  printf("CPU version cost:\n\tunder tree code model = %.2lf, \
-    \n\tunder DAG cost model = %.2lf\n", 
-    best_tree_cost_cpu, dag_cost_cpu);
-
-  std::vector<bool> picked_endes_tmp = picked_endes;
-
-  start = std::chrono::steady_clock::now();
-
-  _cpu_DAG_construction(picked_endes);
-
-  end = std::chrono::steady_clock::now();
-  duration = end - start;
-
-  std::cout
-    << "CPU DAG construction runtime: "
-    << round_to(
-          duration.count() * 1000,
-          0.01)
-    << " (ms)\n";
-
-  // Debug statistics are outside the measured runtime.
-  uint32_t cpu_tree_selected = 0u;
-  uint32_t cpu_dag_selected = 0u;
-  uint32_t cpu_filtered = 0u;
-
-  for (bool selected : picked_endes_tmp) {
-    cpu_tree_selected += selected ? 1u : 0u;
-  }
-
-  for (bool selected : picked_endes) {
-    cpu_dag_selected += selected ? 1u : 0u;
-  }
-
-  for (bool selected : _in_subgraph) {
-    cpu_filtered += selected ? 1u : 0u;
-  }
-
-  printf(
-    "[CPU DAG Debug] tree=%u, expanded=%u, filtered=%u\n",
-    cpu_tree_selected,
-    cpu_dag_selected,
-    cpu_filtered);    
-
-  // if (ILP_solver) {
-  //   _cpsat_solver(
-  //     ILP_time_limit,
-  //     _ecls_its_ende_newG,
-  //     _ende_child,
-  //     _ende_child_ptr,
-  //     _root_eclass_id,
-  //     _ende_cost,
-  //     best_ende_of_ecls,
-  //     picked_endes_tmp);      
-  // }
-
-  // GPU version starts
-  auto [best_tree_cost_gpu, dag_cost_gpu] =
-    _gpu_tree_construction();
-
-  printf(
-    "GPU version cost:\n"
-    "\tunder tree cost model = %.2lf,\n"
-    "\tunder DAG cost model = %.2lf\n",
-    best_tree_cost_gpu,
-    dag_cost_gpu);
-
-  // Save the GPU tree solution before DAG construction
-  // expands _dvc_picked_endes.
-  std::vector<uint32_t> best_ende_of_ecls_gpu;
-  std::vector<bool> picked_endes_gpu;
-
-  if (ILP_solver) {
-    _copy_best_ende_of_ecls_back(
-      best_ende_of_ecls_gpu);
-
-    _copy_pickedende_back(
-      picked_endes_gpu);
-
-    uint32_t gpu_tree_selected = 0u;
-
-    for (bool selected : picked_endes_gpu) {
-      gpu_tree_selected += selected ? 1u : 0u;
-    }
-
-    printf(
-      "[GPU DAG Debug] tree=%u\n",
-      gpu_tree_selected);
-  }
-
-
-  _gpu_allocate_dag_buffers();
-  _gpu_initialize_dag_buffers();
-
-  // GPU DAG insertion policy.
-  //
-  // FullBatch:
-  //   Use batch insertion until full convergence.
-  //
-  // BatchEarlyStop:
-  //   Use batch insertion and stop when the low-activity
-  //   condition is triggered.
-  //
-  // BatchThenDirect:
-  //   Start with batch insertion, then switch permanently
-  //   to direct insertion when the low-activity condition
-  //   is triggered.
-  constexpr GpuDagInsertionPolicy
-    gpu_dag_insertion_policy =
-      GpuDagInsertionPolicy::BatchThenDirect;
-
-  // _dvc_picked_endes still contains the GPU tree produced by
-  // _gpu_tree_construction().
-  _gpu_DAG_construction(
-    gpu_dag_insertion_policy);
-
-  if (ILP_solver) {
-    // Copy the final GPU root-to-leaf filtering mask.
-    std::vector<uint32_t> in_subgraph_gpu(
-      _num_ende,
-      0u);
-
-    if (_num_ende > 0u) {
-      const cudaError_t err = cudaMemcpy(
-        in_subgraph_gpu.data(),
-        _dvc_in_subgraph,
-        static_cast<size_t>(_num_ende) *
-          sizeof(uint32_t),
-        cudaMemcpyDeviceToHost);
-
-      if (err != cudaSuccess) {
-        _gpu_free_dag_buffers();
-
-        throw std::runtime_error(
-          std::string(
-            "Failed to copy GPU in_subgraph: ") +
-          cudaGetErrorString(err));
-      }
-    }
-
-    // Copy the expanded GPU DAG selection for debugging.
-    // This happens after the GPU DAG timer has stopped.
-    std::vector<bool> gpu_dag_selected;
-    _copy_pickedende_back(
-      gpu_dag_selected);
-
-    uint32_t gpu_dag_selected_count = 0u;
-    uint32_t gpu_filtered_count = 0u;
-
-    for (bool selected : gpu_dag_selected) {
-      gpu_dag_selected_count +=
-        selected ? 1u : 0u;
-    }
-
-    for (uint32_t selected : in_subgraph_gpu) {
-      gpu_filtered_count +=
-        selected != 0u ? 1u : 0u;
-    }
-
-    printf(
-      "[GPU DAG Debug] expanded=%u, filtered=%u\n",
-      gpu_dag_selected_count,
-      gpu_filtered_count);
-
-    // Reconstruct the GPU DAG search space for ILP.
-    _ecls_its_ende_newG_GPU.assign(
-      _num_ecls,
-      std::vector<uint32_t>());
-
-    for (uint32_t ecls = 0u;
-          ecls < _num_ecls;
-          ++ecls) {
-      const auto& original_enodes =
-        _ecls_its_ende[ecls];
-
-      auto& gpu_dag_enodes =
-        _ecls_its_ende_newG_GPU[ecls];
-
-      gpu_dag_enodes.reserve(
-        original_enodes.size());
-
-      for (uint32_t ende : original_enodes) {
-        if (in_subgraph_gpu[ende] != 0u) {
-          gpu_dag_enodes.push_back(ende);
-        }
-      }
-    }
-  }
-
-
-  // Free only GPU DAG scratch memory.
-  _gpu_free_dag_buffers();
-
-  // if (ILP_solver) {
-  //   _cpsat_solver(
-  //     ILP_time_limit,
-  //     _ecls_its_ende_newG_GPU,
-  //     _ende_child,
-  //     _ende_child_ptr,
-  //     _root_eclass_id,
-  //     _ende_cost,
-  //     best_ende_of_ecls_gpu,
-  //     picked_endes_gpu);
-  // }
-  
-  if (ILP_solver) {
-    switch (initial_solution_mode) {
-      case CpsatInitialSolutionMode::GpuTree:
-        _solve_ilp(
-          ilp_backend,
-          ILP_time_limit,
-          _ecls_its_ende_newG_GPU,
-          _ende_child,
-          _ende_child_ptr,
-          _root_eclass_id,
-          _ende_cost,
-          best_ende_of_ecls_gpu,
-          picked_endes_gpu,
-          cuopt_mode);
-        break;
-
-      case CpsatInitialSolutionMode::Random: {
-        std::vector<uint32_t>
-          random_best_ende_of_ecls;
-
-        std::vector<bool>
-          random_picked_endes;
-
-        _build_random_cpsat_initial_solution(
-          random_seed,
-          picked_endes_gpu,
-          random_best_ende_of_ecls,
-          random_picked_endes);
-
-        _solve_ilp(
-          ilp_backend,
-          ILP_time_limit,
-          _ecls_its_ende_newG_GPU,
-          _ende_child,
-          _ende_child_ptr,
-          _root_eclass_id,
-          _ende_cost,
-          random_best_ende_of_ecls,
-          random_picked_endes,
-          cuopt_mode);
-        break;
-      }
-
-      default:
-        throw std::logic_error(
-          "Invalid CP-SAT initial-solution mode");
-    }
-  }
-  // // GPU version ends
+  auto report = _run_gpu_pipeline(ILP_solver ? ILP_time_limit : 0.0,
+    dag_kernel, num_thread_dag_constrution, dag_bitmap_bits,
+    initial_solution_mode, random_seed, ilp_backend, cuopt_mode, 8, 0.0);
+  for (const char* key : {"solver", "solution"})
+    if (report.contains(key)) report[key].erase("selected_enodes");
+  std::cout << "[GPU Result] " << report.dump() << '\n';
 }
 
 void XEG::_build_random_cpsat_initial_solution(
@@ -867,13 +547,44 @@ void XEG::_read_input(
 {
   std::ifstream ifs(input_path);
   if (!ifs.is_open()) {
-    std::cerr << "Error: cannot open file " 
-      << input_path << std::endl;
-    return;
+    throw std::runtime_error("Cannot open input file: " + input_path);
   }
 
   // Parse JSON
   nlohmann::json j; ifs >> j;
+
+  // A new input replaces the previous graph, including derived CSR arrays.
+  _ende_name.clear();
+  _ende_op.clear();
+  _ende_cost.clear();
+  _ende_ecls.clear();
+  _ende_child.clear();
+  _ende_child_ptr.clear();
+  _root_eclass_id.clear();
+  _ecls_its_ende.clear();
+  _ecls_its_ende_1D.clear();
+  _ecls_its_ende_1D_ptr.clear();
+  _all_root_ende_1D.clear();
+  _global_adj.clear();
+  _global_inv_adj.clear();
+  _global_adj_1D.clear();
+  _global_adj_1D_ptr.clear();
+  _global_inv_adj_1D.clear();
+  _global_inv_adj_1D_ptr.clear();
+  _picked_adj.clear();
+  _picked_inv_adj.clear();
+  _tmp_picked_adj.clear();
+  _tmp_picked_inv_adj.clear();
+  _indegree.clear();
+  _inv_indegree.clear();
+  _in_subgraph.clear();
+  _roots.clear();
+  _leaves.clear();
+  _ecls_its_ende_newG.clear();
+  _ecls_its_ende_newG_GPU.clear();
+  _new_inserted.clear();
+  _num_ende = 0; _num_ecls = 0; _max_level = -1;
+
 
   // Read in from .json
   uint32_t tmp_num_ecls; // nuber of eclasses 
@@ -2709,58 +2420,9 @@ nlohmann::json XEG::run_cpu(int threads, double time_limit, int solver_workers, 
   std::cout << "CPU tree construction runtime: " << tree_ms << " (ms)\n"
             << "CPU DAG construction runtime: " << dag_ms << " (ms)\n";
   if (time_limit > 0) {
-    double seed_objective = 0;
-    for (uint32_t u = 0; u < _num_ende; ++u) {
-      const float c = _ende_cost[u];
-      if (static_cast<double>(c) > std::numeric_limits<int>::max())
-        throw std::invalid_argument("CP-SAT requires local costs within the signed int range");
-      if (tree.selected[u]) seed_objective += static_cast<int>(c);
-    }
-    std::vector<std::vector<uint32_t>> members(_num_ecls);
-    for (uint32_t c = 0; c < _num_ecls; ++c)
-      for (uint32_t u : _ecls_its_ende[c])
-        if (dag.in_subgraph[u]) members[c].push_back(u);
-    _cpu_solver_workers = solver_workers;
-    _cpu_deterministic_limit = deterministic_limit;
-    // The validated candidate graph is acyclic and contains no e-node that
-    // depends on its own class. A cycle among chosen classes would therefore
-    // induce a cycle among their chosen e-nodes in this graph. Level variables
-    // add no restriction here. Other entry points retain their level model.
-    _cpu_omit_level_constraints = true;
-    _cpu_validate_solver = true;
-    _cpu_solver_result = nullptr;
-    const auto solver_start = Clock::now();
-    try {
-      _cpsat_solver(time_limit,members,_ende_child,_ende_child_ptr,
-                    _root_eclass_id,_ende_cost,tree.best,
-                    std::vector<bool>(tree.selected.begin(),tree.selected.end()));
-    } catch (...) {
-      _cpu_validate_solver = false; _cpu_solver_workers = 0; _cpu_deterministic_limit = 0;
-      _cpu_omit_level_constraints = false;
-      throw;
-    }
-    _cpu_validate_solver = false; _cpu_solver_workers = 0; _cpu_deterministic_limit = 0;
-    _cpu_omit_level_constraints = false;
-    report["solver_pipeline_ms"] = std::chrono::duration<double,std::milli>(Clock::now()-solver_start).count();
-    report["solver"] = _cpu_solver_result;
-    const bool has_incumbent = _cpu_solver_result.contains("objective");
-    if (has_incumbent && _cpu_solver_result["objective"].get<double>() <= seed_objective) {
-      report["solution"] = _cpu_solver_result;
-      report["solution"]["source"] = "solver";
-    } else if (has_incumbent || _cpu_solver_result["status"] == "UNKNOWN") {
-      if (_cpu_solver_result["status"] == "OPTIMAL")
-        throw std::runtime_error("CP-SAT optimum exceeds the validated feasible seed cost");
-      // A hint is not an incumbent. A short solve may find nothing, or find a
-      // solution worse than the valid tree already available to this pipeline.
-      auto names = nlohmann::json::array();
-      for (uint32_t u = 0; u < _num_ende; ++u) if (tree.selected[u]) names.push_back(_ende_name[u]);
-      report["solution"] = {{"source","tree_fallback"}, {"status","FEASIBLE"},
-        {"reason",has_incumbent ? "better_than_solver_incumbent" : "no_solver_incumbent"},
-        {"objective",xeg::validate_cpu_solution(graph,tree.selected,true)},
-        {"selected_enodes",std::move(names)}, {"validated",true}};
-    } else {
-      throw std::runtime_error("CP-SAT rejected a search space containing a validated feasible tree");
-    }
+    report.update(_solve_checked_candidates(time_limit, dag.in_subgraph, tree.selected,
+      tree.best, std::vector<bool>(tree.selected.begin(), tree.selected.end()),
+      solver_workers, deterministic_limit, true));
   }
   report["cpu_pipeline_ms"] = std::chrono::duration<double,std::milli>(Clock::now()-start).count();
   return report;

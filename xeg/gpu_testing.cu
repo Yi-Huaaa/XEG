@@ -73,7 +73,7 @@ XEG::unittest_gpu_insert_batch_once(
   // GPU tree construction currently owns allocation of
   // the shared immutable CSR and working buffers.
   if (_dvc_picked_endes == nullptr) {
-    (void)_gpu_tree_construction();
+    _gpu_allocate_graph_buffers();
   }
 
   _gpu_allocate_dag_buffers();
@@ -181,7 +181,7 @@ XEG::unittest_gpu_insert_direct_once(
   // GPU tree construction owns allocation of the shared
   // immutable CSR and working buffers.
   if (_dvc_picked_endes == nullptr) {
-    (void)_gpu_tree_construction();
+    _gpu_allocate_graph_buffers();
   }
 
   _gpu_allocate_dag_buffers();
@@ -297,7 +297,7 @@ XEG::_unittest_gpu_insert_warp_once(
     bitmap_bits);
 
   if (_dvc_picked_endes == nullptr) {
-    (void)_gpu_tree_construction();
+    _gpu_allocate_graph_buffers();
   }
 
   _gpu_allocate_dag_buffers();
@@ -475,7 +475,7 @@ XEG::_unittest_gpu_insert_block_once(
   // GPU tree construction owns the shared immutable CSR and
   // working buffers.
   if (_dvc_picked_endes == nullptr) {
-    (void)_gpu_tree_construction();
+    _gpu_allocate_graph_buffers();
   }
 
   _gpu_allocate_dag_buffers();
@@ -645,7 +645,7 @@ XEG::unittest_gpu_levelize_and_finalize(
   // GPU tree construction currently owns allocation of
   // the immutable CSR and shared working buffers.
   if (_dvc_picked_endes == nullptr) {
-    (void)_gpu_tree_construction();
+    _gpu_allocate_graph_buffers();
   }
 
   _gpu_allocate_dag_buffers();
@@ -766,7 +766,7 @@ XEG::unittest_gpu_construct_dag(
   // GPU tree construction currently owns allocation of
   // immutable CSR and shared GPU working buffers.
   if (_dvc_picked_endes == nullptr) {
-    (void)_gpu_tree_construction();
+    _gpu_allocate_graph_buffers();
   }
 
   _gpu_allocate_dag_buffers();
@@ -1011,7 +1011,7 @@ XEG::unittest_gpu_filter_root_to_leaf(
   // GPU tree construction owns the immutable CSR, roots,
   // leaves, queue, and filtering buffers.
   if (_dvc_picked_endes == nullptr) {
-    (void)_gpu_tree_construction();
+    _gpu_allocate_graph_buffers();
   }
 
   if (_num_ende > 0u) {
@@ -1139,7 +1139,7 @@ XEG::_unittest_gpu_levelize_impl(
   // XEG object. Later backend comparisons reuse the exact same
   // graph and shared buffers.
   if (_dvc_picked_endes == nullptr) {
-    (void)_gpu_tree_construction();
+    _gpu_allocate_graph_buffers();
   }
 
   _gpu_allocate_dag_buffers();
