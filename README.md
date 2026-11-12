@@ -47,8 +47,8 @@ architecture settings. NVIDIA cuOpt is an [optional backend](docs/cuopt.md).
 ## Quick start
 
 ```bash
-git clone https://github.com/Yi-Huaaa/gpu_extractor.git
-cd gpu_extractor
+git clone https://github.com/Yi-Huaaa/XEG.git
+cd XEG
 
 # If OR-Tools is installed outside the default location:
 # export ORTOOLS_HOME=/path/to/or-tools
