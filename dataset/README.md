@@ -95,8 +95,6 @@ this external collection.
 
 ## Acknowledgments
 
-The full 87-design benchmark collection, including the six large compressed
-BoolE archives, is redistributed with the permission of Jiaqi Yin, first author of
-[BoolE: Exact Symbolic Reasoning via Boolean Equality Saturation](https://arxiv.org/abs/2504.05577).
-We sincerely thank Jiaqi Yin for sharing this collection and allowing us to
-include it.
+We sincerely thank Jiaqi Yin, first author of
+[BoolE](https://arxiv.org/abs/2504.05577), for sharing the BoolE benchmarks,
+including the six large compressed archives, and allowing us to include them.
