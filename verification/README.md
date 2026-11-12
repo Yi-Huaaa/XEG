@@ -2,13 +2,15 @@
 
 ```bash
 python3 verification/verify_solution.py INPUT.json REPORT.json
-python3 -m unittest verification.test_verify_solution
+python3 -m unittest discover -s verification -p 'test_*.py'
 python3 verification/check_threads.py INPUT.json --output build/verification
 ```
 
 `check_threads.py` also accepts a dataset directory. It checks all six default
 construction thread counts with one solver worker, verifies each solution, and
-requires identical construction hashes and final costs. Run it inside a CPU
+requires identical construction hashes, final costs, solver statuses, solution
+sources, and fallback reasons. Its summary records status, source, and reason
+alongside the independently checked objective. Run it inside a CPU
 allocation for large datasets. Its timings are not a performance benchmark;
 use `scripts/benchmark_cpu.py` for construction timing.
 

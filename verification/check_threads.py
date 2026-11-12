@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check construction and final-cost equivalence across CPU thread counts."""
+"""Check construction, final cost and solution provenance across CPU thread counts."""
 import argparse
 import json
 from pathlib import Path
@@ -45,12 +45,17 @@ def main():
             row = rows[0]
             if row['solver']['wall_time_s'] >= args.wall_seconds * 0.95:
                 raise RuntimeError(f'{relative}: wall-time cap may have interrupted deterministic work')
-            signature = [row[k] for k in fields] + [verified['objective'], row['solver']['status']]
+            source = row['solution']['source']
+            reason = row['solution'].get('reason')
+            signature = [row[k] for k in fields] + [verified['objective'], row['solver']['status'],
+                                                   source, reason]
             if reference is None:
                 reference = signature
             if signature != reference:
-                raise RuntimeError(f'{relative}: construction or final cost differs at {threads} threads')
-            result = {'input': str(relative), 'threads': threads, **verified}
+                raise RuntimeError(f'{relative}: construction, final cost, solver status or '
+                                   f'solution source/reason differs at {threads} threads')
+            result = {'input': str(relative), 'threads': threads, **verified,
+                      'solver_status': row['solver']['status'], 'source': source, 'reason': reason}
             results.append(result)
             (output / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
             print(json.dumps(result), flush=True)

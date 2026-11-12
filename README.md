@@ -38,6 +38,20 @@ seconds, and CP-SAT workers. Their defaults are `1`, `360`, and `8`. Use a zero
 time limit to run construction and validation without solving. CPU execution
 requires no GPU; the current shared-library build still requires a CUDA toolkit.
 
+`scripts/run_cpu.sh` sets `OMP_PROC_BIND=false` and unsets `OMP_PLACES` for the
+complete pipeline, including construction-only invocations of that wrapper.
+With OpenMP binding enabled, the primary thread can be pinned before CP-SAT
+starts, causing subsequently created solver workers to inherit one CPU.
+For direct executable calls that include solving, use:
+
+```bash
+env -u OMP_PLACES OMP_PROC_BIND=false build/main/cpu INPUT.json 8 360 8 report.json
+```
+
+For construction-only measurements, binding can be set explicitly on
+`scripts/benchmark_cpu.py`; its runs disable the solver. Do not carry those
+binding settings into a combined construction/solver run.
+
 The CPU tree uses nonnegative finite local costs and recovers an acyclic optimal
 tree witness with deterministic tie-breaking. DAG insertion evaluates neighbor
 bounds in parallel and commits candidates in node order, so changing construction
@@ -88,6 +102,24 @@ python3 verification/verify_solution.py INPUT.json parallel.json
 Both runs must finish before the wall-time safety cap. See
 [`verification/README.md`](verification/README.md) for the independent checker
 and interpretation of solver status and fallback solutions.
+
+### Existing entry points
+
+`xeg_d` and the CPU comparison stages inside `simple` and `xeg_t` still call the
+CPU compatibility wrappers with one construction thread. Their DAG kernel/thread
+arguments configure GPU work; they do not enable parallel CPU construction.
+Use the dedicated `cpu` executable to select CPU construction threads.
+
+The canonical acyclic witness can differ from the original serial seed when
+floating-point costs tie. In the recorded 87-design comparison, 16 seed masks
+changed on inputs with tree costs beyond the exact-integer range of double
+precision. Nine designs have slower current single-thread tree-plus-DAG
+construction than the original; the largest relative slowdown is `mul112_map`
+(1570 ms to 2830 ms, with tree construction 766 ms to 2351 ms).
+Consequently, XEG-D warm starts and CPU costs printed by the older entry points
+can differ from historical logs. These observations do not measure complete
+XEG-D or GPU-pipeline runtime. See the [results index](results/cpu/20261112/README.md)
+for the separately measured multi-threaded CPU results.
 
 ## Requirements
 

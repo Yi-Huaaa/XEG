@@ -19,6 +19,11 @@ fi
 threads="${2:-1}"
 seconds="${3:-360}"
 workers="${4:-8}"
+# OpenMP binding can pin the primary thread before CP-SAT starts; its workers
+# would inherit that single-core affinity. Keep the complete pipeline unbound.
+# For bound construction-only measurements, use scripts/benchmark_cpu.py.
+export OMP_PROC_BIND=false
+unset OMP_PLACES
 name="$(basename "$input" .json)"
 run_dir="${XEG_RUN_DIR:-${build_dir}/runs/$(date +%Y%m%d_%H%M%S)_cpu_${name}_$$}"
 mkdir -p "$run_dir"

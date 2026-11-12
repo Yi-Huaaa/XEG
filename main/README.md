@@ -2,6 +2,12 @@
 
 This directory contains the GPU driver, the CPU driver, and experimental programs.
 
+The CPU compatibility stages in `simple`, `xeg_t`, and `xeg_d` use one
+construction thread. GPU thread arguments do not change that setting; use `cpu`
+for parallel CPU extraction. Canonical seed selection and single-thread timing
+can differ from historical logs; see the root README's
+[existing entry points](../README.md#existing-entry-points) notes.
+
 ## 1. `simple.cu`
 
 `simple.cu` runs the complete XEG flow on the original input e-graph.
