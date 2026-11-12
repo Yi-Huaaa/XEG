@@ -1,11 +1,14 @@
 # GPU extraction results
 
+- [CPU 8 threads / Fixed GPU / Profiled GPU: overall runtime across 87 designs](overall_runtime.md), with [matching costs, statuses, and source paths](overall_runtime.csv)
 - [Selected design profiles: quality and separate tree/DAG tables](profiled.md)
 - [Fixed original parameters: implementation-only comparison](comparison.md)
 - [Full report and experiment limits](REPORT.txt)
 - [Per-design costs](quality.csv), [full measurements](profiles.csv), [profile settings](profiles.json)
 - [All parameter-trial summaries, including rejected settings](profile_trials.csv)
 - [Original INFEASIBLE diagnostics](infeasible_diagnostics.csv)
+
+The overall-runtime table uses existing quality runs, including construction, in-program checks, and CP-SAT, but excluding JSON loading. CPU and GPU sweeps used different concurrent loads, and selected profiles reuse or select existing trials. These times are reference observations, not a controlled CPU/GPU speedup comparison; see the caveats in the table.
 
 All 87 selected GPU solutions passed independent verification: 80 OPTIMAL, 7 FEASIBLE. Against the original GPU, native geometric-mean speedups are **1.145x tree** and **0.998x DAG**. 23 designs have slower tree timings and 44 have slower DAG timings; per-design results and added verification overhead are shown in the tables.
 

@@ -19,3 +19,5 @@
 !infeasible_diagnostics.csv
 !performance.svg
 !profile_trials.csv
+!overall_runtime.md
+!overall_runtime.csv
