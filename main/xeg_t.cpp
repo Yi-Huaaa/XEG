@@ -1,4 +1,5 @@
 #include <chrono>
+#include "gpu_profile_args.hpp"
 #include <iostream>
 #include <xeg/XEG.hpp>
 #include <vector>
@@ -8,16 +9,18 @@
 #include "ortools/base/logging.h" // For LOG(INFO)
 
 int main(int argc, char *argv[]) {
+  try {
+  GpuProfileArgs profile_args(argc, argv);
+  argc = static_cast<int>(profile_args.positional.size());
+  argv = profile_args.positional.data();
   // Timer
   std::chrono::duration<double> duration_read;
   
-  cudaEvent_t startGPU, stopGPU;
-  cudaEventCreate(&startGPU);
-  cudaEventCreate(&stopGPU);
   if (argc < 2 || argc > 5) {
     std::cerr
+      << "Defaults: automatic GPU design settings (unlisted: Block/64/512). Options: --config FILE.json --design FAMILY/STEM\n"
       << "Usage:\n"
-      << "  ./main/simple "
+      << "  ./main/xeg_t "
       << "<input_file> "
       << "[DAG_KERNEL] "
       << "[NUM_THREAD_DAG_CONSTR] "
@@ -28,25 +31,26 @@ int main(int argc, char *argv[]) {
       << "  2: Block\n\n"
       << "BITMAP_BITS:\n"
       << "  Thread: 0\n"
-      << "  Warp:   0, 32, 64, 128, 256, 512, 1024, 2048\n"
-      << "  Block:  0, 32, 64, 128, 256, 512, 1024, 2048\n"
+      << "  Warp:   0, 32, 64, 128, 256, 512, 1024, 2048, 4096\n"
+      << "  Block:  0, 32, 64, 128, 256, 512, 1024, 2048, 4096\n"
       << "\n"
       << "  0 uses exact overlap detection.\n"
       << "  A nonzero value uses approximate bitmap overlap detection.\n\n"
       << "Examples:\n"
-      << "  ./main/simple input.json 0 1 0\n"
-      << "  ./main/simple input.json 1 128 0\n"
-      << "  ./main/simple input.json 1 128 32\n"
-      << "  ./main/simple input.json 1 128 64\n"
-      << "  ./main/simple input.json 2 128 0\n"
-      << "  ./main/simple input.json 2 128 64\n";
+      << "  ./main/xeg_t input.json 0 1 0\n"
+      << "  ./main/xeg_t input.json 1 128 0\n"
+      << "  ./main/xeg_t input.json 1 128 32\n"
+      << "  ./main/xeg_t input.json 1 128 64\n"
+      << "  ./main/xeg_t input.json 2 128 0\n"
+      << "  ./main/xeg_t input.json 2 128 64\n";
 
     return 1;
   }
   
   // === Parse arguments ===
   std::string input_path = argv[1];
-  int dag_kernel_value = (argc > 2) ? std::stoi(argv[2]) : 0;
+  const auto profile = GpuProfileArgs::geometry(profile_args.resolve(input_path), argc, argv);
+  int dag_kernel_value = static_cast<int>(profile.kernel);
 
   if (dag_kernel_value < 0 || dag_kernel_value > 2) {
     std::cerr
@@ -60,12 +64,8 @@ int main(int argc, char *argv[]) {
 
   DagKernel dag_kernel = static_cast<DagKernel>(dag_kernel_value);
 
-  uint32_t num_thread_dag_constr = (argc > 3)
-      ? static_cast<uint32_t>(std::stoul(argv[3]))
-      : 1u;
-  uint32_t bitmap_bits = (argc > 4)
-      ? static_cast<uint32_t>(std::stoul(argv[4]))
-      : 0u;  
+  uint32_t num_thread_dag_constr = profile.dag_threads;
+  uint32_t bitmap_bits = profile.bitmap_bits;
       
   bool valid_bitmap_bits =
     false;
@@ -95,7 +95,7 @@ int main(int argc, char *argv[]) {
         bitmap_bits == 0u ||
         (
           bitmap_bits >= 32u &&
-          bitmap_bits <= 2048u &&
+          bitmap_bits <= 4096u &&
           (
             bitmap_bits &
             (bitmap_bits - 1u)
@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
           << "Invalid BITMAP_BITS for Block DAG kernel: "
           << bitmap_bits << "\n"
           << "Valid values are:\n"
-          << "  0, 32, 64, 128, 256, 512, 1024, 2048\n";
+          << "  0, 32, 64, 128, 256, 512, 1024, 2048, 4096\n";
 
         return 1;
       }
@@ -116,12 +116,12 @@ int main(int argc, char *argv[]) {
 
     case DagKernel::Block:
       // Block insertion supports a runtime-sized power-of-two
-      // shared-memory bitmap from 32 through 2048 bits.
+      // shared-memory bitmap from 32 through 4096 bits.
       valid_bitmap_bits =
         bitmap_bits == 0u ||
         (
           bitmap_bits >= 32u &&
-          bitmap_bits <= 2048u &&
+          bitmap_bits <= 4096u &&
           (
             bitmap_bits &
             (bitmap_bits - 1u)
@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
           << "Invalid BITMAP_BITS for Block DAG kernel: "
           << bitmap_bits << "\n"
           << "Valid values are:\n"
-          << "  0, 32, 64, 128, 256, 512, 1024, 2048\n";
+          << "  0, 32, 64, 128, 256, 512, 1024, 2048, 4096\n";
 
         return 1;
       }
@@ -179,6 +179,7 @@ int main(int argc, char *argv[]) {
   std::cout << "Read Time: " << xeg.round_to((duration_read.count()) * 1000, 0.001) << " (ms)\n";
 
   // Run XEG-T exp 
+  xeg.set_gpu_dag_options(profile.dag);
   xeg.run_xeg_t_exp(
     360,
     dag_kernel,
@@ -187,5 +188,9 @@ int main(int argc, char *argv[]) {
     333u);
 
   return 0;
+  } catch (const std::exception& error) {
+    std::cerr << "GPU extraction failed: " << error.what() << '\n';
+    return 1;
+  }
 }
 

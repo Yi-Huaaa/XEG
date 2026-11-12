@@ -39,6 +39,7 @@
 #include <cublas_v2.h>
 #include "cuopt_solver.hpp"
 #include "cpu_extraction.hpp"
+#include "gpu_config.hpp"
 
 enum class DagKernel : uint32_t {
   Thread = 0,
@@ -135,8 +136,13 @@ private:
   };
 
 public:
+  XEG() = default;
+  XEG(const XEG&) = delete;
+  XEG& operator=(const XEG&) = delete;
+  ~XEG();
   // Read input file
   void read(const std::string input_path) {
+    _gpu_free_buffers();
     _read_input(input_path); 
   }
 
@@ -145,7 +151,7 @@ public:
   //
   // The output directory is fixed to:
   //
-  //   /home/ychung79/gpu_extraction/ablation_benchmarks
+  //   ./ablation_benchmarks
   //
   // The generated filename has the form:
   //
@@ -453,6 +459,13 @@ public:
   unittest_gpu_filter_root_to_leaf(
     const std::vector<uint32_t>& selected_state);
 
+  // Controller options for the legacy run/run_xeg_t_exp entry points.
+  // run_gpu takes its options explicitly in the call instead.
+  void set_gpu_dag_options(const xeg::GpuDagOptions& options) {
+    options.validate();
+    _gpu_options = options;
+  }
+
   /* run */
   double round_to(double value, double precision = 1.0) {
     return std::round(value / precision) * precision;
@@ -484,6 +497,13 @@ public:
   nlohmann::json run_cpu(int threads = 1, double time_limit = 360.0,
                          int solver_workers = 8, double deterministic_limit = 0.0);
 
+  // GPU construction with checked candidates and the same CP-SAT/fallback
+  // policy as run_cpu. A zero time limit runs construction and checks only.
+  nlohmann::json run_gpu(double time_limit = 360.0, DagKernel kernel = DagKernel::Thread,
+                         uint32_t threads = 1, uint32_t bitmap_bits = 0,
+                         int solver_workers = 8, double deterministic_limit = 0.0,
+                         const xeg::GpuDagOptions& options = {});
+
   // Run XEG-D on the complete post-read e-graph.
   //
   // CPU tree construction provides the CP-SAT warm start.
@@ -512,12 +532,32 @@ public:
   }
 
 private:
+  friend struct XegSolverTestAccess;
+  void _gpu_free_buffers() noexcept;
+  void _gpu_allocate_graph_buffers();
+  cudaError_t _gpu_copy_control(void* destination, const void* source, size_t bytes);
+  void* _gpu_control = nullptr;
+  int _gpu_num_levels = 0;
+  xeg::GpuDagOptions _gpu_options;
+  nlohmann::json _run_gpu_pipeline(
+    double time_limit, DagKernel dag_kernel, uint32_t num_thread_dag_constrution,
+    uint32_t dag_bitmap_bits, CpsatInitialSolutionMode initial_solution_mode,
+    uint32_t random_seed, IlpBackend ilp_backend, CuoptMode cuopt_mode,
+    int solver_workers, double deterministic_limit, const xeg::GpuDagOptions& options = {});
+
+  double _gpu_tree_ms = 0, _gpu_dag_ms = 0;
   xeg::CpuGraph _cpu_graph() const;
-  int _cpu_solver_workers = 0;
-  double _cpu_deterministic_limit = 0.0;
-  bool _cpu_omit_level_constraints = false;
-  bool _cpu_validate_solver = false;
-  nlohmann::json _cpu_solver_result;
+  nlohmann::json _solve_checked_candidates(
+    double time_limit, const std::vector<uint8_t>& candidates,
+    const std::vector<uint8_t>& seed, const std::vector<uint32_t>& hint_best,
+    const std::vector<bool>& hint_selected, int solver_workers,
+    double deterministic_limit, bool acyclic);
+
+  int _solver_workers = 0;
+  double _solver_deterministic_limit = 0.0;
+  bool _solver_omit_level_constraints = false;
+  bool _solver_validate = false;
+  nlohmann::json _solver_result;
   /* Read */
   void _read_input(const std::string input_path);
   // Output-degree ablation only.
@@ -975,8 +1015,8 @@ private:
 
   /* Private members */
   // Read in from .json, and prune the dead eclasses/enodes
-  uint32_t _num_ecls; // nuber of eclasses 
-  uint32_t _num_ende; // number of enodes
+  uint32_t _num_ecls = 0; // nuber of eclasses
+  uint32_t _num_ende = 0; // number of enodes
   std::vector<std::string> _ende_name; 
   std::vector<std::string> _ende_op; 
   std::vector<float> _ende_cost; 
@@ -1143,19 +1183,15 @@ private:
   // Do not rename or remove them during the DAG rewrite.
   // ============================================================
   uint32_t* _dvc_best_ende_of_ecls = nullptr;
-  bool* _dvc_update = nullptr;
+  uint32_t* _dvc_update = nullptr;
+  uint32_t* _dvc_tree_locks = nullptr;
 
-  uint32_t* _dvc_ecls_its_ende_1D = nullptr;
-  uint32_t* _dvc_ecls_its_ende_1D_ptr = nullptr;
   uint32_t* _dvc_root_eclass_id = nullptr;
-  uint32_t* _dvc_ende_picked_by_ende = nullptr;
 
   uint32_t* _dvc_picked_endes = nullptr;
 
   uint32_t* _dvc_q = nullptr;
   uint32_t* _dvc_q_sz = nullptr;
-  uint32_t* _dvc_q_sp = nullptr;
-  uint32_t* _dvc_q_num = nullptr;
 
   // These buffers are allocated and initialized by
   // _gpu_tree_construction(), then reused by GPU DAG construction.
@@ -1167,14 +1203,8 @@ private:
   uint32_t* _dvc_indegree = nullptr;
   uint32_t* _dvc_inv_indegree = nullptr;
 
-  uint32_t* _dvc_picked_adj = nullptr;
-  uint32_t* _dvc_picked_inv_adj = nullptr;
-  uint32_t* _dvc_tmp_picked_adj = nullptr;
-  uint32_t* _dvc_tmp_picked_inv_adj = nullptr;
 
   int* _dvc_level = nullptr;
-  uint32_t* _dvc_all_root_ende_1D = nullptr;
-  int* _dvc_max_level = nullptr;
 
   uint32_t* _dvc_in_subgraph = nullptr;
   uint32_t* _dvc_roots = nullptr;

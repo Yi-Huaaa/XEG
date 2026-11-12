@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import statistics
 import subprocess
+from prepare_input import prepare_input
 
 
 def main():
@@ -23,7 +24,7 @@ def main():
         parser.error('threads and repeats must be positive')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    binary, source = args.binary.resolve(), args.input.resolve()
+    binary, source = args.binary.resolve(), prepare_input(args.input)
     reference = None
     summary = []
     fields = ['tree_hash', 'best_hash', 'dag_hash', 'filtered_hash', 'tree_cost', 'tree_dag_cost']

@@ -12,13 +12,20 @@ from verification import check_threads
 
 
 class CheckThreadsTest(unittest.TestCase):
-    def run_checker(self, solutions):
+    def run_checker(self, solutions, directory_input=False, symlink_input=False):
         graph = {'nodes': {'leaf': {'eclass': '0', 'cost': 1, 'children': []}},
                  'root_eclasses': ['0']}
         with tempfile.TemporaryDirectory(prefix='xeg-check-threads-') as temporary:
             root = Path(temporary)
             input_file = root / 'input.json'
             input_file.write_text(json.dumps(graph))
+            if directory_input:
+                (root / 'second.json').write_text(json.dumps(graph))
+            input_directory = root
+            if symlink_input:
+                input_directory = root / 'dataset'
+                input_directory.mkdir()
+                (input_directory / 'linked.json').symlink_to(input_file)
             output = root / 'reports'
 
             def emit_report(command, **kwargs):
@@ -31,7 +38,7 @@ class CheckThreadsTest(unittest.TestCase):
                               solver={'status': 'FEASIBLE', 'wall_time_s': 0.01})
                 Path(command[5]).write_text(json.dumps([report]))
 
-            argv = ['check_threads', str(input_file), '--binary', str(root / 'cpu'),
+            argv = ['check_threads', str(input_directory if directory_input else input_file), '--binary', str(root / 'cpu'),
                     '--threads', '1', '2', '--output', str(output)]
             with patch.object(sys, 'argv', argv), \
                     patch.object(check_threads.subprocess, 'run', side_effect=emit_report), \
@@ -44,6 +51,16 @@ class CheckThreadsTest(unittest.TestCase):
         self.assertEqual([row['source'] for row in rows], ['solver', 'solver'])
         self.assertEqual([row['reason'] for row in rows], [None, None])
         self.assertTrue(all(row['valid'] and row['objective'] == 1 for row in rows))
+
+    def test_directory_retains_input_path_after_first_solution(self):
+        rows = self.run_checker({1: {'source': 'solver'}, 2: {'source': 'solver'}}, directory_input=True)
+        self.assertEqual(len(rows), 4)
+        self.assertEqual({r['input'] for r in rows}, {'input.json', 'second.json'})
+
+    def test_directory_accepts_symlink_to_external_input(self):
+        rows = self.run_checker({1: {'source': 'solver'}, 2: {'source': 'solver'}},
+                                directory_input=True, symlink_input=True)
+        self.assertEqual([r['input'] for r in rows], ['linked.json', 'linked.json'])
 
     def test_matching_fallback_reasons_are_recorded(self):
         source = {'source': 'tree_fallback', 'reason': 'better_than_solver_incumbent'}

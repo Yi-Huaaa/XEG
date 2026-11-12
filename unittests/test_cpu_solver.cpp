@@ -48,3 +48,29 @@ TEST_CASE("validated CPU DAG solves shared choices without level variables") {
   DOCTEST_CHECK(report["solver"]["status"]=="OPTIMAL");
   DOCTEST_CHECK(report["solver"]["level_constraints"]==false);
 }
+
+// A narrow test accessor exercises the production checked solver with a mask
+// that construction normally excludes. No public bypass is exposed.
+struct XegSolverTestAccess {
+  static nlohmann::json solve_cycle(XEG& graph) {
+    const auto view = graph._cpu_graph();
+    const auto tree = xeg::cpu_tree(view, 1);
+    const std::vector<uint8_t> candidates(view.cost.size(), 1);
+    const bool acyclic = xeg::validate_cpu_candidates(view, candidates, false);
+    DOCTEST_REQUIRE_FALSE(acyclic);
+    const std::vector<bool> hint(tree.selected.begin(), tree.selected.end());
+    return graph._solve_checked_candidates(30, candidates, tree.selected,
+      tree.best, hint, 1, 0.05, acyclic);
+  }
+};
+
+TEST_CASE("cyclic candidates retain levels and return an acyclic legal solution") {
+  XEG graph;
+  graph.read(std::string(XEG_TEST_DATA_DIR) + "/tree_zero_cost_cycle.json");
+  const auto report = XegSolverTestAccess::solve_cycle(graph);
+  DOCTEST_CHECK(report["solver"]["level_constraints"] == true);
+  DOCTEST_CHECK(report["solver"]["status"] == "OPTIMAL");
+  DOCTEST_CHECK(report["solution"]["source"] == "solver");
+  DOCTEST_CHECK(report["solution"]["validated"] == true);
+  DOCTEST_CHECK(report["solution"]["objective"] == 2);
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate exported CPU solutions against the original input JSON, without XEG."""
+"""Validate exported CPU or GPU solutions against the original input JSON, without XEG."""
 import argparse
 from collections import deque
 import json

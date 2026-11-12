@@ -22,11 +22,13 @@ count only once in the DAG objective. Costs follow the existing reader's float32
 conversion and solver's integer truncation. Disconnected selected classes are
 reported separately; they are allowed by the current solver formulation.
 
-Candidate-DAG closure is checked inside the CPU pipeline before solving. Missing
+Candidate-DAG closure is checked inside both CPU and GPU pipelines before solving. Missing
 child classes invalidate dependent candidates recursively. E-nodes that depend
 on their own class are also removed. The valid seed tree must remain available.
 
-The validated CPU solver omits class-level ordering variables. This is safe
+CPU and GPU share the checked CP-SAT solver. It omits class-level ordering
+variables only for validated acyclic candidates. A cyclic GPU candidate space
+retains those constraints. This is safe
 because a selected cycle of e-classes would induce a cycle among their unique
 selected e-nodes in the candidate graph. That graph is checked to be acyclic,
 and candidates referring to their own class are removed explicitly. The solver
@@ -51,3 +53,7 @@ finds a more expensive incumbent; `solution.reason` records that case while
 `solver` preserves its actual status and objective. A hint is not guaranteed to
 become the solver's incumbent. The fallback is the independently checked seed
 tree, not a claim that the solver found or proved an optimum.
+
+GPU reports from `scripts/run_gpu.sh` use the same final-solution format and
+checker. GPU construction is nondeterministic, so `check_threads.py` remains
+specific to CPU construction.

@@ -3,9 +3,23 @@
 
 enable_language(CUDA)
 
+# Reconfigure when the measured defaults change; keep one source of truth.
+set(XEG_GPU_PROFILE_FILE "${PROJECT_SOURCE_DIR}/configs/gpu/87-designs.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${XEG_GPU_PROFILE_FILE}")
+file(READ "${XEG_GPU_PROFILE_FILE}" XEG_GPU_PROFILE_JSON)
+configure_file(gpu_default_profile.hpp.in gpu_default_profile.hpp @ONLY)
+
 add_library(xeg
   XEG.hpp
   xeg.cu
+  gpu_tree.cu
+  gpu_pipeline.cpp
+  gpu_config.cpp
+  gpu_config.hpp
+  gpu_dag_insert.cu
+  gpu_dag.cu
+  gpu_testing.cu
+  cpsat_solver.cpp
   xeg.cuh
   cuopt_solver.cpp
   cuopt_solver.hpp
@@ -18,6 +32,8 @@ add_library(xeg
 # Sources compiled by the host C++ compiler (for example main/xeg_d.cpp and
 # the unit tests) include xeg.cuh, which needs the CUDA headers.
 target_include_directories(xeg
+  PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
   PUBLIC
     ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
 )

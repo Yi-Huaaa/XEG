@@ -1,0 +1,237 @@
+XEG GPU extraction: 87-design report, 2026-11-12 UTC
+
+RESULTS
+The fixed-parameter comparison isolates the implementation changes. The
+profiled comparison additionally selects input-specific controller settings.
+Original settings and the fixed measurements are retained separately.
+
+Fixed GPU: 81 OPTIMAL, 6 FEASIBLE; all 87 solutions independently valid.
+Original GPU: 74 OPTIMAL, 4 UNKNOWN, 8 INFEASIBLE, 1 FEASIBLE; all 75 returned incumbents valid.
+Selected profiles: 80 OPTIMAL, 7 FEASIBLE; all 87 selected solutions valid.
+Selected sources: 87 solver.
+Selected runs retaining CP-SAT level constraints: 0.
+Profiles with overrides: 33 of 87.
+
+Native geometric-mean speedups, original GPU = 1.00x:
+                         Tree             DAG
+Fixed parameters         1.143x           0.979x
+Selected profiles        1.145x           0.998x
+Fixed slower designs: tree 25, DAG 49.
+Profiled slower designs: tree 23, DAG 44.
+Before the final levelization-controller pass, the quality-selected profiles
+measured 1.144x tree and
+0.994x DAG in their own three-run isolated timings.
+These are aggregate measurements, not a claim that every design became faster.
+For context, the fixed-parameter DAG speedup is 1.0004x on the 59 designs whose
+original seeds were valid in all three timing runs, and 0.9362x on the other 28.
+This post-hoc grouping describes the measurements; it does not isolate a causal
+effect or replace the all-87 result. Repairing seeds can change subsequent work.
+Added seed checking and candidate transfer/pruning/checking with profiles:
+median 0.535 ms; maximum 67.846 ms.
+
+Selected-profile final costs:
+  versus fixed GPU: 16 lower, 71 equal, 0 higher; 0 without a reference answer
+  versus original GPU: 27 lower, 43 equal, 5 higher; 12 without a reference answer
+  versus accepted CPU 8-thread reference: 17 lower, 51 equal, 19 higher; 0 without a reference answer
+  versus paper XEG: 17 lower, 55 equal, 15 higher; 0 without a reference answer
+The no-worse-than-fixed property is a selection rule, not an independent
+confirmation that the configuration always produces a lower cost.
+
+CORRECTNESS AND THE ORIGINAL INFEASIBLE RESULTS
+Frozen original runs demonstrate a construction defect before CP-SAT:
+all eight INFEASIBLE candidate spaces have at least one root without a finite
+acyclic extraction, while every root is productive in the complete input.
+The original selected witnesses contain cycles. For example:
+  mul32_map: 15941.0 -> 15888.4 -> 15941.0
+  mul48_map: 19959.0 -> 80592.6 -> 19959.0
+The original DAG root/global-leaf intersection also permits candidates whose
+children have no available representative. The independent frozen-state trace
+checks input/mask hashes and AND/OR productivity; infeasible_diagnostics.csv
+summarizes all eight cases. CP-SAT correctly rejected those candidate spaces.
+Across the separate original timing runs, 81/261 seeds were invalid (28 designs)
+and 201/261 candidate masks had invalid choices (67 designs). Invalid candidate
+choices alone do not imply an invalid final CP-SAT incumbent.
+
+The repaired tree keeps one GPU thread per e-node and asynchronous double-cost
+relaxation. Atomic cost reads and a per-class gate couple strict improvements
+to representative publication. Equal-cost alternatives do not overwrite the
+witness. Duplicate roots are deduplicated for the DAG objective. Update flags,
+queue offsets, and allocation/event lifetimes are corrected.
+
+The existing DAG batching, bitmap hashing, tentative insertion/Kahn rollback,
+levelization, and final filtering algorithms remain. Concurrent device reads
+use atomic loads and concurrent stores use atomic stores where required.
+Pinned control transfers reduce repeated host/device synchronization overhead.
+The original numeric defaults remain available; profiles are explicit inputs.
+
+Every repaired CP-SAT run validates its seed before expansion, recursively removes
+impossible candidates after the original DAG filter, checks child closure and
+cycles, and confirms that the legal seed survived. The CPU and GPU CP-SAT paths share
+formulation, search settings, final checks, and valid cheaper-seed fallback.
+The optional cuOpt path retains its separate model and does not provide these
+shared final checks, fallback, or exported solution report; it was not tested.
+Level constraints are omitted only when the candidate graph is checked acyclic;
+cyclic spaces retain them. Final selected nodes are independently checked against
+the original JSON for roots, unique choice per class, children, cycles, and cost.
+Disconnected selected classes are reported but allowed by the accepted solver
+formulation. Their costs remain included; there is no post-hoc cost trimming.
+
+EXPERIMENT CONTRACT
+Hardware: NVIDIA RTX PRO 6000 Blackwell Server Edition, AMD EPYC 9B45,
+CUDA 12.9, GCC 12, Release build, architecture 120.
+The original baseline is main after the CPU PR was merged. Its instrumentation
+exports masks, native timings, and solutions and explicitly uses 8 solver
+workers; it retains the original GPU algorithms and level-constrained model.
+The repaired source snapshot is the runtime-profile implementation tested by
+the v9 build. Local source archives, file hashes, binary hashes, input hashes,
+command lines, and hardware receipts identify the exact artifacts.
+
+Fixed construction: all 87 designs, three separate-process runs each, no solve,
+Block kernel, 64 threads per candidate, 512-bit bitmap, BatchThenDirect,
+exact batch 256, bitmap batch 32, direct limit 5, original levelization defaults.
+Each phase uses its per-design median. CUDA-event boundaries match the original
+code. Input parsing, allocation, transfers/checks outside those event boundaries,
+and solving are excluded. Extra checks/transfers are shown separately.
+Profile timing: fresh isolated three-run medians with the selected settings.
+Speedup is original time / repaired time. All mean rows weight designs equally;
+the all-design geometric mean is computed directly over all 87 ratios.
+
+Quality: 360-second CP-SAT limit, 8 workers, random seed 42, randomize_search=true.
+Four cases run concurrently. GPU scheduling and parallel timed CP-SAT remain
+nondeterministic; these solver wall times are not isolated speed benchmarks.
+An OPTIMAL result is optimal within that run's candidate space. FEASIBLE means
+an incumbent without optimality proof. UNKNOWN has no solver incumbent and can
+use a checked tree_fallback. INFEASIBLE means no solution in the constructed model.
+
+Four large fixed-run BoolE solves (mul80/96/112/128) were killed when the initial
+128 GiB concurrent allocation ran out of memory. Only those four were retried
+with 256 GiB; source, input, parameters, 8 workers, 360 seconds and concurrency
+were unchanged. The other 83 completed results were kept. Failed attempt logs
+and the original allocation receipt are preserved locally.
+
+PROFILE SEARCH
+The JSON configuration covers all 87 input keys. Empty entries inherit the
+common defaults. Unlisted inputs also inherit defaults. Built-in no-config
+geometry was Thread/1/0 in the measured snapshot; the experiment manifest used
+Block/64/512. The current CLI automatically selects the saved per-design
+settings and uses Block/64/512 for unlisted inputs.
+See configs/gpu/README.md for options, precedence, and validation rules.
+
+Every design received an isolated persistent_small_levels=1 construction screen.
+It was considered only with more than 10% measured DAG improvement. Designs
+above the better of CPU-reference and valid original-GPU cost received six
+60-second screens: bitmap batches 8/16/64/128, bitmap 2048, and direct limit 10.
+Remaining gaps over 3% received exact-batch-32 and bitmap-4096/batch-1 screens.
+Promising profiles, optionally combined with the levelization setting, received
+360-second confirmation. Substantial gaps could receive two full-budget
+alternatives even if the short screen had not beaten the fixed result.
+Retained profiles have a valid full-budget observation no worse than fixed;
+otherwise the defaults and original fixed result are retained.
+Observed trials: 158 short screens and 37 full-budget promotions.
+Large BoolE mul112/mul128 cases with remaining CPU-reference gaps above 3%
+also receive two full-budget controller trials: batch256/BatchEarlyStop and
+batch1024/one-direct-iteration, both using minimum batch iterations2,
+low-activity threshold10%, patience1. Only a validated lower full-budget cost
+can replace the preceding selection. Targeted full-budget trials: 4.
+The subsequent runtime pass preserves the chosen insertion parameters and
+screens three existing levelization controllers on all 87 designs: persistent
+entry/exit 2048/4096 with 128 threads; 8192/16384 with 512 threads; and host-driven
+levelization. The persistent variants enter after one small frontier. An isolated
+screen improvement above 10% leads to full-budget quality confirmation. A final
+replacement requires cost no worse than the previous selection and more than
+5% DAG improvement in fresh three-run isolated timing. Unchanged profiles keep
+their completed timings; CSV records exact timing/quality provenance.
+Runtime-controller full-budget trials: 2; accepted replacements:
+2. Previous selections remain in the raw records.
+Trial outcomes: {'attempts': 201, 'successful': 201, 'independently_validated': 201}.
+All attempts remain in the local records. This is a bounded, selected search,
+not an exhaustive optimum or an unbiased comparison with one trial per design.
+Selected settings do not guarantee the same candidate space/cost on a new run.
+The final timing medians participate in controller selection, so they are not
+a held-out performance evaluation.
+
+CPU AND PAPER COMPARISONS
+Paper/CPU numbers are carried over from the accepted CPU comparison. Paper
+parameters and repetition/selection differ; matching every paper cost is not
+claimed. CPU phase references in profiles.csv are the earlier CPU measurements,
+whose DAG timer includes cleanup; GPU native phases exclude the extra cleanup.
+They do not establish a matched end-to-end CPU/GPU speedup.
+For transparency, CPU-reference/native-GPU phase ratios have geometric means
+0.393x tree and
+0.152x DAG; ratios above 1
+favor GPU. GPU native timings are faster in
+20/87 tree cases and
+3/87 DAG cases.
+Timing boundaries and separate experiments must be considered when using these
+references. Improving the original GPU does not establish superiority over the
+new parallel CPU implementation.
+The shared CP-SAT implementation does not imply identical solving time: GPU and
+CPU construction can supply different candidate sets, hints, and model sizes.
+Profiles.csv includes candidate count, model variables/constraints, model-build
+time and solver time to make these differences visible.
+Its profile_construction_pipeline_ms column is the solver-disabled pipeline
+interval including setup and checks, excluding input parsing; it is not the
+overall runtime of the quality solve.
+
+Largest remaining selected-GPU / CPU-reference cost ratios:
+  boolE/mul128.rename.json: GPU 79129, CPU 65934, ratio 1.2001
+  boolE/mul112.rename.json: GPU 53578, CPU 51179, ratio 1.0469
+  tensat/bert.rename.json: GPU 58, CPU 57, ratio 1.0175
+  esyn/max.rename.json: GPU 9145, CPU 9015, ratio 1.0144
+  esyn/C5315.rename.json: GPU 4818, CPU 4755, ratio 1.0132
+  boolE/mul96.rename.json: GPU 37661, CPU 37171, ratio 1.0132
+  esyn/frg2.rename.json: GPU 2804, CPU 2770, ratio 1.0123
+  morphic/sin.rename.json: GPU 14230, CPU 14102, ratio 1.0091
+
+VALIDATION
+Measured core snapshot: 139/139 C++/CUDA CTest entries and 15/15 Python
+tests passed. A later default-selection update passed 140/140 CTest entries.
+The subsequent CLI/ZIP update passed targeted configuration tests (5 cases,
+150 assertions), 22 Python tests, and 30 actual CLI/wrapper fixture cases;
+these are not additional 87-design measurements.
+87/87 CPU regression cases match the accepted implementation for construction
+hashes, final cost, status, source, reason and selected names (1 solver worker,
+0.1 deterministic solver units, 60-second safety cap, 8 construction threads).
+Compute Sanitizer memcheck on tree/repeated-extraction tests: 2 tests and 58
+assertions passed, zero reported errors, zero bytes leaked. Legacy simple/xeg_t
+and profile CLI smoke tests returned OPTIMAL objective 6.
+All 87 fixed and all 87 selected quality reports passed the independent verifier.
+All fixed/profiled construction repetitions validate seed and candidate spaces.
+Source audit confirms shared CP-SAT parity, unchanged fixed-run parameters, and
+unchanged DAG algorithms outside synchronization/runtime-option changes.
+cuOpt, ThreadSanitizer and exhaustive global-memory race detection were not run.
+Those historical memcheck results cover only tree/repeated-extraction tests,
+not the insertion binaries or the full designs. Historical synccheck logs for
+the rejected reduction experiment are not validation of the delivered code.
+Later review-fix testing is documented separately; the measurements above
+remain the original recorded observations.
+
+FILES AND REPRODUCTION
+comparison.md/csv: fixed-parameter results.
+profiled.md/profiles.csv: selected-profile costs, timings and model measurements.
+quality.csv: original/fixed/profiled/CPU/paper costs and solver statuses.
+profiles.json: exact selected configuration, also configs/gpu/87-designs.json.
+profile_trials.csv: every quality-parameter trial, including rejected settings,
+cost/status, candidate/model sizes, and whether its observation was retained.
+construction_summary.csv/profile_summary.csv: unrounded mean speedups.
+performance.png/svg: native phase speedups by benchmark family and all designs.
+infeasible_diagnostics.csv: original frozen-state correctness evidence summary.
+
+Build and run one configured input:
+  scripts/build.sh gpu
+  scripts/run_gpu.sh dataset/boolE/mul32_map.rename.json --config configs/gpu/87-designs.json
+  python3 verification/verify_solution.py INPUT.json REPORT.json
+Direct construction-only run preserving the selected geometry:
+  env -u OMP_PLACES OMP_PROC_BIND=false build/main/gpu INPUT.json --solver-seconds 0 --workers 8 --report timing.json --config configs/gpu/87-designs.json --design FAMILY/STEM
+
+Raw logs, rejected attempts, frozen masks, complete reproduction scripts and
+source snapshots are intentionally not tracked in the code base. On the server:
+  build/plan/20261112_gpu_alignment/ (relative to the experiment checkout)
+The original run_baseline.py/run_current.py, tune_profiles.py and Slurm recipes
+are not distributed in this repository. A public clone can run the supplied
+settings, but cannot reproduce the complete historical profile-selection search
+or resolve the raw report paths in the CSVs. Authorized access to the retained
+experiment records is needed for that audit. Use those scripts with the saved Slurm
+recipes. Their recorded absolute scratch paths describe the original jobs;
+restage the preserved source/dependencies and inputs before reproducing after
+scratch cleanup. Input hashes must match dataset-sha256.json.

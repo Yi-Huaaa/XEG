@@ -407,18 +407,35 @@ size_t prune_cpu_candidates(const CpuGraph& g, std::vector<uint8_t>& candidates,
   return queue.size();
 }
 
-void validate_cpu_candidates(const CpuGraph& g, const std::vector<uint8_t>& candidates) {
+bool validate_cpu_candidates(const CpuGraph& g, const std::vector<uint8_t>& candidates, bool require_acyclic) {
   if (candidates.size() != g.cost.size()) throw std::invalid_argument("Candidate mask size mismatch");
   std::vector<uint32_t> choices(g.members.size(), 0);
   for (uint32_t u = 0; u < candidates.size(); ++u) if (candidates[u]) ++choices[g.node_class[u]];
+  std::vector<uint32_t> degree(g.members.size(), 0), queue;
   for (uint32_t c : g.roots)
     if (!choices[c]) throw std::runtime_error("Candidate graph has no root choice");
   for (uint32_t u = 0; u < candidates.size(); ++u) if (candidates[u])
     for (uint32_t k = g.child_ptr[u]; k < g.child_ptr[u + 1]; ++k) {
       if (!choices[g.children[k]]) throw std::runtime_error("Candidate has an unavailable child class");
       if (g.children[k] == g.node_class[u]) throw std::runtime_error("Candidate depends on its own class");
+      ++degree[g.children[k]];
     }
-  validate_cpu_dag(g, candidates);
+  // Every candidate points to every available choice of each child class.
+  // After excluding self-class dependencies, a class cycle exists iff the
+  // expanded candidate-node graph has a cycle. Traverse compact child refs
+  // instead of scanning the much larger expanded CSR twice.
+  size_t active = 0;
+  for (uint32_t c = 0; c < choices.size(); ++c) if (choices[c]) {
+    ++active;
+    if (!degree[c]) queue.push_back(c);
+  }
+  for (size_t i = 0; i < queue.size(); ++i)
+    for (uint32_t u : g.members[queue[i]]) if (candidates[u])
+      for (uint32_t k = g.child_ptr[u]; k < g.child_ptr[u + 1]; ++k)
+        if (--degree[g.children[k]] == 0) queue.push_back(g.children[k]);
+  const bool acyclic = queue.size() == active;
+  if (require_acyclic && !acyclic) throw std::runtime_error("Selected e-node graph contains a cycle");
+  return acyclic;
 }
 
 void validate_cpu_dag(const CpuGraph& g, const std::vector<uint8_t>& selected) {

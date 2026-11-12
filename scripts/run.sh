@@ -5,9 +5,9 @@
 #   scripts/run.sh <input.json> [DAG_KERNEL [NUM_THREAD_DAG_CONSTR [BITMAP_BITS]]]
 #
 # Arguments after the input are passed to main/simple unchanged; see its
-# usage message for the valid values. With none, the paper's setting
-# "2 64 512" is used: Block kernel, 64 threads per candidate, 512-bit
-# bitmap.
+# usage message for the valid values. By default the measured design profile
+# in configs/gpu/87-designs.json is loaded. Unlisted inputs use its common
+# defaults; positional arguments override the selected geometry.
 #
 # Each run gets its own directory, <build>/runs/<timestamp>_<input name>/,
 # holding run.log (the full console output) and any files the solver
@@ -26,11 +26,24 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${XEG_BUILD_DIR:-${repo_root}/build}"
-binary="${build_dir}/main/simple"
-input="$(realpath "$1")"
+binary="$(realpath -m "${build_dir}/main/simple")"
+input="$(python3 "$repo_root/scripts/prepare_input.py" "$1")"
 shift
-if [ "$#" -eq 0 ]; then
-  set -- 2 64 512
+arguments=()
+config_selected=false
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --config ]; then
+    if [ "$#" -lt 2 ]; then echo 'error: --config needs a path' >&2; exit 2; fi
+    config_selected=true
+    arguments+=(--config "$(realpath "$2")")
+    shift 2
+  else
+    arguments+=("$1")
+    shift
+  fi
+done
+if ! "$config_selected"; then
+  arguments+=(--config "$repo_root/configs/gpu/87-designs.json")
 fi
 
 if [ ! -x "${binary}" ]; then
@@ -42,15 +55,18 @@ if [ ! -f "${input}" ]; then
   exit 1
 fi
 
+export OMP_PROC_BIND=false
+unset OMP_PLACES
+
 name="$(basename "${input}" .json)"
 run_dir="${XEG_RUN_DIR:-${build_dir}/runs/$(date +%Y%m%d_%H%M%S)_${name}}"
 mkdir -p "${run_dir}"
 
 cd "${run_dir}"
 {
-  echo "command: ${binary} ${input} $*"
+  printf 'command: '; printf '%q ' "${binary}" "${input}" "${arguments[@]}"; printf '\n'
   echo "started: $(date -Is)"
-  "${binary}" "${input}" "$@"
+  "${binary}" "${input}" "${arguments[@]}"
 } 2>&1 | tee run.log
 
 echo "run directory: ${run_dir}"

@@ -1,0 +1,36 @@
+{
+  "nodes": {
+    "a": {
+      "op": "leaf",
+      "cost": 1e+20,
+      "eclass": "0",
+      "children": []
+    },
+    "b": {
+      "op": "cycle",
+      "cost": 1,
+      "eclass": "0",
+      "children": [
+        "c"
+      ]
+    },
+    "c": {
+      "op": "leaf",
+      "cost": 1e+20,
+      "eclass": "1",
+      "children": []
+    },
+    "d": {
+      "op": "cycle",
+      "cost": 1,
+      "eclass": "1",
+      "children": [
+        "a"
+      ]
+    }
+  },
+  "root_eclasses": [
+    "0",
+    "1"
+  ]
+}

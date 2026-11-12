@@ -1,4 +1,5 @@
 # GPU results
 
-GPU experiment results will be published here after GPU validation is completed.
-The current published experiment covers the [CPU implementation](../cpu/README.md).
+- [2026-11-12: GPU correctness, construction performance, and design profiles](20261112/README.md)
+- [CPU 8 threads / GPU / GPU (common settings): overall runtime and solution quality across 87 designs](20261112/overall_runtime.md) (recorded quality runs; see timing caveats)
+- [CPU results](../cpu/README.md)

@@ -1,6 +1,6 @@
 XEG CPU optimization and verification — completed experiment report
 Generated: 2026-11-12T01:54:12.719256+00:00
-Repository: /home/yihua_chung_ricursive_com/XEG/gpu_extraction
+Repository: <repository-root>
 Branch: cpu-parallel-extraction
 Delivered commit: 535eeb6529843b97d60ed301daefda9c9d53bb62
 Original baseline: 9518ba8a6c2785d6d535bd69519dd227f05dffcb
@@ -57,7 +57,7 @@ The known original GPU tree/controller failures remain deferred under the reques
 The CPU binary also ran successfully on the login VM without a GPU. Building the current shared library still requires a CUDA toolkit; builds ran through Slurm.
 
 Run and verify on this login VM
-cd /home/yihua_chung_ricursive_com/XEG/gpu_extraction
+cd /path/to/gpu_extraction
 build/plan/20261112_cpu_parallel/run_cpu_current.sh INPUT.json 8 360 8 REPORT.json
 python3 verification/verify_solution.py INPUT.json REPORT.json
 python3 verification/check_threads.py INPUT.json --binary build/plan/20261112_cpu_parallel/run_cpu_current.sh --output build/verification

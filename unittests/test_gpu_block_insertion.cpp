@@ -704,3 +704,31 @@ TEST_CASE(
     }
   }
 }
+
+TEST_CASE("Block batches alternate inactive and active candidates across warps") {
+  // All blocks skip an already-selected candidate before processing a live
+  // candidate in the next transposed batch: shared flags must not be reused early.
+  TemporaryFanoutGraph graph(BlockInsertionMode::Batch, 513u);
+  XEG xeg; xeg.read(graph.path());
+  for (const uint32_t bits : {0u, 512u}) {
+    xeg::GpuDagOptions options;
+    const uint32_t batch = bits ? options.bitmap_batch_size : options.exact_batch_size;
+    std::vector<uint32_t> state(513u, 0u);
+    std::vector<int> levels(513u, -1);
+    state[0] = 1u; levels[0] = 0;
+    uint32_t expected = 0;
+    for (uint32_t u = 1; u < state.size(); ++u) {
+      if ((u / batch) % 2 == 0) { state[u] = 1u; levels[u] = 1; }
+      else ++expected;
+    }
+    for (const uint32_t threads : {64u, 128u, 256u}) {
+      const auto result = xeg.unittest_gpu_insert_block_batch_once(
+        state, levels, true, threads, bits);
+      DOCTEST_CHECK(result.u0 == expected);
+      for (uint32_t u = 1; u < state.size(); ++u) {
+        DOCTEST_CHECK(result.selected_state[u] == (state[u] ? 1u : 2u));
+        DOCTEST_CHECK(result.level[u] == 1);
+      }
+    }
+  }
+}
