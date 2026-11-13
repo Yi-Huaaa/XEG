@@ -2,7 +2,7 @@
 
 **Efficient and effective e-graph extraction on CPU and GPU**
 
-[![Paper](https://img.shields.io/badge/paper-ASPLOS%202027-blue)](https://yi-huaaa.github.io/uploads/publications/2027-xeg-paper.pdf)
+[![Paper](https://img.shields.io/badge/paper-ASPLOS%202027-blue)](https://dl.acm.org/doi/10.1145/3845814.3850040)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![CUDA](https://img.shields.io/badge/GPU-CUDA-76B900?logo=nvidia&logoColor=white)](#requirements)
 [![OpenMP](https://img.shields.io/badge/CPU-OpenMP-0071C5)](#cpu)
@@ -13,7 +13,8 @@ candidate space, and uses Google OR-Tools CP-SAT to select a solution.
 
 This repository accompanies our ASPLOS 2027 paper
 [*XEG: A GPU-parallel Algorithm for Efficient and Effective E-Graph
-Extraction*](https://yi-huaaa.github.io/uploads/publications/2027-xeg-paper.pdf).
+Extraction*](https://dl.acm.org/doi/10.1145/3845814.3850040)
+([PDF](https://yi-huaaa.github.io/uploads/publications/2027-xeg-paper.pdf)).
 It includes OpenMP CPU and CUDA GPU implementations, scripts for running both,
 and an independent solution checker. The implementation and GPU profiles have
 evolved since the paper; [results/](results/README.md) distinguishes the paper's
@@ -90,6 +91,11 @@ write `run.log`, `report.json`, and solver memory logs. If `XEG_RUN_DIR` is omit
 each run gets a timestamped directory under `build/runs/`.
 
 ## How XEG works
+
+![Equality saturation and XEG extraction: rewrite rules expand an e-graph, then tree construction, DAG construction, and ILP solving produce a low-cost program.](docs/images/xeg-overview.png)
+
+*Equality saturation (a–d) followed by XEG's tree construction, DAG construction,
+and ILP solving (e–h). From [Figure 2 of the paper](https://yi-huaaa.github.io/uploads/publications/2027-xeg-paper.pdf#page=3).*
 
 1. **Tree construction** produces a valid seed solution.
 2. **DAG construction** adds alternatives, removes candidates with impossible
